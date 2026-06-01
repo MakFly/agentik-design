@@ -1,0 +1,60 @@
+import {
+  LayoutDashboard,
+  Play,
+  Activity,
+  Bot,
+  Workflow,
+  Wrench,
+  Database,
+  FlaskConical,
+  Settings,
+  type LucideIcon,
+} from "lucide-react";
+import type { Permission } from "./permissions";
+
+export type NavGroup = "observe" | "author" | "quality" | "system";
+
+export interface NavItem {
+  key: string;
+  label: string;
+  /** path segment under /{team} */
+  segment: string;
+  icon: LucideIcon;
+  group: NavGroup;
+  /** `g`-prefixed go-to shortcut letter */
+  hotkey: string;
+  /** permission required to see the item; undefined = always visible */
+  permission?: Permission;
+  /** live-count badge source key (resolved from realtime/session) */
+  badge?: "activeRuns" | "approvals";
+}
+
+export const NAV_ITEMS: NavItem[] = [
+  // OBSERVE
+  { key: "dashboard", label: "Dashboard", segment: "dashboard", icon: LayoutDashboard, group: "observe", hotkey: "d" },
+  { key: "runs", label: "Runs", segment: "runs", icon: Play, group: "observe", hotkey: "r", permission: "run:read", badge: "activeRuns" },
+  { key: "observability", label: "Observability", segment: "observability", icon: Activity, group: "observe", hotkey: "o" },
+  // AUTHOR
+  { key: "agents", label: "Agents", segment: "agents", icon: Bot, group: "author", hotkey: "a", permission: "agent:read" },
+  { key: "workflows", label: "Workflows", segment: "workflows", icon: Workflow, group: "author", hotkey: "w", permission: "workflow:read" },
+  { key: "tools", label: "Tools", segment: "tools", icon: Wrench, group: "author", hotkey: "t", permission: "tool:read" },
+  { key: "memory", label: "Memory", segment: "memory", icon: Database, group: "author", hotkey: "m", permission: "memory:read" },
+  // QUALITY
+  { key: "evals", label: "Evals", segment: "evals", icon: FlaskConical, group: "quality", hotkey: "e", permission: "eval:read" },
+  // SYSTEM
+  { key: "settings", label: "Settings", segment: "settings", icon: Settings, group: "system", hotkey: "s", permission: "settings:read" },
+];
+
+export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
+  observe: "Observe",
+  author: "Author",
+  quality: "Quality",
+  system: "",
+};
+
+/** Items shown in the mobile bottom tab bar (max 5; last is "More"). */
+export const MOBILE_NAV_KEYS = ["dashboard", "runs", "agents", "tools"] as const;
+
+export function hrefFor(team: string, segment: string): string {
+  return `/${team}/${segment}`;
+}
