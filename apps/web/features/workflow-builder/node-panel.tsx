@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Play, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { NodeType } from "@/types/domain";
 
 export function NodePanel() {
@@ -18,6 +19,7 @@ export function NodePanel() {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const deleteSelected = useWorkflowStore((s) => s.deleteSelected);
   const selectNode = useWorkflowStore((s) => s.selectNode);
+  const execution = useWorkflowStore((s) => (s.selectedNodeId ? s.nodeExecutions[s.selectedNodeId] : undefined));
 
   const node = nodes.find((n) => n.id === selectedNodeId);
   if (!node) return null;
@@ -74,6 +76,25 @@ export function NodePanel() {
 
           <SectionTitle>Configuration</SectionTitle>
           <NodeConfigForm nodeType={data.nodeType} config={data.config ?? {}} nodeId={node.id} />
+
+          {execution && execution.status !== "waiting" && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <SectionTitle>Last run</SectionTitle>
+                <RunStatusPill status={execution.status} />
+              </div>
+              {execution.status === "error" && execution.message && (
+                <p className="text-xs text-danger">{execution.message}</p>
+              )}
+              <Field label="Input">
+                <JsonBlock value={execution.input} />
+              </Field>
+              <Field label="Output">
+                <JsonBlock value={execution.output} />
+              </Field>
+            </>
+          )}
         </div>
       </ScrollArea>
 
@@ -105,6 +126,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
     </div>
+  );
+}
+
+function RunStatusPill({ status }: { status: "waiting" | "running" | "success" | "error" }) {
+  const map = {
+    waiting: { label: "Waiting", cls: "border-border bg-muted text-muted-foreground" },
+    running: { label: "Running", cls: "border-[var(--n8n-brand)]/30 bg-[var(--n8n-brand-soft)] text-[var(--n8n-brand)]" },
+    success: { label: "Success", cls: "border-success/30 bg-success-surface text-success" },
+    error: { label: "Error", cls: "border-danger/30 bg-danger-surface text-danger" },
+  } as const;
+  const s = map[status];
+  return <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium", s.cls)}>{s.label}</span>;
+}
+
+function JsonBlock({ value }: { value: unknown }) {
+  if (value === undefined || value === null) {
+    return <p className="text-xs text-muted-foreground">—</p>;
+  }
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } catch {
+    text = String(value);
+  }
+  return (
+    <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--n8n-border)] bg-[var(--n8n-subtle)] p-2 font-mono text-[11px] leading-relaxed text-foreground">
+      {text}
+    </pre>
   );
 }
 

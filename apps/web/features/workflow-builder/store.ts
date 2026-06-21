@@ -42,6 +42,7 @@ export type NodeExecution = {
   startedAt?: string;
   finishedAt?: string;
   message?: string;
+  input?: unknown;
   output?: unknown;
 };
 
@@ -338,6 +339,7 @@ function stepsToExecutions(run: RunDetail): Record<string, NodeExecution> {
       startedAt: s.startedAt,
       finishedAt: s.endedAt ?? undefined,
       message: s.error ?? undefined,
+      input: s.input ?? undefined,
       output: s.output ?? undefined,
     };
   }
