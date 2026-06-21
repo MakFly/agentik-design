@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useWorkflowStore } from "./store";
 import { NODE_TYPE_CONFIGS } from "./constants";
 import { Input } from "@/components/ui/input";
@@ -20,11 +21,12 @@ export function NodePanel() {
   const deleteSelected = useWorkflowStore((s) => s.deleteSelected);
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const execution = useWorkflowStore((s) => (s.selectedNodeId ? s.nodeExecutions[s.selectedNodeId] : undefined));
+  const [tab, setTab] = useState<"parameters" | "settings">("parameters");
 
   const node = nodes.find((n) => n.id === selectedNodeId);
   if (!node) return null;
 
-  const data = node.data as { nodeType: NodeType; label: string; config?: Record<string, unknown> };
+  const data = node.data as { nodeType: NodeType; label: string; notes?: string; config?: Record<string, unknown> };
   const cfg = NODE_TYPE_CONFIGS[data.nodeType];
   const Icon = cfg.icon;
 
@@ -51,11 +53,29 @@ export function NodePanel() {
       </div>
 
       <div className="grid grid-cols-2 border-b border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-3 py-2">
-        <button className="flex h-8 items-center justify-center gap-1.5 rounded-md bg-[var(--n8n-brand-soft)] text-xs font-semibold text-[var(--n8n-brand)]">
+        <button
+          type="button"
+          onClick={() => setTab("parameters")}
+          className={cn(
+            "flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors",
+            tab === "parameters"
+              ? "bg-[var(--n8n-brand-soft)] font-semibold text-[var(--n8n-brand)]"
+              : "text-muted-foreground hover:bg-[var(--n8n-hover)]",
+          )}
+        >
           <SlidersHorizontal className="size-3.5" />
           Parameters
         </button>
-        <button className="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-[var(--n8n-hover)]">
+        <button
+          type="button"
+          onClick={() => setTab("settings")}
+          className={cn(
+            "flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors",
+            tab === "settings"
+              ? "bg-[var(--n8n-brand-soft)] font-semibold text-[var(--n8n-brand)]"
+              : "text-muted-foreground hover:bg-[var(--n8n-hover)]",
+          )}
+        >
           <Settings2 className="size-3.5" />
           Settings
         </button>
@@ -63,35 +83,59 @@ export function NodePanel() {
 
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-4 p-4">
-          <SectionTitle>Node</SectionTitle>
-          <Field label="Label">
-            <Input
-              value={data.label}
-              onChange={(e) => updateNodeData(node.id, { label: e.target.value })}
-              className="h-8 border-[var(--n8n-border)] bg-[var(--n8n-surface)] text-sm focus-visible:ring-[var(--n8n-focus)]"
-            />
-          </Field>
-
-          <Separator />
-
-          <SectionTitle>Configuration</SectionTitle>
-          <NodeConfigForm nodeType={data.nodeType} config={data.config ?? {}} nodeId={node.id} />
-
-          {execution && execution.status !== "waiting" && (
+          {tab === "parameters" ? (
             <>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <SectionTitle>Last run</SectionTitle>
-                <RunStatusPill status={execution.status} />
-              </div>
-              {execution.status === "error" && execution.message && (
-                <p className="text-xs text-danger">{execution.message}</p>
-              )}
-              <Field label="Input">
-                <JsonBlock value={execution.input} />
+              <SectionTitle>Node</SectionTitle>
+              <Field label="Label">
+                <Input
+                  value={data.label}
+                  onChange={(e) => updateNodeData(node.id, { label: e.target.value })}
+                  className="h-8 border-[var(--n8n-border)] bg-[var(--n8n-surface)] text-sm focus-visible:ring-[var(--n8n-focus)]"
+                />
               </Field>
-              <Field label="Output">
-                <JsonBlock value={execution.output} />
+
+              <Separator />
+
+              <SectionTitle>Configuration</SectionTitle>
+              <NodeConfigForm nodeType={data.nodeType} config={data.config ?? {}} nodeId={node.id} />
+
+              {execution && execution.status !== "waiting" && (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <SectionTitle>Last run</SectionTitle>
+                    <RunStatusPill status={execution.status} />
+                  </div>
+                  {execution.status === "error" && execution.message && (
+                    <p className="text-xs text-danger">{execution.message}</p>
+                  )}
+                  <Field label="Input">
+                    <JsonBlock value={execution.input} />
+                  </Field>
+                  <Field label="Output">
+                    <JsonBlock value={execution.output} />
+                  </Field>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <SectionTitle>Settings</SectionTitle>
+              <Field label="Notes">
+                <Textarea
+                  value={data.notes ?? ""}
+                  onChange={(e) => updateNodeData(node.id, { notes: e.target.value })}
+                  placeholder="Free-text notes for this node (saved with the workflow)."
+                  className="min-h-[100px] text-sm"
+                />
+              </Field>
+              <Separator />
+              <SectionTitle>Metadata</SectionTitle>
+              <Field label="Node type">
+                <Input value={cfg.label} readOnly className="h-8 bg-[var(--n8n-subtle)] text-sm text-muted-foreground" />
+              </Field>
+              <Field label="Node ID">
+                <Input value={node.id} readOnly className="h-8 bg-[var(--n8n-subtle)] font-mono text-xs text-muted-foreground" />
               </Field>
             </>
           )}

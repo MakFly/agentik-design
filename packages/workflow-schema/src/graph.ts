@@ -129,6 +129,7 @@ export const workflowNode = z.object({
   type: nodeType,
   position: z.object({ x: z.number(), y: z.number() }),
   label: z.string(),
+  notes: z.string().optional(),
   config: nodeConfig,
 });
 export type WorkflowNode = z.infer<typeof workflowNode>;

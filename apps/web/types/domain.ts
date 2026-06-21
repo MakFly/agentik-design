@@ -213,6 +213,7 @@ export interface WorkflowNode {
   type: NodeType;
   position: { x: number; y: number };
   label: string;
+  notes?: string;
   config: NodeConfig;
 }
 

@@ -7,7 +7,7 @@ import type { NodeConfig, NodeType, WorkflowGraph } from "@agentik/workflow-sche
  * `data.{nodeType,label,config}`; the engine wants flat `{type,label,config}`.
  */
 
-type BuilderNodeData = { nodeType: NodeType; label?: string; config: NodeConfig };
+type BuilderNodeData = { nodeType: NodeType; label?: string; notes?: string; config: NodeConfig };
 
 function nodeData(node: Node): BuilderNodeData {
   return node.data as BuilderNodeData;
@@ -22,6 +22,7 @@ export function toGraph(nodes: Node[], edges: Edge[]): WorkflowGraph {
         type: data.nodeType,
         position: { x: n.position.x, y: n.position.y },
         label: data.label ?? n.id,
+        ...(data.notes ? { notes: data.notes } : {}),
         config: data.config,
       };
     }),
@@ -42,7 +43,7 @@ export function fromGraph(graph: WorkflowGraph): { nodes: Node[]; edges: Edge[] 
       id: n.id,
       type: "workflow",
       position: { x: n.position.x, y: n.position.y },
-      data: { nodeType: n.type, label: n.label, config: n.config },
+      data: { nodeType: n.type, label: n.label, notes: n.notes, config: n.config },
     })),
     edges: graph.edges.map((e) => ({
       id: e.id,

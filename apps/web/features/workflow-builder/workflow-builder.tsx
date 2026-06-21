@@ -199,7 +199,7 @@ export function WorkflowBuilder({
           </div>
 
           {isDesktop && selectedNodeId && (
-            <aside className="w-[420px] shrink-0 animate-in slide-in-from-right-4 duration-200">
+            <aside className="w-[clamp(420px,32vw,640px)] shrink-0 animate-in slide-in-from-right-4 duration-200">
               <NodePanel />
             </aside>
           )}
@@ -225,7 +225,7 @@ export function WorkflowBuilder({
 
         {!isDesktop && selectedNodeId && (
           <Sheet open onOpenChange={(open) => { if (!open) useWorkflowStore.getState().selectNode(null); }}>
-            <SheetContent side="bottom" className="max-h-[70dvh]">
+            <SheetContent side="bottom" className="max-h-[88dvh]">
               <SheetHeader className="sr-only">
                 <SheetTitle>Node settings</SheetTitle>
               </SheetHeader>
