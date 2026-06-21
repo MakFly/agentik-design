@@ -1,0 +1,310 @@
+{
+  "url": "http://localhost:3001/acme/dashboard",
+  "title": "Base demo — assistant-ui",
+  "buttons": [
+    {
+      "i": 0,
+      "text": "Base",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 145.0625,
+        "y": 9.5,
+        "width": 72.046875,
+        "height": 28,
+        "top": 9.5,
+        "right": 217.109375,
+        "bottom": 37.5,
+        "left": 145.0625
+      }
+    },
+    {
+      "i": 1,
+      "text": "",
+      "aria": "Toggle theme",
+      "role": null,
+      "box": {
+        "x": 1287.609375,
+        "y": 7.5,
+        "width": 32,
+        "height": 32,
+        "top": 7.5,
+        "right": 1319.609375,
+        "bottom": 39.5,
+        "left": 1287.609375
+      }
+    },
+    {
+      "i": 2,
+      "text": "",
+      "aria": "Assistant",
+      "role": null,
+      "box": {
+        "x": 12,
+        "y": 64,
+        "width": 32,
+        "height": 32,
+        "top": 64,
+        "right": 44,
+        "bottom": 96,
+        "left": 12
+      }
+    },
+    {
+      "i": 3,
+      "text": "New Thread",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 12,
+        "y": 116,
+        "width": 236,
+        "height": 32,
+        "top": 116,
+        "right": 248,
+        "bottom": 148,
+        "left": 12
+      }
+    },
+    {
+      "i": 4,
+      "text": "",
+      "aria": "Toggle menu",
+      "role": null,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      }
+    },
+    {
+      "i": 5,
+      "text": "",
+      "aria": "Hide sidebar",
+      "role": null,
+      "box": {
+        "x": 276,
+        "y": 64,
+        "width": 32,
+        "height": 32,
+        "top": 64,
+        "right": 308,
+        "bottom": 96,
+        "left": 276
+      }
+    },
+    {
+      "i": 6,
+      "text": "Share",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 1384,
+        "y": 64,
+        "width": 32,
+        "height": 32,
+        "top": 64,
+        "right": 1416,
+        "bottom": 96,
+        "left": 1384
+      }
+    },
+    {
+      "i": 7,
+      "text": "",
+      "aria": "Add Attachment",
+      "role": null,
+      "box": {
+        "x": 504,
+        "y": 486,
+        "width": 28,
+        "height": 28,
+        "top": 486,
+        "right": 532,
+        "bottom": 514,
+        "left": 504
+      }
+    },
+    {
+      "i": 8,
+      "text": "GPT-5.4 Nano",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 536,
+        "y": 486,
+        "width": 146.109375,
+        "height": 28,
+        "top": 486,
+        "right": 682.109375,
+        "bottom": 514,
+        "left": 536
+      }
+    },
+    {
+      "i": 9,
+      "text": "",
+      "aria": "Voice input",
+      "role": null,
+      "box": {
+        "x": 1128,
+        "y": 486,
+        "width": 28,
+        "height": 28,
+        "top": 486,
+        "right": 1156,
+        "bottom": 514,
+        "left": 1128
+      }
+    },
+    {
+      "i": 10,
+      "text": "",
+      "aria": "Send message",
+      "role": null,
+      "box": {
+        "x": 1160,
+        "y": 486,
+        "width": 28,
+        "height": 28,
+        "top": 486,
+        "right": 1188,
+        "bottom": 514,
+        "left": 1160
+      }
+    },
+    {
+      "i": 11,
+      "text": "Weather",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 589.171875,
+        "y": 539,
+        "width": 101.859375,
+        "height": 34,
+        "top": 539,
+        "right": 691.03125,
+        "bottom": 573,
+        "left": 589.171875
+      }
+    },
+    {
+      "i": 12,
+      "text": "Code",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 699.03125,
+        "y": 539,
+        "width": 81.65625,
+        "height": 34,
+        "top": 539,
+        "right": 780.6875,
+        "bottom": 573,
+        "left": 699.03125
+      }
+    },
+    {
+      "i": 13,
+      "text": "Write",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 788.6875,
+        "y": 539,
+        "width": 81.671875,
+        "height": 34,
+        "top": 539,
+        "right": 870.359375,
+        "bottom": 573,
+        "left": 788.6875
+      }
+    },
+    {
+      "i": 14,
+      "text": "Analyze",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 878.359375,
+        "y": 539,
+        "width": 98.21875,
+        "height": 34,
+        "top": 539,
+        "right": 976.578125,
+        "bottom": 573,
+        "left": 878.359375
+      }
+    },
+    {
+      "i": 15,
+      "text": "Brainstorm",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 984.578125,
+        "y": 539,
+        "width": 118.234375,
+        "height": 34,
+        "top": 539,
+        "right": 1102.8125,
+        "bottom": 573,
+        "left": 984.578125
+      }
+    },
+    {
+      "i": 16,
+      "text": "",
+      "aria": "Dismiss menu",
+      "role": null,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      }
+    },
+    {
+      "i": 17,
+      "text": "Close",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      }
+    },
+    {
+      "i": 18,
+      "text": "New Thread",
+      "aria": null,
+      "role": null,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0
+      }
+    }
+  ]
+}

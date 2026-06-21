@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Plus } from "lucide-react";
 import { useWorkflowStore } from "./store";
@@ -31,33 +31,134 @@ export function WorkflowBuilder({ team }: { team: string }) {
   const init = useWorkflowStore((s) => s.init);
   const paletteOpen = useWorkflowStore((s) => s.paletteOpen);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
-  const saveState = useWorkflowStore((s) => s.saveState);
   const setSaveState = useWorkflowStore((s) => s.setSaveState);
+  const setPaletteOpen = useWorkflowStore((s) => s.setPaletteOpen);
+  const persistDraft = useWorkflowStore((s) => s.persistDraft);
+  const executeWorkflow = useWorkflowStore((s) => s.executeWorkflow);
+  const copySelectedNode = useWorkflowStore((s) => s.copySelectedNode);
+  const pasteClipboardNode = useWorkflowStore((s) => s.pasteClipboardNode);
+  const duplicateSelectedNode = useWorkflowStore((s) => s.duplicateSelectedNode);
+  const deleteSelected = useWorkflowStore((s) => s.deleteSelected);
+  const undo = useWorkflowStore((s) => s.undo);
+  const redo = useWorkflowStore((s) => s.redo);
   const rev = useWorkflowStore((s) => s.rev);
   const isDesktop = useIsDesktop();
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    init();
-  }, [init]);
+    init(team);
+  }, [init, team]);
+
+  useEffect(() => () => {
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+  }, []);
 
   useEffect(() => {
-    if (saveState !== "dirty") return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+
+    const state = useWorkflowStore.getState();
+    if (state.saveState !== "dirty") return;
+    const revisionToSave = rev;
+
     setSaveState("saving");
-    const t = setTimeout(() => setSaveState("saved"), AUTOSAVE_MS);
-    return () => clearTimeout(t);
-  }, [rev, saveState, setSaveState]);
+    autosaveTimerRef.current = setTimeout(() => {
+      const current = useWorkflowStore.getState();
+      if (current.rev === revisionToSave) {
+        const persisted = current.persistDraft(team);
+        setSaveState(persisted ? "saved" : "dirty");
+      }
+    }, AUTOSAVE_MS);
+  }, [persistDraft, rev, setSaveState, team]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTextField =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+
+      if (event.key === "Tab" && !isTextField) {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+
+      if (isTextField) return;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        setSaveState("saving");
+        setSaveState(persistDraft(team) ? "saved" : "dirty");
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void executeWorkflow();
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+        if (copySelectedNode()) event.preventDefault();
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v") {
+        if (pasteClipboardNode()) event.preventDefault();
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+        if (duplicateSelectedNode()) event.preventDefault();
+      }
+
+      if (event.key === "Backspace" || event.key === "Delete") {
+        const selected = useWorkflowStore.getState().selectedNodeId;
+        if (selected) {
+          event.preventDefault();
+          deleteSelected();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [
+    copySelectedNode,
+    deleteSelected,
+    duplicateSelectedNode,
+    executeWorkflow,
+    pasteClipboardNode,
+    persistDraft,
+    redo,
+    setPaletteOpen,
+    setSaveState,
+    team,
+    undo,
+  ]);
 
   return (
     <ReactFlowProvider>
-      <div className="flex h-dvh flex-col overflow-hidden">
+      <div
+        className="n8n-workflow flex h-dvh flex-col overflow-hidden bg-[var(--n8n-canvas)] text-[var(--n8n-text)]"
+      >
         <Toolbar team={team} />
 
         <div className="relative flex min-h-0 flex-1">
-          {/* palette — desktop */}
           {isDesktop && (
             <aside
               className={cn(
-                "w-[280px] shrink-0 border-r border-border bg-surface transition-[width,opacity] duration-200",
+                "w-[320px] shrink-0 border-r border-[var(--n8n-border)] bg-[var(--n8n-panel)] transition-[width,opacity] duration-200",
                 !paletteOpen && "w-0 overflow-hidden opacity-0",
               )}
             >
@@ -65,25 +166,22 @@ export function WorkflowBuilder({ team }: { team: string }) {
             </aside>
           )}
 
-          {/* canvas */}
           <div className="min-w-0 flex-1">
             <Canvas />
           </div>
 
-          {/* config panel — desktop */}
           {isDesktop && selectedNodeId && (
-            <aside className="w-[340px] shrink-0 animate-in slide-in-from-right-4 duration-200">
+            <aside className="w-[420px] shrink-0 animate-in slide-in-from-right-4 duration-200">
               <NodePanel />
             </aside>
           )}
         </div>
 
-        {/* mobile FAB */}
         {!isDesktop && (
           <div className="fixed bottom-20 right-4 z-50" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
             <Sheet>
               <SheetTrigger asChild>
-                <Button size="icon" className="size-12 rounded-full shadow-lg">
+                <Button size="icon" className="size-12 rounded-full bg-[var(--n8n-brand)] text-[var(--n8n-brand-foreground)] shadow-lg hover:bg-[var(--n8n-brand-hover)]">
                   <Plus className="size-5" />
                 </Button>
               </SheetTrigger>
@@ -97,7 +195,6 @@ export function WorkflowBuilder({ team }: { team: string }) {
           </div>
         )}
 
-        {/* mobile config sheet */}
         {!isDesktop && selectedNodeId && (
           <Sheet open onOpenChange={(open) => { if (!open) useWorkflowStore.getState().selectNode(null); }}>
             <SheetContent side="bottom" className="max-h-[70dvh]">

@@ -55,8 +55,8 @@ export function createNode(
 }
 
 export function createInitialNodes(): { nodes: Node[]; edges: Edge[] } {
-  const trigger = createNode("trigger", { x: 200, y: 250 }, "Manual trigger");
-  const end = createNode("end", { x: 600, y: 250 });
+  const trigger = createNode("trigger", { x: 80, y: 250 }, "Manual trigger");
+  const end = createNode("end", { x: 430, y: 250 });
   return {
     nodes: [trigger, end],
     edges: [

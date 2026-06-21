@@ -31,8 +31,8 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   // OBSERVE
-  { key: "dashboard", label: "Dashboard", segment: "dashboard", icon: LayoutDashboard, group: "observe", hotkey: "d" },
-  { key: "runs", label: "Runs", segment: "runs", icon: Play, group: "observe", hotkey: "r", permission: "run:read", badge: "activeRuns" },
+  { key: "dashboard", label: "Hermes Lite", segment: "dashboard", icon: LayoutDashboard, group: "observe", hotkey: "d" },
+  { key: "runs", label: "Executions", segment: "runs", icon: Play, group: "observe", hotkey: "r", permission: "run:read", badge: "activeRuns" },
   { key: "observability", label: "Observability", segment: "observability", icon: Activity, group: "observe", hotkey: "o" },
   // AUTHOR
   { key: "agents", label: "Agents", segment: "agents", icon: Bot, group: "author", hotkey: "a", permission: "agent:read" },
@@ -46,7 +46,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
-  observe: "Observe",
+  observe: "Pilotage",
   author: "Author",
   quality: "Quality",
   system: "",

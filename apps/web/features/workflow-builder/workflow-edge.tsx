@@ -19,6 +19,8 @@ function WorkflowEdgeRaw({
   targetY,
   sourcePosition,
   targetPosition,
+  source,
+  target,
   label,
   selected,
 }: EdgeProps) {
@@ -53,7 +55,7 @@ function WorkflowEdgeRaw({
         id={id}
         path={edgePath}
         style={{
-          stroke: isActive ? "var(--primary)" : "var(--border-strong)",
+          stroke: isActive ? "var(--n8n-brand)" : "var(--n8n-connection)",
           strokeWidth: isActive ? 2 : 1.5,
           transition: "stroke 0.15s ease, stroke-width 0.15s ease",
         }}
@@ -71,23 +73,26 @@ function WorkflowEdgeRaw({
           onMouseLeave={() => setHovered(false)}
         >
           {label ? (
-            <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-muted-foreground shadow-sm">
+            <span className="rounded-full border border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-2 py-0.5 text-[11px] font-medium text-muted-foreground shadow-sm">
               {label}
             </span>
           ) : (
             <button
               className={cn(
-                "flex size-6 items-center justify-center rounded-full",
-                "border border-border bg-surface shadow-sm",
+                "flex size-7 items-center justify-center rounded-full",
+                "border border-[var(--n8n-brand)] bg-[var(--n8n-surface)] text-[var(--n8n-brand)] shadow-sm",
                 "transition-all duration-150",
-                "hover:border-primary hover:bg-primary hover:text-primary-foreground hover:scale-110",
+                "hover:bg-[var(--n8n-brand)] hover:text-[var(--n8n-brand-foreground)] hover:scale-110",
                 isActive ? "opacity-100 scale-100" : "opacity-0 scale-75",
               )}
               onClick={(e) => {
                 e.stopPropagation();
                 const midX = (sourceX + targetX) / 2;
                 const midY = (sourceY + targetY) / 2;
-                addNode(createNode("agent", { x: midX - 100, y: midY - 25 }));
+                addNode(createNode("agent", { x: midX - 110, y: midY - 28 }), {
+                  insertOnEdge: { id, source, target },
+                  select: true,
+                });
               }}
             >
               <Plus className="size-3" strokeWidth={2.5} />

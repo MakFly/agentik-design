@@ -1,0 +1,38 @@
+- generic [active] [ref=e1] [box=0,0,1440,900]:
+  - generic [ref=e12] [box=0,0,1440,900]:
+    - banner [ref=e13] [box=0,0,1440,48]:
+      - generic [ref=e14] [box=16,10,443,28]:
+        - link "assistant-ui logo assistant-ui" [ref=e15] [cursor=pointer] [box=16,12,114,24]:
+          - /url: /
+          - img "assistant-ui logo" [ref=e16] [box=16,15,18,18]
+          - generic [ref=e17] [box=42,12,88,24]: assistant-ui
+        - generic [ref=e18] [box=137,12,8,24]: /
+        - combobox [ref=e19] [box=145,10,72,28]:
+          - text: Base
+          - img [ref=e20] [box=195,17,14,14]
+        - generic [ref=e22] [box=225,16,234,16]: The full assistant-ui experience, unthemed.
+      - generic [ref=e23] [box=1250,8,174,32]:
+        - link "View source on GitHub" [ref=e24] [cursor=pointer] [box=1250,8,32,32]:
+          - /url: https://github.com/assistant-ui/assistant-ui/blob/main/apps/docs/components/examples/base.tsx
+          - img [box=1258,16,16,16]
+        - button "Toggle theme" [ref=e25] [box=1288,8,32,32]:
+          - img [box=1296,16,16,16]
+        - link "Get started" [ref=e26] [cursor=pointer] [box=1326,8,98,32]:
+          - /url: /docs
+    - generic [ref=e28] [box=0,48,1440,852]:
+      - complementary [ref=e29] [box=0,48,260,852]:
+        - generic [ref=e30] [box=0,48,260,64]:
+          - button "Assistant" [ref=e31] [box=12,64,32,32]
+          - generic [ref=e32] [box=52,70,77,20]: assistant-ui
+        - button "New Thread" [ref=e34] [box=12,116,236,32]:
+          - img [ref=e35] [box=24,124,16,16]
+          - generic [ref=e36] [box=48,122,77,20]: New Thread
+      - generic [ref=e38] [box=260,56,1172,836]:
+        - generic [ref=e39] [box=260,56,1172,48]:
+          - button "Hide sidebar" [ref=e40] [box=276,64,32,32]
+          - generic [ref=e42] [box=316,70,1060,20]: New Chat
+          - button "Share" [disabled] [box=1384,64,32,32]
+        - main [ref=e43] [box=260,104,1172,788]:
+          - generic [ref=e45] [box=494,373,704,242]
+  - region "Notifications alt+T" [box=0,900,1440,0]
+  - alert [ref=e11] [box=-1,899,1,1]

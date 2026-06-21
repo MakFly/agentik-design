@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, X } from "lucide-react";
+import { Play, Settings2, SlidersHorizontal, Trash2, X } from "lucide-react";
 import type { NodeType } from "@/types/domain";
 
 export function NodePanel() {
@@ -27,33 +27,46 @@ export function NodePanel() {
   const Icon = cfg.icon;
 
   return (
-    <div className="flex h-full flex-col border-l border-border bg-surface">
-      {/* header */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+    <div className="flex h-full flex-col border-l border-[var(--n8n-border)] bg-[var(--n8n-panel)]">
+      <div className="flex items-center gap-3 border-b border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-4 py-3">
         <div
-          className="flex size-8 items-center justify-center rounded-lg"
-          style={{ background: `var(${cfg.bgVar})`, color: `var(${cfg.accentVar})` }}
+          className="flex size-9 items-center justify-center rounded-[10px] border border-[var(--n8n-border)] bg-[var(--n8n-surface)] shadow-sm"
+          style={{ color: `var(${cfg.accentVar})` }}
         >
           <Icon className="size-4" strokeWidth={2} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold leading-tight text-foreground">{cfg.label}</p>
+          <p className="text-[14px] font-semibold leading-tight text-foreground">{data.label}</p>
           <p className="text-[11px] text-muted-foreground">{cfg.description}</p>
         </div>
-        <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={() => selectNode(null)}>
-          <X className="size-3.5" />
+        <Button variant="outline" size="sm" className="h-8 gap-1.5 border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-2.5 text-xs hover:bg-[var(--n8n-hover)]">
+          <Play className="size-3.5" />
+          Test step
+        </Button>
+        <Button variant="ghost" size="icon" className="size-8 shrink-0 hover:bg-[var(--n8n-hover)]" onClick={() => selectNode(null)}>
+          <X className="size-4" />
         </Button>
       </div>
 
-      {/* body */}
+      <div className="grid grid-cols-2 border-b border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-3 py-2">
+        <button className="flex h-8 items-center justify-center gap-1.5 rounded-md bg-[var(--n8n-brand-soft)] text-xs font-semibold text-[var(--n8n-brand)]">
+          <SlidersHorizontal className="size-3.5" />
+          Parameters
+        </button>
+        <button className="flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-[var(--n8n-hover)]">
+          <Settings2 className="size-3.5" />
+          Settings
+        </button>
+      </div>
+
       <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-5 p-4">
-          <SectionTitle>General</SectionTitle>
+        <div className="flex flex-col gap-4 p-4">
+          <SectionTitle>Node</SectionTitle>
           <Field label="Label">
             <Input
               value={data.label}
               onChange={(e) => updateNodeData(node.id, { label: e.target.value })}
-              className="h-8 text-sm"
+              className="h-8 border-[var(--n8n-border)] bg-[var(--n8n-surface)] text-sm focus-visible:ring-[var(--n8n-focus)]"
             />
           </Field>
 
@@ -64,8 +77,7 @@ export function NodePanel() {
         </div>
       </ScrollArea>
 
-      {/* footer */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-[var(--n8n-border)] bg-[var(--n8n-surface)] p-3">
         <Button
           variant="ghost"
           size="sm"
@@ -132,13 +144,13 @@ function NodeConfigForm({
           </Field>
           {config.trigger === "schedule" && (
             <Field label="Cron expression">
-              <Input
-                value={(config.cron as string) ?? ""}
-                onChange={(e) => patch({ cron: e.target.value })}
-                placeholder="0 * * * *"
-                className="h-8 font-mono text-sm"
-              />
-            </Field>
+            <Input
+              value={(config.cron as string) ?? ""}
+              onChange={(e) => patch({ cron: e.target.value })}
+              placeholder="0 * * * *"
+              className="h-8 font-mono text-sm"
+            />
+          </Field>
           )}
         </div>
       );
@@ -188,6 +200,28 @@ function NodeConfigForm({
               value={(config.url as string) ?? ""}
               onChange={(e) => patch({ url: e.target.value })}
               placeholder="https://api.example.com/…"
+              className="h-8 text-sm"
+            />
+          </Field>
+        </div>
+      );
+
+    case "tool":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Tool">
+            <Input
+              value={(config.toolId as string) ?? ""}
+              onChange={(e) => patch({ toolId: e.target.value })}
+              placeholder="Select a tool"
+              className="h-8 text-sm"
+            />
+          </Field>
+          <Field label="Action">
+            <Input
+              value={(config.action as string) ?? ""}
+              onChange={(e) => patch({ action: e.target.value })}
+              placeholder="run"
               className="h-8 text-sm"
             />
           </Field>
@@ -252,6 +286,27 @@ function NodeConfigForm({
               type="number"
               value={(config.maxIterations as number) ?? 100}
               onChange={(e) => patch({ maxIterations: Number(e.target.value) })}
+              className="h-8 text-sm"
+            />
+          </Field>
+        </div>
+      );
+
+    case "subflow":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Workflow">
+            <Input
+              value={(config.workflowId as string) ?? ""}
+              onChange={(e) => patch({ workflowId: e.target.value })}
+              placeholder="Select workflow"
+              className="h-8 text-sm"
+            />
+          </Field>
+          <Field label="Version">
+            <Input
+              value={(config.versionId as string) ?? "live"}
+              onChange={(e) => patch({ versionId: e.target.value })}
               className="h-8 text-sm"
             />
           </Field>

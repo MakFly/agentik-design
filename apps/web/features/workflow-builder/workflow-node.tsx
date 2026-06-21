@@ -2,7 +2,9 @@
 
 import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { NODE_TYPE_CONFIGS } from "./constants";
+import { useWorkflowStore } from "./store";
 import { cn } from "@/lib/utils";
 import type { NodeType, NodeConfig } from "@/types/domain";
 
@@ -14,9 +16,10 @@ export type WorkflowNodeData = {
 
 type WfNode = Node<WorkflowNodeData, "workflow">;
 
-function WorkflowNodeRaw({ data, selected }: NodeProps<WfNode>) {
+function WorkflowNodeRaw({ id, data, selected }: NodeProps<WfNode>) {
   const cfg = NODE_TYPE_CONFIGS[data.nodeType];
   const Icon = cfg.icon;
+  const execution = useWorkflowStore((s) => s.nodeExecutions[id]);
 
   return (
     <>
@@ -26,28 +29,29 @@ function WorkflowNodeRaw({ data, selected }: NodeProps<WfNode>) {
 
       <div
         className={cn(
-          "group/node flex min-w-[200px] max-w-[260px] items-center gap-3.5",
-          "rounded-xl border border-border bg-surface px-4 py-3.5",
-          "shadow-sm transition-all duration-150",
-          selected && "ring-2 ring-primary/40 border-primary/30 shadow-lg",
+          "group/node flex min-w-[220px] max-w-[280px] items-center gap-3",
+          "rounded-[14px] border border-[var(--n8n-node-border)] bg-[var(--n8n-node)] px-3 py-3",
+          "shadow-[0_2px_6px_rgb(15_23_42/0.08)] transition-[border-color,box-shadow,transform] duration-150",
+          "hover:border-[var(--n8n-border-strong)] hover:shadow-[0_8px_18px_rgb(15_23_42/0.10)]",
+          selected && "border-[var(--n8n-brand)] shadow-[0_0_0_3px_var(--n8n-focus),0_8px_22px_rgb(15_23_42/0.12)]",
         )}
       >
-        {/* icon badge */}
         <div
-          className="flex size-10 shrink-0 items-center justify-center rounded-[10px] shadow-sm"
-          style={{ background: `var(${cfg.bgVar})`, color: `var(${cfg.accentVar})` }}
+          className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-[var(--n8n-border)] bg-[var(--n8n-surface)] shadow-[0_1px_2px_rgb(15_23_42/0.06)]"
+          style={{ color: `var(${cfg.accentVar})` }}
         >
           <Icon className="size-[18px]" strokeWidth={2} />
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold leading-tight tracking-tight text-foreground">
+          <p className="truncate text-[13px] font-semibold leading-tight text-foreground">
             {data.label}
           </p>
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          <p className="mt-1 truncate text-[11px] text-muted-foreground">
             {cfg.description}
           </p>
         </div>
+        <NodeStatus status={execution?.status} />
       </div>
 
       {data.nodeType !== "end" && (
@@ -55,6 +59,34 @@ function WorkflowNodeRaw({ data, selected }: NodeProps<WfNode>) {
       )}
     </>
   );
+}
+
+function NodeStatus({ status }: { status?: "waiting" | "running" | "success" | "error" }) {
+  if (status === "running") {
+    return (
+      <span className="flex size-5 items-center justify-center rounded-full bg-[var(--n8n-brand-soft)] text-[var(--n8n-brand)]">
+        <Loader2 className="size-3 animate-spin" />
+      </span>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <span className="flex size-5 items-center justify-center rounded-full bg-danger-surface text-danger">
+        <AlertTriangle className="size-3" />
+      </span>
+    );
+  }
+
+  if (status === "success") {
+    return (
+      <span className="flex size-5 items-center justify-center rounded-full bg-[var(--n8n-success-soft)] text-[var(--n8n-success)]">
+        <Check className="size-3" />
+      </span>
+    );
+  }
+
+  return <span className="size-2 rounded-full bg-[var(--n8n-success)] shadow-[0_0_0_3px_var(--n8n-success-soft)]" />;
 }
 
 export const WorkflowNode = memo(WorkflowNodeRaw);
