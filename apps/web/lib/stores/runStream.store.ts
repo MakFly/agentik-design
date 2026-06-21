@@ -53,8 +53,12 @@ export const useRunStreamStore = create<RunStreamStore>((set) => ({
 
 /* ── Narrow selector hooks (subscribe to the smallest slice) ────────────── */
 
+/** Stable empty reference so the selector doesn't return a new array each render
+ * (which would make useSyncExternalStore loop — "getSnapshot should be cached"). */
+const EMPTY_STEPS: Step[] = [];
+
 export function useRunSteps(runId: string): Step[] {
-  return useRunStreamStore((s) => s.byRun[runId]?.steps ?? []);
+  return useRunStreamStore((s) => s.byRun[runId]?.steps ?? EMPTY_STEPS);
 }
 
 export function useRunConnection(runId: string): ConnectionState {

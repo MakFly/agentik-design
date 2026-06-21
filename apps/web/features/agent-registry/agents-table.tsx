@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryState } from "nuqs";
@@ -11,10 +12,39 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { Button } from "@/components/ui/button";
 import { RbacGate } from "@/lib/auth/rbac";
-import { useAgents } from "./api";
+import { useAgents, useAgentTaskSnapshot } from "./api";
 import type { AgentRow } from "./types";
+import { derivePresence, type AgentTaskSnapshot, type Availability } from "@/lib/agents/presence";
 import { formatRelativeTime, formatDuration, formatPercent, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+const DOT: Record<Availability, string> = {
+  online: "bg-success",
+  unstable: "bg-warning",
+  offline: "bg-muted-foreground/40",
+};
+
+/** Live availability × workload, derived from the shared snapshot. */
+function PresenceCell({ agentId, snapshot }: { agentId: string; snapshot?: AgentTaskSnapshot }) {
+  const meta = snapshot?.agents.find((a) => a.id === agentId);
+  const p = derivePresence(snapshot, {
+    id: agentId,
+    runtimeKind: meta?.runtimeKind ?? "echo",
+    maxConcurrentTasks: meta?.maxConcurrentTasks ?? 1,
+  });
+  const label =
+    p.workload === "working"
+      ? `${p.runningCount} running${p.queuedCount ? ` · ${p.queuedCount} queued` : ""}`
+      : p.workload === "queued"
+        ? `${p.queuedCount} queued`
+        : "idle";
+  return (
+    <div className="flex items-center gap-2">
+      <span className={cn("size-2 shrink-0 rounded-full", DOT[p.availability])} title={p.availability} aria-label={p.availability} />
+      <span className="text-xs text-muted-foreground tabular-nums">{label}</span>
+    </div>
+  );
+}
 
 const STATUSES = ["all", "healthy", "degraded", "error", "idle"] as const;
 
@@ -101,7 +131,18 @@ export function AgentsTable({ team }: { team: string }) {
   const router = useRouter();
   const [status, setStatus] = useQueryState("status");
   const { data, isLoading, isError, error, refetch } = useAgents(team, { status: status ?? undefined });
+  const { data: snapshot } = useAgentTaskSnapshot(team);
   const items = data?.items ?? [];
+
+  // Inject the live presence column after the name column.
+  const cols = useMemo<ColumnDef<AgentRow>[]>(() => {
+    const presence: ColumnDef<AgentRow> = {
+      id: "presence",
+      header: "Presence",
+      cell: ({ row }) => <PresenceCell agentId={row.original.id} snapshot={snapshot} />,
+    };
+    return [columns[0]!, presence, ...columns.slice(1)];
+  }, [snapshot]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -128,7 +169,7 @@ export function AgentsTable({ team }: { team: string }) {
         <ErrorState error={error} onRetry={() => refetch()} />
       ) : (
         <DataTable
-          columns={columns}
+          columns={cols}
           data={items}
           isLoading={isLoading}
           onRowClick={(a) => router.push(`/${team}/agents/${a.id}`)}

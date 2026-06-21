@@ -1,0 +1,31 @@
+// Package runtime defines the adapter that actually executes an agent task.
+package runtime
+
+import (
+	"context"
+
+	"agentik/daemon/internal/protocol"
+)
+
+// Emit streams one message to the engine. The loop assigns the final seq, so
+// runtimes may leave TaskMessage.Seq at zero.
+type Emit func(protocol.TaskMessage)
+
+// Runtime executes a claimed task, streaming output via emit. Returning an error
+// fails the task; the returned value becomes the task result. Honour ctx: when
+// it is cancelled (task cancelled / timeout / shutdown), stop promptly.
+type Runtime interface {
+	Kind() string
+	Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error)
+}
+
+// Registry maps a runtime kind to its adapter.
+type Registry map[string]Runtime
+
+func (r Registry) Kinds() []string {
+	kinds := make([]string, 0, len(r))
+	for k := range r {
+		kinds = append(kinds, k)
+	}
+	return kinds
+}

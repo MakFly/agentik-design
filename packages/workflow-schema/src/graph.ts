@@ -18,6 +18,22 @@ export const NODE_TYPES = [
   "loop",
   "subflow",
   "end",
+  // n8n "core" data nodes (item manipulation, no credentials needed)
+  "set",
+  "filter",
+  "limit",
+  "merge",
+  "noop",
+  "sort",
+  "aggregate",
+  "splitOut",
+  "removeDuplicates",
+  "renameKeys",
+  "crypto",
+  "dateTime",
+  "summarize",
+  // credentialed integration (Phase 5)
+  "slack",
 ] as const;
 
 export const nodeType = z.enum(NODE_TYPES);
@@ -86,6 +102,8 @@ export const nodeConfig = z.discriminatedUnion("type", [
     headers: z.record(z.string(), z.string()).optional(),
     bodyMap: ioMap.optional(),
     auth: z.string().optional(),
+    /** Optional httpHeaderAuth credential id — adds an auth header at run time. */
+    credentialId: z.string().optional(),
     timeoutMs: z.number().int().positive().default(30_000),
   }),
   z.object({
@@ -104,6 +122,8 @@ export const nodeConfig = z.discriminatedUnion("type", [
     type: z.literal("code"),
     language: z.literal("js"),
     source: z.string(),
+    // n8n's two code modes: run once over all items, or once per item.
+    mode: z.enum(["all", "each"]).default("all"),
   }),
   z.object({
     type: z.literal("loop"),
@@ -120,6 +140,92 @@ export const nodeConfig = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("end"),
     outputSchema: jsonSchema.optional(),
+  }),
+  // ── n8n core nodes ───────────────────────────────────────────────────────
+  z.object({
+    // Edit Fields (Set) — assign/override fields on each item.
+    type: z.literal("set"),
+    assignments: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
+    keepOnlySet: z.boolean().default(false),
+  }),
+  z.object({
+    // Filter — keep only items whose condition expression is truthy.
+    type: z.literal("filter"),
+    condition: z.string(),
+  }),
+  z.object({
+    // Limit — keep the first/last N items.
+    type: z.literal("limit"),
+    maxItems: z.number().int().positive().default(1),
+    keep: z.enum(["first", "last"]).default("first"),
+  }),
+  z.object({
+    // Merge — combine items from all input ports into one stream.
+    type: z.literal("merge"),
+    mode: z.enum(["append"]).default("append"),
+  }),
+  z.object({
+    // No Operation — pass items through unchanged.
+    type: z.literal("noop"),
+  }),
+  z.object({
+    // Sort — order items by a field.
+    type: z.literal("sort"),
+    field: z.string(),
+    order: z.enum(["asc", "desc"]).default("asc"),
+  }),
+  z.object({
+    // Aggregate — combine all items into one (collect a field, or all json).
+    type: z.literal("aggregate"),
+    field: z.string().optional(),
+  }),
+  z.object({
+    // Split Out — turn an array field into one item per element.
+    type: z.literal("splitOut"),
+    field: z.string(),
+  }),
+  z.object({
+    // Remove Duplicates — drop items with a repeated key (a field, or whole json).
+    type: z.literal("removeDuplicates"),
+    field: z.string().optional(),
+  }),
+  z.object({
+    // Rename Keys — rename fields on each item.
+    type: z.literal("renameKeys"),
+    renames: z.array(z.object({ from: z.string(), to: z.string() })).default([]),
+  }),
+  z.object({
+    // Crypto — hash/HMAC a value into a field.
+    type: z.literal("crypto"),
+    action: z.enum(["hash", "hmac"]).default("hash"),
+    algorithm: z.enum(["sha256", "sha512", "md5"]).default("sha256"),
+    value: z.string(),
+    secret: z.string().optional(),
+    field: z.string().default("hash"),
+  }),
+  z.object({
+    // Date & Time — format or shift a date into a field (Luxon).
+    type: z.literal("dateTime"),
+    action: z.enum(["format", "add"]).default("format"),
+    sourceField: z.string().optional(), // empty → now
+    outputField: z.string().default("date"),
+    format: z.string().default("yyyy-MM-dd"),
+    amount: z.number().default(0),
+    unit: z.enum(["days", "hours", "minutes", "months", "years"]).default("days"),
+  }),
+  z.object({
+    // Summarize — group items by a field and count/sum another.
+    type: z.literal("summarize"),
+    groupBy: z.string(),
+    operation: z.enum(["count", "sum"]).default("count"),
+    field: z.string().optional(),
+  }),
+  z.object({
+    // Slack — post a message via chat.postMessage (needs a slackApi credential).
+    type: z.literal("slack"),
+    credentialId: z.string(),
+    channel: z.string(),
+    text: z.string(),
   }),
 ]);
 export type NodeConfig = z.infer<typeof nodeConfig>;

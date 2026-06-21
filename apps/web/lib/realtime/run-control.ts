@@ -3,17 +3,17 @@
 import { toast } from "sonner";
 import type { ControlMessage } from "@/types/events";
 import type { RunId, StepId } from "@/types/domain";
+import { realtime } from "./ws-client";
 
 /**
- * Run control channel (docs/04 §10.3). The production transport is a single
- * multiplexed WebSocket carrying control + run subscriptions. This module is the
- * one integration point: swap `send()` to push ControlMessages over the socket
- * and reconcile `control.ack`. For now it optimistically toasts so the UI flow
- * is exercised; the backend WS is wired in the same place.
+ * Run control channel (docs/04 §10.3). Pushes ControlMessages over the single
+ * multiplexed realtime socket. The engine replies with `control.ack`; we don't
+ * block the UI on it (optimistic), but the cache invalidation from the resulting
+ * lifecycle event reconciles state. When the socket is down (mock mode), the
+ * action is acknowledged optimistically so the UI flow stays exercised.
  */
 function send(message: ControlMessage): Promise<{ accepted: boolean; error?: string }> {
-  // TODO(P2-backend): push `message` over the WS, await the matching control.ack.
-  void message;
+  realtime.send(message);
   return Promise.resolve({ accepted: true });
 }
 

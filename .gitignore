@@ -58,3 +58,6 @@ apps/engine/.env
 
 # instant-grep index
 .ig/
+
+# Go daemon build output
+/bin/

@@ -1,0 +1,67 @@
+# Agentik harness — engine + worker + agent daemon, wired onto the shared dev
+# infra (dev-shared-net) reusing infra-postgres / infra-redis. Run `make db/migrate`
+# first so the schema exists. NOTE: stop any host-run engine (port 8787) before
+# `docker compose up` to avoid a port clash.
+name: agentik
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    environment:
+      PORT: "8787"
+      DATABASE_URL: postgresql://test:test@infra-postgres:5432/agentik
+      REDIS_URL: redis://infra-redis:6379
+      DAEMON_ENABLED: "true"
+      DAEMON_AUTH_TOKEN: ${DAEMON_AUTH_TOKEN:-dev-daemon-token-change-me-please}
+      ENGINE_PUBLIC_URL: http://localhost:8787
+      WEB_PUBLIC_URL: http://localhost:3333
+    ports:
+      - "8787:8787"
+    networks:
+      - dev-shared-net
+    labels:
+      dev.dozzle.group: "agentik"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    command: ["bun", "run", "src/worker.ts"]
+    environment:
+      DATABASE_URL: postgresql://test:test@infra-postgres:5432/agentik
+      REDIS_URL: redis://infra-redis:6379
+    depends_on:
+      - engine
+    networks:
+      - dev-shared-net
+    labels:
+      dev.dozzle.group: "agentik"
+
+  daemon:
+    build:
+      context: apps/daemon
+      dockerfile: Dockerfile
+    environment:
+      ENGINE_URL: http://engine:8787
+      DAEMON_AUTH_TOKEN: ${DAEMON_AUTH_TOKEN:-dev-daemon-token-change-me-please}
+      TEAM: acme
+      DAEMON_NAME: docker-daemon
+      # echo by default; add claude → RUNTIME_KINDS=echo,claude + provide auth below.
+      RUNTIME_KINDS: ${DAEMON_RUNTIMES:-echo}
+      # For the claude runtime, give it credentials (one of):
+      #   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # or reuse your host Claude Code session via the volume mount below.
+    # volumes:
+    #   - ${HOME}/.claude:/home/app/.claude:ro
+    depends_on:
+      - engine
+    networks:
+      - dev-shared-net
+    labels:
+      dev.dozzle.group: "agentik"
+
+networks:
+  dev-shared-net:
+    external: true

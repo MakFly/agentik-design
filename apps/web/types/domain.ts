@@ -188,7 +188,21 @@ export type NodeType =
   | "code"
   | "loop"
   | "subflow"
-  | "end";
+  | "end"
+  | "set"
+  | "filter"
+  | "limit"
+  | "merge"
+  | "noop"
+  | "sort"
+  | "aggregate"
+  | "splitOut"
+  | "removeDuplicates"
+  | "renameKeys"
+  | "crypto"
+  | "dateTime"
+  | "summarize"
+  | "slack";
 
 export type NodeErrorPolicy = {
   onError: "fail" | "retry" | "continue" | "route";
@@ -200,13 +214,27 @@ export type NodeConfig =
   | { type: "trigger"; trigger: "manual" | "webhook" | "schedule" | "event"; schema?: JsonSchema; cron?: string }
   | { type: "agent"; agentId?: AgentId; versionId?: VersionId | "live"; model?: string; instructions?: string; prompt?: string; inputMap: IOMap; onError?: NodeErrorPolicy; timeoutMs: number }
   | { type: "tool"; toolId: ToolId; action: string; argsMap: IOMap; scopes: string[] }
-  | { type: "api"; method: HttpMethod; url: string; headers?: Record<string, string>; bodyMap?: IOMap; auth?: string; timeoutMs: number }
+  | { type: "api"; method: HttpMethod; url: string; headers?: Record<string, string>; bodyMap?: IOMap; auth?: string; credentialId?: string; timeoutMs: number }
   | { type: "decision"; branches: Array<{ label: string; expression: string }>; default: string }
   | { type: "approval"; approverRole: string; message: string; timeoutMs: number; onTimeout: "approve" | "reject" }
-  | { type: "code"; language: "js"; source: string }
+  | { type: "code"; language: "js"; source: string; mode?: "all" | "each" }
   | { type: "loop"; collection: string; concurrency: number; maxIterations: number }
   | { type: "subflow"; workflowId: WorkflowId; versionId: VersionId | "live"; inputMap: IOMap }
-  | { type: "end"; outputSchema?: JsonSchema };
+  | { type: "end"; outputSchema?: JsonSchema }
+  | { type: "set"; assignments: Array<{ name: string; value: string }>; keepOnlySet?: boolean }
+  | { type: "filter"; condition: string }
+  | { type: "limit"; maxItems: number; keep?: "first" | "last" }
+  | { type: "merge"; mode?: "append" }
+  | { type: "noop" }
+  | { type: "sort"; field: string; order?: "asc" | "desc" }
+  | { type: "aggregate"; field?: string }
+  | { type: "splitOut"; field: string }
+  | { type: "removeDuplicates"; field?: string }
+  | { type: "renameKeys"; renames: Array<{ from: string; to: string }> }
+  | { type: "crypto"; action?: "hash" | "hmac"; algorithm?: "sha256" | "sha512" | "md5"; value: string; secret?: string; field?: string }
+  | { type: "dateTime"; action?: "format" | "add"; sourceField?: string; outputField?: string; format?: string; amount?: number; unit?: "days" | "hours" | "minutes" | "months" | "years" }
+  | { type: "summarize"; groupBy: string; operation?: "count" | "sum"; field?: string }
+  | { type: "slack"; credentialId: string; channel: string; text: string };
 
 export interface WorkflowNode {
   id: string;

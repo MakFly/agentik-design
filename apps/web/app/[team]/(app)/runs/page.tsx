@@ -1,19 +1,15 @@
 import type { Metadata } from "next";
-import { Play } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
-import { EmptyState } from "@/components/shared/empty-state";
+import { RunsBoard } from "@/features/runs-board/runs-board";
 
 export const metadata: Metadata = { title: "Runs" };
 
-export default async function RunsPage() {
+export default async function RunsPage({ params }: { params: Promise<{ team: string }> }) {
+  const { team } = await params;
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader title="Runs" description="Every execution — live and historical — filterable by status, env, and subject." />
-      <EmptyState
-        icon={Play}
-        title="No runs to show"
-        description="Run an agent or workflow and its execution will appear here, with full timeline, reasoning, tool calls, and cost."
-      />
+    <div className="flex h-[calc(100dvh-var(--navbar-h)-3rem)] min-h-[520px] flex-col gap-4 md:h-[calc(100dvh-var(--navbar-h)-4rem)]">
+      <PageHeader title="Runs" description="Live agent & workflow executions — drag a card to move it across lanes." />
+      <RunsBoard team={team} />
     </div>
   );
 }

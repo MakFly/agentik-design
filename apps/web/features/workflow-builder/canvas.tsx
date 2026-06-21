@@ -96,7 +96,8 @@ export function Canvas() {
       edgeTypes={edgeTypes}
       defaultEdgeOptions={defaultEdgeOptions}
       fitView
-      fitViewOptions={{ padding: 0.22 }}
+      // Cap the zoom so a small graph (1-2 nodes) doesn't fill the screen.
+      fitViewOptions={{ padding: 0.3, maxZoom: 0.85 }}
       proOptions={{ hideAttribution: true }}
       deleteKeyCode={null}
       snapToGrid

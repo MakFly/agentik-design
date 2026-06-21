@@ -33,13 +33,41 @@ function defaultConfigForType(type: NodeType): NodeConfig {
     case "approval":
       return { type: "approval", approverRole: "admin", message: "Please review", timeoutMs: 86_400_000, onTimeout: "reject" };
     case "code":
-      return { type: "code", language: "js", source: "// your code here\nreturn input;" };
+      return { type: "code", language: "js", source: "// your code here\n// items in scope: $input.all(); current item: $json\nreturn $input.all();" };
     case "loop":
       return { type: "loop", collection: "items", concurrency: 1, maxIterations: 100 };
     case "subflow":
       return { type: "subflow", workflowId: "" as never, versionId: "live", inputMap: {} };
     case "end":
       return { type: "end" };
+    case "set":
+      return { type: "set", assignments: [{ name: "field", value: "{{ $json.value }}" }], keepOnlySet: false };
+    case "filter":
+      return { type: "filter", condition: "$json.value != null" };
+    case "limit":
+      return { type: "limit", maxItems: 1, keep: "first" };
+    case "merge":
+      return { type: "merge", mode: "append" };
+    case "noop":
+      return { type: "noop" };
+    case "sort":
+      return { type: "sort", field: "value", order: "asc" };
+    case "aggregate":
+      return { type: "aggregate" };
+    case "splitOut":
+      return { type: "splitOut", field: "items" };
+    case "removeDuplicates":
+      return { type: "removeDuplicates" };
+    case "renameKeys":
+      return { type: "renameKeys", renames: [{ from: "old", to: "new" }] };
+    case "crypto":
+      return { type: "crypto", action: "hash", algorithm: "sha256", value: "{{ $json.value }}", field: "hash" };
+    case "dateTime":
+      return { type: "dateTime", action: "format", outputField: "date", format: "yyyy-MM-dd", amount: 0, unit: "days" };
+    case "summarize":
+      return { type: "summarize", groupBy: "category", operation: "count" };
+    case "slack":
+      return { type: "slack", credentialId: "", channel: "#general", text: "{{ $json.message }}" };
   }
 }
 

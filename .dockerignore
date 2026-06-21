@@ -1,0 +1,24 @@
+# deps & build output (reinstalled/rebuilt in-image)
+**/node_modules
+**/.next
+**/dist
+/bin
+# vcs & local
+.git
+.github
+**/*.log
+**/.DS_Store
+# secrets — provided via compose env, never baked into images
+.env
+**/.env
+.env.*
+!.env.example
+# session debris
+.playwright-mcp
+**/.playwright-mcp
+.ig
+# the other app isn't needed by engine/daemon images
+apps/web/.next
+apps/xulux-base-demo
+docs
+e2e

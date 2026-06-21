@@ -1,5 +1,6 @@
 "use client";
 
+import { useParams, useRouter } from "next/navigation";
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -80,6 +81,7 @@ import {
   PencilLineIcon,
   PlusIcon,
   RefreshCwIcon,
+  SettingsIcon,
   ShareIcon,
   SlashIcon,
   SquareIcon,
@@ -91,12 +93,25 @@ import {
   type DirectiveChipProps,
 } from "@assistant-ui/react-lexical";
 import Image from "next/image";
-import { useState, type FC, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type FC,
+  type ReactNode,
+} from "react";
 import { useTheme } from "next-themes";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { ModelSelector } from "@/components/assistant-ui/model-selector";
-import { docsModelOptions } from "@/components/docs/assistant/docs-model-options";
+import { type ModelOption } from "@/components/assistant-ui/model-selector";
+import {
+  buildModelOptions,
+  ModelPickerSelect,
+} from "@/components/assistant-ui/model-catalog";
 import { DEFAULT_MODEL_ID } from "@/constants/model";
+import { BUILTIN_TOOLS } from "@/lib/tools/catalog";
+import { readCustomTools } from "@/lib/tools/custom-tools";
 
 const Logo: FC = () => {
   return (
@@ -186,17 +201,40 @@ const MobileSidebar: FC = () => {
   );
 };
 
-const models = docsModelOptions();
+// Model catalog (options + default) is computed once at the Base level from
+// server-provided availability and shared via context, so ModelPicker can read it
+// without prop-threading through Thread/Composer/ComposerAction.
+const ModelCatalogContext = createContext<{
+  models: ModelOption[];
+  defaultModelId: string;
+}>({ models: [], defaultModelId: DEFAULT_MODEL_ID });
 
 const ModelPicker: FC = () => {
+  const { models, defaultModelId } = useContext(ModelCatalogContext);
   return (
-    <ModelSelector
+    <ModelPickerSelect
       models={models}
-      defaultValue={DEFAULT_MODEL_ID}
-      variant="ghost"
-      size="sm"
-      className="h-7 rounded-full"
+      defaultModelId={defaultModelId}
+      triggerClassName="h-7 rounded-full"
     />
+  );
+};
+
+const DashboardSettingsButton: FC = () => {
+  const params = useParams<{ team: string }>();
+  const router = useRouter();
+  const team = params?.team ?? "";
+  return (
+    <TooltipIconButton
+      variant="ghost"
+      size="icon"
+      tooltip="Settings"
+      side="bottom"
+      className="size-8"
+      onClick={() => router.push(`/${team}/dashboard/settings`)}
+    >
+      <SettingsIcon className="size-4" />
+    </TooltipIconButton>
   );
 };
 
@@ -237,6 +275,7 @@ const Header: FC<{
         <PanelLeftIcon className="size-4" />
       </TooltipIconButton>
       <LocalThreadTitle />
+      <DashboardSettingsButton />
       <ThemeModeToggle />
       <TooltipIconButton
         variant="ghost"
@@ -260,6 +299,8 @@ const isNewChatView = (s: AssistantState) =>
 
 const Thread: FC = () => {
   const isEmpty = useAuiState(isNewChatView);
+  const { missingThreadId, createNewThread } = useLocalThreadHistory();
+  const showMissingThread = Boolean(missingThreadId);
 
   return (
     <ThreadPrimitive.Root
@@ -277,30 +318,52 @@ const Thread: FC = () => {
         data-slot="aui_thread-viewport"
         className={cn(
           "relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth px-4 pt-4",
-          isEmpty && "justify-center",
+          (isEmpty || showMissingThread) && "justify-center",
         )}
       >
-        <AuiIf condition={isNewChatView}>
-          <ThreadWelcome />
-        </AuiIf>
+        {showMissingThread ? (
+          <div className="aui-thread-missing-root mx-auto mb-6 flex w-full max-w-(--thread-max-width) flex-col items-center px-4 text-center">
+            <h1 className="text-2xl font-semibold">Conversation not found</h1>
+            <p className="text-muted-foreground mt-2 max-w-md text-sm leading-6">
+              This conversation is not available in this browser history.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-5 h-8 rounded-full px-3.5"
+              onClick={createNewThread}
+            >
+              Start a new thread
+            </Button>
+          </div>
+        ) : (
+          <AuiIf condition={isNewChatView}>
+            <ThreadWelcome />
+          </AuiIf>
+        )}
 
-        <div
-          data-slot="aui_message-group"
-          className="mb-14 flex flex-col gap-y-6 empty:hidden"
-        >
-          <ThreadPrimitive.Messages>
-            {({ message }) => {
-              if (message.composer.isEditing) return <EditComposer />;
-              if (message.role === "user") return <UserMessage />;
-              return <AssistantMessage />;
-            }}
-          </ThreadPrimitive.Messages>
-        </div>
+        {!showMissingThread && (
+          <>
+            <div
+              data-slot="aui_message-group"
+              className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            >
+              <ThreadPrimitive.Messages>
+                {({ message }) => {
+                  if (message.composer.isEditing) return <EditComposer />;
+                  if (message.role === "user") return <UserMessage />;
+                  return <AssistantMessage />;
+                }}
+              </ThreadPrimitive.Messages>
+            </div>
+          </>
+        )}
 
         <ThreadPrimitive.ViewportFooter
           className={cn(
             "aui-thread-viewport-footer bg-background mx-auto flex w-full max-w-(--thread-max-width) flex-col gap-4 overflow-visible pb-4 md:pb-6",
-            !isEmpty && "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
+            !isEmpty && !showMissingThread && "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
+            showMissingThread && "hidden",
           )}
         >
           <ThreadScrollToBottom />
@@ -325,8 +388,7 @@ const ThreadScrollToBottom: FC = () => {
     <ThreadPrimitive.ScrollToBottom asChild>
       <TooltipIconButton
         tooltip="Scroll to bottom"
-        variant="outline"
-        className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
+        className="aui-thread-scroll-to-bottom border-border bg-background text-foreground hover:bg-accent absolute -top-12 z-10 size-9 self-center rounded-full border shadow-md transition-colors disabled:invisible"
       >
         <ArrowDownIcon />
       </TooltipIconButton>
@@ -533,32 +595,52 @@ const slashCommands: readonly Unstable_SlashCommand[] = [
   },
 ];
 
-const mentionTools = [
-  {
-    id: "geocode_location",
+type MentionItem = {
+  id: string;
+  type: "tool";
+  label: string;
+  description: string;
+  icon: string;
+};
+
+/** `@` mention items built from the live tool registry: built-in tools +
+ * user-created custom tools. Mentioning `@name` scopes the turn to that tool
+ * (the route reads the `:tool[name]` directive and restricts activeTools). */
+function buildMentionItems(): MentionItem[] {
+  const builtin: MentionItem[] = BUILTIN_TOOLS.map((t) => ({
+    id: t.name,
     type: "tool",
-    label: "geocode_location",
-    description:
-      "Geocode a location name into latitude/longitude (Open-Meteo). Pass the coordinates to `get_weather`.",
+    label: t.name,
+    description: t.description,
     icon: "Wrench",
-  },
-  {
-    id: "get_weather",
-    type: "tool",
-    label: "get_weather",
-    description:
-      'Fetch the weather for coordinates from `geocode_location`. Returns an `id`; call `present` with `{ $type: "Weather", id }` to show the user a card.',
-    icon: "Wrench",
-  },
-  {
-    id: "present",
-    type: "tool",
-    label: "present",
-    description:
-      "Present a UI component to the user. Select a component with `$type` and provide its props inline; nest components with `children`.",
-    icon: "Wrench",
-  },
-] as const;
+  }));
+  const custom: MentionItem[] = readCustomTools()
+    .filter((t) => t.name.trim())
+    .map((t) => ({
+      id: t.name,
+      type: "tool",
+      label: t.name,
+      description: t.description,
+      icon: "Globe",
+    }));
+  return [...builtin, ...custom];
+}
+
+const CUSTOM_TOOLS_KEY = "aui:dashboard:custom-tools";
+
+function useToolMentionItems(): MentionItem[] {
+  const [items, setItems] = useState<MentionItem[]>([]);
+  useEffect(() => {
+    const sync = () => setItems(buildMentionItems());
+    sync();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === CUSTOM_TOOLS_KEY) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  return items;
+}
 
 const slashIconMap: Record<string, FC<{ className?: string }>> = {
   FileText: FileTextIcon,
@@ -588,8 +670,9 @@ function DirectiveChip(props: DirectiveChipProps) {
 }
 
 const Composer: FC = () => {
+  const mentionItems = useToolMentionItems();
   const mention = unstable_useMentionAdapter({
-    items: mentionTools,
+    items: mentionItems,
     iconMap: slashIconMap,
     fallbackIcon: WrenchIcon,
   });
@@ -975,12 +1058,20 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
   );
 };
 
-export const Base: FC = () => {
+export const Base: FC<{
+  team: string;
+  threadId?: string;
+  /** `{ [modelId]: hasKey }`, computed server-side (zero client fetch). */
+  modelAvailability?: Record<string, boolean>;
+  defaultModelId?: string;
+}> = ({ team, threadId, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const models = useMemo(() => buildModelOptions(modelAvailability), [modelAvailability]);
 
   return (
-    <LocalThreadHistoryProvider>
-      <div className="bg-muted/30 flex h-full w-full">
+    <ModelCatalogContext.Provider value={{ models, defaultModelId }}>
+      <LocalThreadHistoryProvider team={team} routeThreadId={threadId}>
+        <div className="bg-muted/30 flex h-full w-full">
         <div className="hidden md:block">
           <Sidebar collapsed={sidebarCollapsed} />
         </div>
@@ -996,6 +1087,7 @@ export const Base: FC = () => {
           </div>
         </div>
       </div>
-    </LocalThreadHistoryProvider>
+      </LocalThreadHistoryProvider>
+    </ModelCatalogContext.Provider>
   );
 };

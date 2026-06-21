@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRbac } from "@/lib/auth/rbac";
 import type { Permission } from "@/config/permissions";
 import { ApiKeysTab } from "./tabs/api-keys-tab";
+import { RuntimesTab } from "./tabs/runtimes-tab";
 import { ProvidersTab } from "./tabs/providers-tab";
 import { TeamTab } from "./tabs/team-tab";
 import { RolesTab } from "./tabs/roles-tab";
@@ -22,6 +23,7 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
+  { value: "runtimes", label: "Runtimes", render: (t) => <RuntimesTab team={t} /> },
   { value: "api-keys", label: "API keys", render: (t) => <ApiKeysTab team={t} /> },
   { value: "providers", label: "Providers", render: (t) => <ProvidersTab team={t} /> },
   { value: "team", label: "Team", render: (t) => <TeamTab team={t} /> },

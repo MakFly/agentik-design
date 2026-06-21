@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useParams } from "next/navigation";
+import { CredentialPicker } from "@/features/credentials/credential-picker";
+import { ApiAuthPicker } from "@/features/credentials/api-auth-picker";
 import { useWorkflowStore } from "./store";
 import { NODE_TYPE_CONFIGS } from "./constants";
 import { Input } from "@/components/ui/input";
@@ -213,6 +216,7 @@ function NodeConfigForm({
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const renameDecisionBranch = useWorkflowStore((s) => s.renameDecisionBranch);
   const removeDecisionBranch = useWorkflowStore((s) => s.removeDecisionBranch);
+  const team = (useParams<{ team: string }>().team as string) ?? "acme";
   const patch = (partial: Record<string, unknown>) => {
     updateNodeData(nodeId, { config: { ...config, ...partial } });
   };
@@ -314,6 +318,13 @@ function NodeConfigForm({
               className="h-8 text-sm"
             />
           </Field>
+          <Field label="Authentication (optional)">
+            <ApiAuthPicker
+              team={team}
+              value={(config.credentialId as string) || undefined}
+              onChange={(id) => patch({ credentialId: id })}
+            />
+          </Field>
         </div>
       );
 
@@ -341,14 +352,30 @@ function NodeConfigForm({
 
     case "code":
       return (
-        <Field label="Source code">
-          <Textarea
-            value={(config.source as string) ?? ""}
-            onChange={(e) => patch({ source: e.target.value })}
-            className="min-h-[160px] font-mono text-xs leading-relaxed"
-            placeholder="// your code here"
-          />
-        </Field>
+        <div className="flex flex-col gap-4">
+          <Field label="Run mode">
+            <Select
+              value={(config.mode as string) ?? "all"}
+              onValueChange={(v) => patch({ mode: v })}
+            >
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Once for all items</SelectItem>
+                <SelectItem value="each">Once per item</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Source code">
+            <Textarea
+              value={(config.source as string) ?? ""}
+              onChange={(e) => patch({ source: e.target.value })}
+              className="min-h-[160px] font-mono text-xs leading-relaxed"
+              placeholder="// items: $input.all(); current: $json&#10;return $input.all();"
+            />
+          </Field>
+        </div>
       );
 
     case "decision": {
@@ -467,6 +494,376 @@ function NodeConfigForm({
               value={(config.versionId as string) ?? "live"}
               onChange={(e) => patch({ versionId: e.target.value })}
               className="h-8 text-sm"
+            />
+          </Field>
+        </div>
+      );
+
+    case "set": {
+      const assignments = (config.assignments as Array<{ name: string; value: string }>) ?? [];
+      const setAssign = (i: number, key: "name" | "value", val: string) =>
+        patch({ assignments: assignments.map((a, j) => (j === i ? { ...a, [key]: val } : a)) });
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Fields to set">
+            <div className="flex flex-col gap-2">
+              {assignments.map((a, i) => (
+                <div key={i} className="flex flex-col gap-1 rounded-md border border-border p-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={a.name}
+                      onChange={(e) => setAssign(i, "name", e.target.value)}
+                      placeholder="fieldName"
+                      className="h-8 text-sm"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => patch({ assignments: assignments.filter((_, j) => j !== i) })}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <Input
+                    value={a.value}
+                    onChange={(e) => setAssign(i, "value", e.target.value)}
+                    placeholder="{{ $json.value }}"
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => patch({ assignments: [...assignments, { name: `field_${assignments.length + 1}`, value: "" }] })}
+              >
+                Add field
+              </Button>
+            </div>
+          </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={Boolean(config.keepOnlySet)}
+              onChange={(e) => patch({ keepOnlySet: e.target.checked })}
+              className="size-4"
+            />
+            Keep only set fields
+          </label>
+        </div>
+      );
+    }
+
+    case "filter":
+      return (
+        <Field label="Condition">
+          <Input
+            value={(config.condition as string) ?? ""}
+            onChange={(e) => patch({ condition: e.target.value })}
+            placeholder="$json.value > 10"
+            className="h-8 font-mono text-xs"
+          />
+        </Field>
+      );
+
+    case "limit":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Max items">
+            <Input
+              type="number"
+              value={(config.maxItems as number) ?? 1}
+              onChange={(e) => patch({ maxItems: Number(e.target.value) })}
+              className="h-8 text-sm"
+            />
+          </Field>
+          <Field label="Keep">
+            <Select value={(config.keep as string) ?? "first"} onValueChange={(v) => patch({ keep: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="first">First</SelectItem>
+                <SelectItem value="last">Last</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      );
+
+    case "sort":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Field">
+            <Input
+              value={(config.field as string) ?? ""}
+              onChange={(e) => patch({ field: e.target.value })}
+              placeholder="value"
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+          <Field label="Order">
+            <Select value={(config.order as string) ?? "asc"} onValueChange={(v) => patch({ order: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asc">Ascending</SelectItem>
+                <SelectItem value="desc">Descending</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      );
+
+    case "aggregate":
+      return (
+        <Field label="Field to collect (empty = all json)">
+          <Input
+            value={(config.field as string) ?? ""}
+            onChange={(e) => patch({ field: e.target.value })}
+            placeholder="(all)"
+            className="h-8 font-mono text-xs"
+          />
+        </Field>
+      );
+
+    case "splitOut":
+      return (
+        <Field label="Array field to split">
+          <Input
+            value={(config.field as string) ?? ""}
+            onChange={(e) => patch({ field: e.target.value })}
+            placeholder="items"
+            className="h-8 font-mono text-xs"
+          />
+        </Field>
+      );
+
+    case "removeDuplicates":
+      return (
+        <Field label="Dedupe by field (empty = whole item)">
+          <Input
+            value={(config.field as string) ?? ""}
+            onChange={(e) => patch({ field: e.target.value })}
+            placeholder="(whole item)"
+            className="h-8 font-mono text-xs"
+          />
+        </Field>
+      );
+
+    case "renameKeys": {
+      const renames = (config.renames as Array<{ from: string; to: string }>) ?? [];
+      const setRename = (i: number, key: "from" | "to", val: string) =>
+        patch({ renames: renames.map((r, j) => (j === i ? { ...r, [key]: val } : r)) });
+      return (
+        <Field label="Renames">
+          <div className="flex flex-col gap-2">
+            {renames.map((r, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input value={r.from} onChange={(e) => setRename(i, "from", e.target.value)} placeholder="from" className="h-8 font-mono text-xs" />
+                <span className="text-xs text-muted-foreground">→</span>
+                <Input value={r.to} onChange={(e) => setRename(i, "to", e.target.value)} placeholder="to" className="h-8 font-mono text-xs" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => patch({ renames: renames.filter((_, j) => j !== i) })}
+                >
+                  ✕
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => patch({ renames: [...renames, { from: "", to: "" }] })}
+            >
+              Add rename
+            </Button>
+          </div>
+        </Field>
+      );
+    }
+
+    case "crypto":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Action">
+            <Select value={(config.action as string) ?? "hash"} onValueChange={(v) => patch({ action: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hash">Hash</SelectItem>
+                <SelectItem value="hmac">HMAC</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Algorithm">
+            <Select value={(config.algorithm as string) ?? "sha256"} onValueChange={(v) => patch({ algorithm: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["sha256", "sha512", "md5"].map((a) => (
+                  <SelectItem key={a} value={a}>{a}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Value">
+            <Input
+              value={(config.value as string) ?? ""}
+              onChange={(e) => patch({ value: e.target.value })}
+              placeholder="{{ $json.value }}"
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+          {(config.action as string) === "hmac" && (
+            <Field label="Secret">
+              <Input
+                value={(config.secret as string) ?? ""}
+                onChange={(e) => patch({ secret: e.target.value })}
+                placeholder="{{ $json.secret }}"
+                className="h-8 font-mono text-xs"
+              />
+            </Field>
+          )}
+          <Field label="Output field">
+            <Input
+              value={(config.field as string) ?? "hash"}
+              onChange={(e) => patch({ field: e.target.value })}
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+        </div>
+      );
+
+    case "dateTime":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Action">
+            <Select value={(config.action as string) ?? "format"} onValueChange={(v) => patch({ action: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="format">Format</SelectItem>
+                <SelectItem value="add">Add interval</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Source field (empty = now)">
+            <Input
+              value={(config.sourceField as string) ?? ""}
+              onChange={(e) => patch({ sourceField: e.target.value })}
+              placeholder="(now)"
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+          {(config.action as string) === "add" && (
+            <div className="flex items-end gap-2">
+              <Field label="Amount">
+                <Input
+                  type="number"
+                  value={(config.amount as number) ?? 0}
+                  onChange={(e) => patch({ amount: Number(e.target.value) })}
+                  className="h-8 text-sm"
+                />
+              </Field>
+              <Select value={(config.unit as string) ?? "days"} onValueChange={(v) => patch({ unit: v })}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["minutes", "hours", "days", "months", "years"].map((u) => (
+                    <SelectItem key={u} value={u}>{u}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Field label="Format">
+            <Input
+              value={(config.format as string) ?? "yyyy-MM-dd"}
+              onChange={(e) => patch({ format: e.target.value })}
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+          <Field label="Output field">
+            <Input
+              value={(config.outputField as string) ?? "date"}
+              onChange={(e) => patch({ outputField: e.target.value })}
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+        </div>
+      );
+
+    case "summarize":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Group by field">
+            <Input
+              value={(config.groupBy as string) ?? ""}
+              onChange={(e) => patch({ groupBy: e.target.value })}
+              placeholder="category"
+              className="h-8 font-mono text-xs"
+            />
+          </Field>
+          <Field label="Operation">
+            <Select value={(config.operation as string) ?? "count"} onValueChange={(v) => patch({ operation: v })}>
+              <SelectTrigger className="h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="count">Count</SelectItem>
+                <SelectItem value="sum">Sum</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          {(config.operation as string) === "sum" && (
+            <Field label="Field to sum">
+              <Input
+                value={(config.field as string) ?? ""}
+                onChange={(e) => patch({ field: e.target.value })}
+                placeholder="amount"
+                className="h-8 font-mono text-xs"
+              />
+            </Field>
+          )}
+        </div>
+      );
+
+    case "slack":
+      return (
+        <div className="flex flex-col gap-4">
+          <Field label="Slack credential">
+            <CredentialPicker
+              team={team}
+              type="slackApi"
+              value={(config.credentialId as string) || undefined}
+              onChange={(id) => patch({ credentialId: id })}
+            />
+          </Field>
+          <Field label="Channel">
+            <Input
+              value={(config.channel as string) ?? ""}
+              onChange={(e) => patch({ channel: e.target.value })}
+              placeholder="#general"
+              className="h-8 text-sm"
+            />
+          </Field>
+          <Field label="Message">
+            <Textarea
+              value={(config.text as string) ?? ""}
+              onChange={(e) => patch({ text: e.target.value })}
+              placeholder="{{ $json.message }}"
+              className="min-h-[80px] font-mono text-xs"
             />
           </Field>
         </div>

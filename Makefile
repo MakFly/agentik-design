@@ -11,6 +11,7 @@ N := \033[0m
 
 WEB := apps/web
 ENGINE := apps/engine
+DAEMON := apps/daemon
 
 # Web dev port: override with `make dev WEB_PORT=4000`. If unset, the first free
 # port among the list below is picked at runtime (the machine often has :3000
@@ -40,7 +41,7 @@ install: ## Install all workspace dependencies (bun)
 # ── Development ──────────────────────────────────────────────────────────────
 
 .PHONY: dev dev/web dev/engine dev/worker
-dev: ## Start web + engine API + run worker in parallel (auto-picks a free web port)
+dev: ## Start web + engine API + worker in parallel (auto-picks a free web port). The agent daemon is NOT started here — manage it with `make daemon/start`.
 	@printf "$(B)$(G)Starting dev servers...$(N)\n"
 	@$(MAKE) -j3 dev/web dev/engine dev/worker
 
@@ -53,7 +54,7 @@ dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT
 	fi; \
 	if [ -z "$$PORT" ]; then printf "$(R)No free web port found in: $(WEB_PORT_CANDIDATES)$(N)\n"; exit 1; fi; \
 	printf "$(C)→ Next.js on http://localhost:$$PORT  (API → $(API_URL))$(N)\n"; \
-	cd $(WEB) && PORT=$$PORT API_URL=$(API_URL) bun run dev
+	cd $(WEB) && PORT=$$PORT API_URL=$(API_URL) NEXT_PUBLIC_ENGINE_URL=$(API_URL) bun run dev
 
 dev/engine: ## Start workflow engine API (:8787)
 	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
@@ -63,15 +64,69 @@ dev/worker: ## Start the BullMQ run worker
 	@printf "$(C)→ Run worker$(N)\n"
 	@cd $(ENGINE) && bun run worker:dev
 
+# ── Agent daemon (manual lifecycle — NOT auto-started, NOT restarted on reboot) ─
+# The daemon spawns agent CLIs, so it is opt-in: start it when you want agents to
+# run, stop it otherwise. After a reboot, start it again with `make daemon/start`.
+
+DAEMON_PID := /tmp/agentik-daemon.pid
+DAEMON_LOG := /tmp/agentik-daemon.log
+DAEMON_BIN := bin/agentik-daemon
+DAEMON_TEAM ?= acme
+DAEMON_RUNTIMES ?= echo
+
+.PHONY: daemon daemon/start daemon/stop daemon/restart daemon/status daemon/logs daemon/foreground
+
+daemon: daemon/status ## Alias for daemon/status
+
+daemon/start: build/daemon ## Start the agent daemon detached (re-run manually after a reboot)
+	@if [ -f $(DAEMON_PID) ] && kill -0 $$(cat $(DAEMON_PID)) 2>/dev/null; then \
+		printf "$(Y)daemon already running (pid $$(cat $(DAEMON_PID)))$(N)\n"; exit 0; fi
+	@TOKEN=$$(grep -E '^DAEMON_AUTH_TOKEN=' $(ENGINE)/.env 2>/dev/null | cut -d= -f2-); \
+	if [ -z "$$TOKEN" ]; then \
+		printf "$(R)✗ Set DAEMON_AUTH_TOKEN + DAEMON_ENABLED=true in $(ENGINE)/.env first$(N)\n"; exit 1; fi; \
+	ENGINE_URL=$(API_URL) TEAM=$(DAEMON_TEAM) RUNTIME_KINDS=$(DAEMON_RUNTIMES) DAEMON_AUTH_TOKEN=$$TOKEN \
+		nohup ./$(DAEMON_BIN) > $(DAEMON_LOG) 2>&1 & echo $$! > $(DAEMON_PID); \
+	sleep 1; \
+	if kill -0 $$(cat $(DAEMON_PID)) 2>/dev/null; then \
+		printf "$(G)✓ daemon started (pid $$(cat $(DAEMON_PID)), runtimes=$(DAEMON_RUNTIMES)) → make daemon/logs$(N)\n"; \
+	else printf "$(R)✗ daemon failed to start — see $(DAEMON_LOG)$(N)\n"; tail -3 $(DAEMON_LOG); rm -f $(DAEMON_PID); exit 1; fi
+
+daemon/stop: ## Stop the agent daemon
+	@if [ -f $(DAEMON_PID) ] && kill -0 $$(cat $(DAEMON_PID)) 2>/dev/null; then \
+		kill $$(cat $(DAEMON_PID)) 2>/dev/null; rm -f $(DAEMON_PID); printf "$(G)✓ daemon stopped$(N)\n"; \
+	elif pkill -f $(DAEMON_BIN) 2>/dev/null; then rm -f $(DAEMON_PID); printf "$(G)✓ daemon stopped (by name)$(N)\n"; \
+	else rm -f $(DAEMON_PID); printf "$(Y)daemon not running$(N)\n"; fi
+
+daemon/restart: ## Restart the agent daemon
+	@$(MAKE) daemon/stop; sleep 1; $(MAKE) daemon/start
+
+daemon/status: ## Show whether the daemon is running
+	@if [ -f $(DAEMON_PID) ] && kill -0 $$(cat $(DAEMON_PID)) 2>/dev/null; then \
+		printf "$(G)● daemon running$(N) (pid $$(cat $(DAEMON_PID)), engine $(API_URL))\n"; \
+	else printf "$(R)○ daemon stopped$(N) — start with: make daemon/start\n"; fi
+
+daemon/logs: ## Tail the daemon log
+	@tail -f $(DAEMON_LOG)
+
+daemon/foreground: build/daemon ## Run the daemon in the foreground (Ctrl-C to stop)
+	@TOKEN=$$(grep -E '^DAEMON_AUTH_TOKEN=' $(ENGINE)/.env 2>/dev/null | cut -d= -f2-); \
+	if [ -z "$$TOKEN" ]; then printf "$(R)✗ Set DAEMON_AUTH_TOKEN + DAEMON_ENABLED=true in $(ENGINE)/.env first$(N)\n"; exit 1; fi; \
+	ENGINE_URL=$(API_URL) TEAM=$(DAEMON_TEAM) RUNTIME_KINDS=$(DAEMON_RUNTIMES) DAEMON_AUTH_TOKEN=$$TOKEN ./$(DAEMON_BIN)
+
 # ── Build ────────────────────────────────────────────────────────────────────
 
-.PHONY: build build/web
-build: build/web ## Build all apps
+.PHONY: build build/web build/daemon
+build: build/web build/daemon ## Build all apps
 
 build/web: ## Build Next.js for production
 	@printf "$(C)→ Building web...$(N)\n"
 	@cd $(WEB) && bun run build
 	@printf "$(G)✓ Web build complete$(N)\n"
+
+build/daemon: ## Build the Go agent daemon static binary → bin/agentik-daemon
+	@printf "$(C)→ Building daemon...$(N)\n"
+	@cd $(DAEMON) && CGO_ENABLED=0 go build -o ../../bin/agentik-daemon .
+	@printf "$(G)✓ Daemon build complete (bin/agentik-daemon)$(N)\n"
 
 # ── Test ─────────────────────────────────────────────────────────────────────
 

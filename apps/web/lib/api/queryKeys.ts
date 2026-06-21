@@ -11,6 +11,7 @@ export const qk = {
     list: (team: string, filters?: Filters) => ["team", team, "agents", "list", filters ?? {}] as const,
     detail: (team: string, id: string) => ["team", team, "agents", "detail", id] as const,
     versions: (team: string, id: string) => ["team", team, "agents", id, "versions"] as const,
+    snapshot: (team: string) => ["team", team, "agents", "snapshot"] as const,
   },
   workflows: {
     all: (team: string) => ["team", team, "workflows"] as const,
@@ -57,6 +58,10 @@ export const qk = {
     billing: (team: string) => ["team", team, "settings", "billing"] as const,
     security: (team: string) => ["team", team, "settings", "security"] as const,
     audit: (team: string, filters?: Filters) => ["team", team, "settings", "audit", filters ?? {}] as const,
+  },
+  credentials: {
+    all: (team: string) => ["team", team, "credentials"] as const,
+    list: (team: string) => ["team", team, "credentials", "list"] as const,
   },
   session: {
     me: () => ["session", "me"] as const,

@@ -1,5 +1,5 @@
-import type { NodeExecutor } from "../types";
-import { resolveTemplate, type Scope } from "../expressions";
+import { type NodeExecutor, exprScope } from "../types";
+import { resolveTemplate } from "../expressions";
 
 export interface AgentNodeOptions {
   apiKey?: string;
@@ -15,10 +15,11 @@ type ChatResponse = {
 };
 
 /**
- * Agent node — calls an OpenAI-compatible chat model. Self-contained: the node
- * carries its own model/instructions/prompt (prompt is `{{ }}`-templated against
- * the run scope). Built as a factory because it needs an API key, which the
- * engine package stays agnostic of — the worker injects it from env.
+ * Agent node — calls an OpenAI-compatible chat model, once per input item (n8n
+ * AI-node behaviour). The node carries its own model/instructions/prompt; the
+ * prompt is `{{ }}`-templated against the current item (`$json`). Built as a
+ * factory because it needs an API key, which the engine package stays agnostic
+ * of — the worker injects it from env.
  */
 export function createAgentNode(opts: AgentNodeOptions = {}): NodeExecutor {
   const baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
@@ -26,16 +27,19 @@ export function createAgentNode(opts: AgentNodeOptions = {}): NodeExecutor {
 
   return {
     type: "agent",
-    async execute({ node, input, payload, outputs, signal }) {
+    async executeItem(ctx) {
+      const { node, item, itemIndex, signal } = ctx;
       if (node.config.type !== "agent") throw new Error("agent node: config mismatch");
       if (!opts.apiKey) throw new Error("Agent node requires an API key on the engine (OPENAI_API_KEY).");
       if (signal?.aborted) throw new Error("Run cancelled before the agent call.");
 
       const cfg = node.config;
-      const scope: Scope = { input, payload, outputs };
+      const scope = exprScope(ctx, itemIndex);
       const model = cfg.model ?? defaultModel;
       const instructions = cfg.instructions ?? "You are a helpful assistant.";
-      const userContent = cfg.prompt ? String(resolveTemplate(cfg.prompt, scope)) : JSON.stringify(input);
+      const userContent = cfg.prompt
+        ? String(resolveTemplate(cfg.prompt, scope))
+        : JSON.stringify(item.json);
 
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);

@@ -35,13 +35,13 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
 
   const snapshotSteps = useMemo(() => data?.steps ?? [], [data]);
-  const isLive = data ? LIVE_STATUSES.has(data.run.status) : false;
+  const isLive = data?.run ? LIVE_STATUSES.has(data.run.status) : false;
 
   // seed the stream buffer from the REST snapshot before the socket attaches,
   // so the live view is never blank and degrades to the snapshot on disconnect.
   const seed = useRunStreamStore((s) => s.seed);
   useEffect(() => {
-    if (data && isLive) {
+    if (data?.run && isLive) {
       seed(runId, { status: data.run.status, steps: data.steps, cost: data.run.cost });
     }
   }, [data, isLive, runId, seed]);
@@ -78,6 +78,16 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
           <Skeleton className="h-96" />
           <Skeleton className="h-96" />
         </div>
+      </div>
+    );
+  }
+
+  // Defensive: a malformed detail (missing run) degrades gracefully instead of crashing.
+  if (!data.run) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Run" back={{ href: `/${team}/runs`, label: "Runs" }} />
+        <div className="p-8 text-center text-sm text-muted-foreground">This run can&apos;t be displayed.</div>
       </div>
     );
   }

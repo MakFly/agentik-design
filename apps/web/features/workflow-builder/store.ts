@@ -318,31 +318,39 @@ export function planWorkflowRun(nodes: Node[], edges: Edge[]): WorkflowRunResult
   };
 }
 
+/** Per-node delay of the run-order playback, so the loader moves node by node. */
+const RUN_SEQUENCE_MS = 280;
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 function initialExecutions(nodes: Node[]): Record<string, NodeExecution> {
+  // Idle to start; the run-order sequencer flips one node at a time to running.
   return Object.fromEntries(nodes.map((node) => [node.id, { status: "waiting" as const }]));
+}
+
+/** Map one engine run step onto a per-node execution overlay entry. */
+function stepToExecution(s: RunDetail["steps"][number]): NodeExecution {
+  const status: NodeExecutionStatus =
+    s.status === "succeeded"
+      ? "success"
+      : s.status === "failed"
+        ? "error"
+        : s.status === "running" || s.status === "retrying"
+          ? "running"
+          : "waiting";
+  return {
+    status,
+    startedAt: s.startedAt,
+    finishedAt: s.endedAt ?? undefined,
+    message: s.error ?? undefined,
+    input: s.input ?? undefined,
+    output: s.output ?? undefined,
+  };
 }
 
 /** Map engine run steps onto the canvas per-node execution overlay. */
 function stepsToExecutions(run: RunDetail): Record<string, NodeExecution> {
   const map: Record<string, NodeExecution> = {};
-  for (const s of run.steps) {
-    const status: NodeExecutionStatus =
-      s.status === "succeeded"
-        ? "success"
-        : s.status === "failed"
-          ? "error"
-          : s.status === "running" || s.status === "retrying"
-            ? "running"
-            : "waiting";
-    map[s.nodeId] = {
-      status,
-      startedAt: s.startedAt,
-      finishedAt: s.endedAt ?? undefined,
-      message: s.error ?? undefined,
-      input: s.input ?? undefined,
-      output: s.output ?? undefined,
-    };
-  }
+  for (const s of run.steps) map[s.nodeId] = stepToExecution(s);
   return map;
 }
 
@@ -891,16 +899,20 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
       }
 
       const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+      const setNodeExec = (nodeId: string, exec: NodeExecution) =>
+        set((s) => ({ nodeExecutions: { ...s.nodeExecutions, [nodeId]: exec } }));
+
       return await new Promise<WorkflowRunResult>((resolve) => {
         let settled = false;
-        const finish = (final: RunDetail) => {
-          if (settled) return;
-          settled = true;
+        // True once we've shown at least one live step status from the stream;
+        // for slow runs the loader tracks reality, so no replay is needed.
+        let sawLive = false;
+
+        const finalize = (final: RunDetail) => {
           const ok = final.status === "succeeded";
           const log = stepsToLog(final);
           set((s) => ({
             runState: ok ? "success" : "error",
-            nodeExecutions: stepsToExecutions(final),
             runLog: log,
             lastRunAt: final.endedAt ?? new Date().toISOString(),
             runHistory: prependHistory(s.runHistory, {
@@ -918,12 +930,52 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
           resolve({ ok, orderedNodeIds: final.steps.map((st) => st.nodeId), log, error: final.error ?? undefined });
         };
 
+        const finish = async (final: RunDetail) => {
+          if (settled) return;
+          settled = true;
+          if (sawLive) {
+            // Already animated live during the run — just settle on real statuses.
+            set({ nodeExecutions: stepsToExecutions(final), runLog: stepsToLog(final) });
+          } else {
+            // Run completed before any live update (fast local engine) — replay
+            // the executed steps in order so the loader still moves node by node.
+            const ordered = [...final.steps].sort((a, b) => a.index - b.index);
+            for (const s of ordered) {
+              setNodeExec(s.nodeId, { status: "running", startedAt: s.startedAt });
+              await delay(RUN_SEQUENCE_MS);
+              setNodeExec(s.nodeId, stepToExecution(s));
+            }
+          }
+          finalize(final);
+        };
+
         subscribeRun(queued.id, {
           onRun: (r) => {
-            set({ nodeExecutions: stepsToExecutions(r), runLog: stepsToLog(r) });
-            if (TERMINAL.has(r.status)) finish(r);
+            if (TERMINAL.has(r.status)) {
+              void finish(r);
+              return;
+            }
+            // Go live only once a node is genuinely in-flight; if the run
+            // completes in a burst (every poll shows only finished steps) we
+            // keep sawLive false so finish() replays it cleanly, node by node.
+            if (r.steps.some((s) => s.status === "running" || s.status === "retrying")) {
+              sawLive = true;
+            }
+            if (sawLive) set({ nodeExecutions: stepsToExecutions(r), runLog: stepsToLog(r) });
           },
-          onError: () => finish({ ...queued, status: "failed", error: "Lost connection to the run stream.", steps: [] }),
+          onError: () => {
+            if (settled) return;
+            settled = true;
+            // Keep the per-node overlay; just flip any still-pending card to error.
+            const marked = Object.fromEntries(
+              Object.entries(get().nodeExecutions).map(([k, v]) =>
+                v.status === "running" || v.status === "waiting" ? [k, { ...v, status: "error" as const }] : [k, v],
+              ),
+            );
+            set({ runState: "error", nodeExecutions: marked });
+            get().persistDraft(team);
+            resolve({ ok: false, orderedNodeIds: [], log: get().runLog, error: "Lost connection to the run stream." });
+          },
         });
       });
     },

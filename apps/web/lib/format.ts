@@ -68,7 +68,9 @@ const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
 
 /** "2m ago", "3h ago" — accepts ISO string, Date, or epoch ms. */
 export function formatRelativeTime(input: string | number | Date, now: number = Date.now()): string {
-  const ts = input instanceof Date ? input.getTime() : typeof input === "number" ? input : Date.parse(input);
+  // Postgres emits "YYYY-MM-DD HH:MM:SS+00" — normalize the space and 2-digit offset for Date.parse.
+  const parse = (s: string) => Date.parse(s.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  const ts = input instanceof Date ? input.getTime() : typeof input === "number" ? input : parse(input);
   if (Number.isNaN(ts)) return "—";
   const diff = ts - now;
   const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto", style: "short" });

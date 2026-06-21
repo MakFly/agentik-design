@@ -33,6 +33,9 @@ function WorkflowNodeRaw({ id, data, selected }: NodeProps<WfNode>) {
           "rounded-[14px] border border-[var(--n8n-node-border)] bg-[var(--n8n-node)] px-3 py-3",
           "shadow-[0_2px_6px_rgb(15_23_42/0.08)] transition-[border-color,box-shadow,transform] duration-150",
           "hover:border-[var(--n8n-border-strong)] hover:shadow-[0_8px_18px_rgb(15_23_42/0.10)]",
+          execution?.status === "running" &&
+            "animate-pulse border-[var(--n8n-brand)] shadow-[0_0_0_3px_var(--n8n-focus)]",
+          execution?.status === "error" && "border-danger shadow-[0_0_0_3px_var(--danger-surface)]",
           selected && "border-[var(--n8n-brand)] shadow-[0_0_0_3px_var(--n8n-focus),0_8px_22px_rgb(15_23_42/0.12)]",
         )}
       >

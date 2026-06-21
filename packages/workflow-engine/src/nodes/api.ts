@@ -1,18 +1,32 @@
-import type { NodeExecutor } from "../types";
-import { resolveDeep, resolveTemplate, type Scope } from "../expressions";
+import { type NodeExecutor, exprScope } from "../types";
+import { resolveDeep, resolveTemplate } from "../expressions";
 
-/** HTTP Request node — native fetch, with `{{ }}` templating on url/headers/body. */
+/**
+ * HTTP Request node — runs once per input item (n8n behaviour), so `url`,
+ * `headers` and `body` can be `{{ }}`-templated against the current item's
+ * `$json`. With static parameters the request is self-contained and ignores
+ * the input entirely.
+ */
 export const apiNode: NodeExecutor = {
   type: "api",
-  async execute({ node, input, payload, outputs, signal }) {
+  async executeItem(ctx) {
+    const { node, itemIndex, signal } = ctx;
     if (node.config.type !== "api") throw new Error("api node: config mismatch");
     const cfg = node.config;
-    const scope: Scope = { input, payload, outputs };
+    const scope = exprScope(ctx, itemIndex);
 
     const url = String(resolveTemplate(cfg.url, scope));
     const headers: Record<string, string> = cfg.headers
       ? (resolveDeep(cfg.headers, scope) as Record<string, string>)
       : {};
+
+    // Optional credential → inject auth at run time. OAuth2 (access_token) →
+    // Bearer; httpHeaderAuth ({name,value}) → custom header.
+    if (cfg.credentialId) {
+      const cred = await ctx.resolveCredential(cfg.credentialId);
+      if (cred?.access_token) headers.authorization = `Bearer ${cred.access_token}`;
+      else if (cred?.name && cred.value) headers[cred.name] = cred.value;
+    }
 
     let body: string | undefined;
     if (cfg.bodyMap && cfg.method !== "GET") {

@@ -118,7 +118,7 @@ export function NodePalette() {
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-1 p-2.5">
           {filtered ? (
             filtered.length > 0 ? (

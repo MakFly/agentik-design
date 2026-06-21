@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { WorkflowNode } from "@agentik/workflow-schema";
+import type { INodeExecutionData } from "../items";
+import type { PerItemContext } from "../types";
 import { createAgentNode } from "./agent";
 
 const realFetch = globalThis.fetch;
@@ -17,8 +19,24 @@ function agentNode(config: Partial<Extract<WorkflowNode["config"], { type: "agen
   };
 }
 
+function ctx(node: WorkflowNode, json: Record<string, unknown> = {}): PerItemContext {
+  const item: INodeExecutionData = { json };
+  return {
+    node,
+    input: [item],
+    inputsByPort: { main: [item] },
+    payload: {},
+    nodeOutputs: {},
+    nodeNames: { a: "Agent" },
+    runId: "run",
+    resolveCredential: async () => null,
+    item,
+    itemIndex: 0,
+  };
+}
+
 describe("agent node", () => {
-  test("calls the chat API with the templated prompt and returns text", async () => {
+  test("calls the chat API once per item with the templated prompt", async () => {
     let captured: { url: string; body: unknown } | null = null;
     globalThis.fetch = mock(async (url: string, init: RequestInit) => {
       captured = { url: String(url), body: JSON.parse(String(init.body)) };
@@ -29,12 +47,10 @@ describe("agent node", () => {
     }) as unknown as typeof fetch;
 
     const exec = createAgentNode({ apiKey: "sk-test", defaultModel: "gpt-4.1-mini" });
-    const out = (await exec.execute({
-      node: agentNode({ prompt: "Double of {{ input.n }}" }),
-      input: { n: 21 },
-      payload: {},
-      outputs: {},
-    })) as { text: string; model: string };
+    const out = (await exec.executeItem!(ctx(agentNode({ prompt: "Double of {{ $json.n }}" }), { n: 21 }))) as {
+      text: string;
+      model: string;
+    };
 
     expect(out.text).toBe("the answer is 42");
     expect(out.model).toBe("gpt-4.1-mini");
@@ -45,8 +61,6 @@ describe("agent node", () => {
 
   test("fails clearly without an API key", async () => {
     const exec = createAgentNode({});
-    await expect(
-      exec.execute({ node: agentNode(), input: {}, payload: {}, outputs: {} }),
-    ).rejects.toThrow(/API key/i);
+    await expect(exec.executeItem!(ctx(agentNode()))).rejects.toThrow(/API key/i);
   });
 });

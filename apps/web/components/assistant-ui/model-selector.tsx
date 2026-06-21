@@ -504,12 +504,14 @@ function ModelSelectorItem({
               </span>
             )}
           </span>
+          {/* Default check only in the fallback layout: when a consumer passes
+              custom children, it owns the selected-state indicator itself. */}
+          {isSelected && (
+            <span className="absolute end-3 flex size-4 items-center justify-center">
+              <CheckIcon className="size-4" />
+            </span>
+          )}
         </>
-      )}
-      {isSelected && (
-        <span className="absolute end-3 flex size-4 items-center justify-center">
-          <CheckIcon className="size-4" />
-        </span>
       )}
     </CommandItem>
   );

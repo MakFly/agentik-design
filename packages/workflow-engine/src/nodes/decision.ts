@@ -1,27 +1,37 @@
-import type { NodeExecutor } from "../types";
-import { evaluate, type Scope } from "../expressions";
+import { type NodeExecutor, exprScope } from "../types";
+import { evaluate } from "../expressions";
+import type { NodeOutput } from "../items";
 
 /**
- * Decision node — conditional branch (n8n's IF/Switch). It passes its input
- * straight through (so downstream nodes see the same data) and uses `route()`
- * to pick the active branch: the first branch whose expression is truthy, else
- * the default. Outgoing edges carry `sourceHandle = branch label`.
+ * Decision / Switch node — routes EACH item to an output port (n8n's IF/Switch
+ * model). For every item, the first branch whose expression is truthy wins; if
+ * none match, the item goes to the `default` port. Output ports are the branch
+ * labels (+ default); only edges leaving a port that received items run their
+ * downstream. Item linking is preserved via `pairedItem`.
  */
 export const decisionNode: NodeExecutor = {
   type: "decision",
-  async execute({ input }) {
-    return input;
-  },
-  async route({ node, input, payload, outputs }) {
-    if (node.config.type !== "decision") return "default";
-    const scope: Scope = { input, payload, outputs };
-    for (const branch of node.config.branches) {
-      try {
-        if (evaluate(branch.expression, scope)) return branch.label;
-      } catch {
-        // A branch whose expression throws is treated as not-matched.
+  async execute(ctx) {
+    if (ctx.node.config.type !== "decision") return { main: ctx.input };
+    const cfg = ctx.node.config;
+    const out: NodeOutput = {};
+
+    ctx.input.forEach((item, i) => {
+      const scope = exprScope(ctx, i);
+      let handle = cfg.default;
+      for (const branch of cfg.branches) {
+        try {
+          if (evaluate(branch.expression, scope)) {
+            handle = branch.label;
+            break;
+          }
+        } catch {
+          // A branch whose expression throws is treated as not-matched.
+        }
       }
-    }
-    return node.config.default;
+      (out[handle] ??= []).push({ ...item, pairedItem: { item: i } });
+    });
+
+    return out;
   },
 };

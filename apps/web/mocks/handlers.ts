@@ -1,4 +1,4 @@
-import { http, HttpResponse, delay } from "msw";
+import { http, HttpResponse, delay, passthrough } from "msw";
 import { agents } from "./seed";
 import { runs, stepsByRun } from "./runs-seed";
 import {
@@ -21,6 +21,42 @@ const id36 = () => Math.floor(performance.now()).toString(36);
 
 /** MSW request handlers mirroring the API contract (docs/04 §9). Dev-only. */
 export const handlers = [
+  // ── System / presence (harness) ──────────────────────────────────────────
+  http.get(`${API}/system`, async () => {
+    await delay(200);
+    return HttpResponse.json({
+      daemonEnabled: false,
+      providers: { anthropic: false, openai: false, google: false },
+      daemons: [
+        {
+          id: "daemon_mock",
+          name: "mock-daemon",
+          status: "offline",
+          lastHeartbeatAt: null,
+          meta: {
+            host: { host: "mock", os: "linux", arch: "amd64", go: "mock" },
+            runtimes: ["echo"],
+            tools: [
+              { name: "claude", available: false },
+              { name: "codex", available: false },
+            ],
+          },
+        },
+      ],
+      runtimes: [],
+    });
+  }),
+
+  http.get(`${API}/agent-task-snapshot`, async () => {
+    await delay(200);
+    return HttpResponse.json({
+      agents: agents.map((a) => ({ id: a.id, name: a.name, runtimeKind: "echo", maxConcurrentTasks: 1, health: a.health })),
+      daemons: [],
+      runtimes: [],
+      activeTasks: [],
+    });
+  }),
+
   // ── Agents ─────────────────────────────────────────────────────────────
   http.get(`${API}/agents`, async ({ request }) => {
     await delay(350);
@@ -59,6 +95,10 @@ export const handlers = [
   }),
 
   // ── Runs ───────────────────────────────────────────────────────────────
+  // Live board SSE is a real route handler — let the EventSource through so MSW
+  // doesn't capture it as `runs/:id`. Must stay above the `runs/:id` handler.
+  http.get(`${API}/runs/stream`, () => passthrough()),
+
   http.get(`${API}/runs`, async ({ request }) => {
     await delay(350);
     const url = new URL(request.url);

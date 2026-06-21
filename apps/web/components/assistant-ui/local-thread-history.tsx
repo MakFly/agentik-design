@@ -17,22 +17,33 @@ import { useAuiState, type AssistantRuntime } from "@assistant-ui/react";
 import { MoreHorizontalIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useDemoRuntime } from "@/components/runtime/demo-runtime-provider";
 import { cn } from "@/lib/utils";
+
+// The runtime's own serialization format (assistant-ui external state). We persist
+// exactly what `thread.exportExternalState()` returns and feed it back verbatim to
+// `thread.importExternalState()` so the round-trip is guaranteed to match.
+type StoredExternalState = {
+  messages: unknown[];
+  headId?: string | null;
+};
 
 type StoredThread = {
   id: string;
   title: string;
   lastMessageAt: string;
-  externalState?: unknown;
-  repository: {
-    headId?: string | null;
-    messages: Array<{
-      parentId: string | null;
-      message: Record<string, unknown>;
-      runConfig?: unknown;
-    }>;
-  };
+  externalState: StoredExternalState;
 };
 
 type StoredThreadState = {
@@ -44,6 +55,7 @@ type LocalThreadHistoryContextValue = {
   threads: StoredThread[];
   activeThreadId: string | null;
   title: string;
+  missingThreadId: string | null;
   createNewThread: () => void;
   selectThread: (threadId: string) => void;
   deleteThread: (threadId: string) => void;
@@ -51,7 +63,25 @@ type LocalThreadHistoryContextValue = {
 
 const LocalThreadHistoryContext = createContext<LocalThreadHistoryContextValue | null>(null);
 
-const STORAGE_KEY = "agentik:assistant-ui-base:thread-history:v1";
+const STORAGE_KEY = "agentik:assistant-ui-base:thread-history:v2";
+
+function pushBrowserUrl(href: string) {
+  if (window.location.pathname === href) return;
+  window.history.pushState(null, "", href);
+}
+
+function replaceBrowserUrl(href: string) {
+  if (window.location.pathname === href) return;
+  window.history.replaceState(null, "", href);
+}
+
+function persistStoredState(state: StoredThreadState) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Storage can be disabled; the current in-memory session still works.
+  }
+}
 
 function getMessageText(message: unknown) {
   if (!message || typeof message !== "object") return "";
@@ -89,105 +119,78 @@ function getLastMessageAt(messages: readonly unknown[]) {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
-function reviveMessage(value: unknown): Record<string, unknown> {
-  const message = value && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {};
-  const createdAt = message.createdAt;
-  message.createdAt =
-    createdAt instanceof Date ? createdAt : typeof createdAt === "string" || typeof createdAt === "number" ? new Date(createdAt) : new Date();
-
-  if (Array.isArray(message.content)) {
-    message.content = message.content.map((part) => {
-      if (!part || typeof part !== "object") return part;
-      const nextPart = { ...(part as Record<string, unknown>) };
-      if (Array.isArray(nextPart.messages)) {
-        nextPart.messages = nextPart.messages.map(reviveMessage);
-      }
-      return nextPart;
-    });
-  }
-
-  return message;
-}
-
-function reviveLinearMessages(repository: StoredThread["repository"]) {
-  return repository.messages.map((item) => reviveMessage(item.message)) as unknown as Parameters<
-    AssistantRuntime["thread"]["reset"]
-  >[0];
+function isStoredExternalState(value: unknown): value is StoredExternalState {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as StoredExternalState).messages));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function isRestorableExternalState(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.messages)) return false;
+// Serialize the live thread messages into the runtime's external-state shape
+// ({ messages: [{ parentId, message }], headId }) where each `message` is an
+// AI SDK UIMessage. We read from `getState().messages` (which contains both the
+// user prompt and the streamed assistant reply) rather than the runtime's own
+// `exportExternalState()`, which omits streamed assistant messages for the AI SDK
+// runtime. The result round-trips through `importExternalState()`.
+function exportThreadState(runtime: AssistantRuntime): StoredExternalState | null {
+  const messages = runtime.thread.getState().messages as readonly unknown[];
 
-  return value.messages.every((item) => {
-    if (!isRecord(item) || !isRecord(item.message)) return false;
-    const { parentId, message } = item;
-    const role = message.role;
-    return (
-      (parentId === null || parentId === undefined || typeof parentId === "string") &&
-      typeof role === "string" &&
-      Array.isArray(message.parts)
-    );
-  });
-}
+  const stored: Array<{ parentId: string | null; message: { id: string; role: string; parts: Array<{ type: string; text: string }>; metadata: Record<string, unknown> } }> = [];
+  // Chain messages linearly: each message's parent is the previous kept message.
+  // The live thread state does not expose parent ids, so reconstructing the chain
+  // from order is what makes the conversation import as one thread instead of
+  // sibling branches (only the head branch would otherwise render).
+  let parentId: string | null = null;
 
-function repositoryToExternalState(repository: StoredThread["repository"]) {
-  if (repository.messages.length === 0) return undefined;
+  for (const entry of messages) {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.role !== "string") continue;
 
-  const messages = repository.messages
-    .map((item) => {
-      const message = reviveMessage(item.message);
-      const id = message.id;
-      const role = message.role;
-      if (typeof id !== "string" || typeof role !== "string") return null;
+    const rawParts = Array.isArray(entry.content)
+      ? entry.content
+      : Array.isArray((entry as { parts?: unknown }).parts)
+        ? (entry as { parts: unknown[] }).parts
+        : [];
 
-      const content = Array.isArray(message.content) ? message.content : [];
-      const parts = content
-        .map((part) => {
-          if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") return null;
-          return { type: "text", text: part.text };
-        })
-        .filter((part): part is { type: "text"; text: string } => Boolean(part));
+    const parts = rawParts
+      .map((part) => {
+        if (!isRecord(part)) return null;
+        if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string" && part.text.length > 0) {
+          return { type: part.type, text: part.text };
+        }
+        return null;
+      })
+      .filter((part): part is { type: string; text: string } => Boolean(part));
 
-      return {
-        parentId: typeof item.parentId === "string" ? item.parentId : null,
-        message: {
-          id,
-          role,
-          parts,
-          metadata: isRecord(message.metadata) ? message.metadata : { custom: {} },
-        },
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    if (parts.length === 0) continue;
 
-  if (messages.length === 0) return undefined;
-  return {
-    messages,
-    headId: typeof repository.headId === "string" ? repository.headId : messages.at(-1)?.message.id,
-  };
+    stored.push({
+      parentId,
+      message: {
+        id: entry.id,
+        role: entry.role,
+        parts,
+        metadata: isRecord(entry.metadata) ? entry.metadata : { custom: {} },
+      },
+    });
+    parentId = entry.id;
+  }
+
+  if (stored.length === 0) return null;
+
+  return { messages: stored, headId: stored.at(-1)!.message.id };
 }
 
 function restoreThread(runtime: AssistantRuntime, thread: StoredThread) {
   try {
-    if (isRestorableExternalState(thread.externalState)) {
-      runtime.thread.importExternalState(thread.externalState);
-      return;
-    }
-
-    const legacyExternalState = repositoryToExternalState(thread.repository);
-    if (legacyExternalState) {
-      runtime.thread.importExternalState(legacyExternalState);
-      return;
-    }
-
-    runtime.thread.reset(reviveLinearMessages(thread.repository));
+    runtime.thread.importExternalState(thread.externalState);
   } catch (error) {
     console.warn("[assistant-ui] Failed to restore local thread history; starting a clean thread.", error);
-    runtime.thread.reset();
+    try {
+      runtime.thread.importExternalState({ messages: [] });
+    } catch {
+      // If even the empty import fails the runtime is in a state we can't recover here.
+    }
   }
 }
 
@@ -204,14 +207,9 @@ function normalizeStoredState(value: unknown): StoredThreadState {
               typeof (thread as StoredThread).id === "string" &&
               typeof (thread as StoredThread).title === "string" &&
               typeof (thread as StoredThread).lastMessageAt === "string" &&
-              (thread as StoredThread).repository &&
-              Array.isArray((thread as StoredThread).repository.messages),
+              isStoredExternalState((thread as StoredThread).externalState),
           );
         })
-        .map((thread) => ({
-          ...thread,
-          externalState: isRestorableExternalState(thread.externalState) ? thread.externalState : undefined,
-        }))
         .sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime())
         .slice(0, 50)
     : [];
@@ -229,16 +227,29 @@ function dateGroupLabel(date: Date, startOfToday: number) {
   return "Earlier";
 }
 
-export function LocalThreadHistoryProvider({ children }: { children: ReactNode }) {
+export function LocalThreadHistoryProvider({
+  children,
+  routeThreadId,
+  team,
+}: {
+  children: ReactNode;
+  routeThreadId?: string;
+  team: string;
+}) {
   const runtime = useDemoRuntime();
   const aui = runtime;
   const messages = useAuiState((state) => state.thread.messages);
-  const isRunning = useAuiState((state) => state.thread.isRunning);
   const [threads, setThreads] = useState<StoredThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [missingThreadId, setMissingThreadId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const activeThreadIdRef = useRef<string | null>(null);
   const restoringRef = useRef(false);
+  const dashboardHref = useMemo(() => `/${encodeURIComponent(team)}/dashboard`, [team]);
+  const threadHref = useCallback(
+    (threadId: string) => `${dashboardHref}/c/${encodeURIComponent(threadId)}`,
+    [dashboardHref],
+  );
 
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
@@ -249,62 +260,115 @@ export function LocalThreadHistoryProvider({ children }: { children: ReactNode }
       const raw = window.localStorage.getItem(STORAGE_KEY);
       const stored = raw ? normalizeStoredState(JSON.parse(raw)) : { activeThreadId: null, threads: [] };
       setThreads(stored.threads);
-      setActiveThreadId(stored.activeThreadId);
+      const nextActiveThreadId = routeThreadId ?? null;
+      activeThreadIdRef.current = nextActiveThreadId;
+      setActiveThreadId(nextActiveThreadId);
 
-      const activeThread = stored.threads.find((thread) => thread.id === stored.activeThreadId);
-      if (activeThread) {
-        restoringRef.current = true;
-        restoreThread(aui, activeThread);
-        window.setTimeout(() => {
-          restoringRef.current = false;
-        }, 0);
-      }
+      const activeThread = routeThreadId ? stored.threads.find((thread) => thread.id === routeThreadId) : null;
+      setMissingThreadId(routeThreadId && !activeThread ? routeThreadId : null);
+      restoringRef.current = true;
+      if (activeThread) restoreThread(aui, activeThread);
+      else aui.thread.reset();
+      window.setTimeout(() => {
+        restoringRef.current = false;
+      }, 0);
     } catch {
       setThreads([]);
       setActiveThreadId(null);
+      setMissingThreadId(routeThreadId ?? null);
+      activeThreadIdRef.current = null;
+      restoringRef.current = true;
+      aui.thread.reset();
+      window.setTimeout(() => {
+        restoringRef.current = false;
+      }, 0);
     } finally {
       setHydrated(true);
     }
-  }, [aui]);
+  }, [aui, routeThreadId]);
 
   useEffect(() => {
     if (!hydrated) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeThreadId, threads }));
-    } catch {
-      // Storage can be disabled; the current in-memory session still works.
-    }
+    const storedActiveThreadId = threads.some((thread) => thread.id === activeThreadId) ? activeThreadId : null;
+    persistStoredState({ activeThreadId: storedActiveThreadId, threads });
   }, [activeThreadId, hydrated, threads]);
 
-  useEffect(() => {
-    if (!hydrated || restoringRef.current || messages.length === 0) return;
+  const persistCurrentThread = useCallback(() => {
+    if (!hydrated || restoringRef.current) return;
 
-    const repository = aui.thread.export();
-    const externalState = aui.thread.exportExternalState();
-    if (repository.messages.length === 0) return;
+    const threadMessages = aui.thread.getState().messages;
+    if (threadMessages.length === 0) return;
 
-    const id = activeThreadIdRef.current ?? `thread-${Date.now()}`;
+    const externalState = exportThreadState(aui);
+    if (!externalState || externalState.messages.length === 0) return;
+
+    const shouldRouteNewThread = !activeThreadIdRef.current && !routeThreadId;
+    const id = activeThreadIdRef.current ?? routeThreadId ?? `thread-${Date.now()}`;
     if (!activeThreadIdRef.current) {
       activeThreadIdRef.current = id;
       setActiveThreadId(id);
     }
 
-    const title = deriveThreadTitle(messages);
-    const lastMessageAt = getLastMessageAt(messages);
-    const nextThread: StoredThread = { id, title, lastMessageAt, externalState, repository };
+    const title = deriveThreadTitle(threadMessages);
+    const lastMessageAt = getLastMessageAt(threadMessages);
+    const nextThread: StoredThread = { id, title, lastMessageAt, externalState };
+    setMissingThreadId(null);
 
-    setThreads((previous) => [nextThread, ...previous.filter((thread) => thread.id !== id)].slice(0, 50));
-  }, [aui, hydrated, messages, isRunning]);
+    setThreads((previous) => {
+      const previousThread = previous.find((thread) => thread.id === id);
+
+      if (previousThread) {
+        // Transient shorter state during restore: don't clobber the fuller stored one.
+        if (externalState.messages.length < previousThread.externalState.messages.length) {
+          return previous;
+        }
+        // No new message (e.g. just selecting/restoring a conversation): update in
+        // place so switching threads in the sidebar never reorders the list.
+        if (externalState.messages.length === previousThread.externalState.messages.length) {
+          const nextThreads = previous.map((thread) => (thread.id === id ? nextThread : thread));
+          persistStoredState({ activeThreadId: id, threads: nextThreads });
+          return nextThreads;
+        }
+      }
+
+      // New thread, or a new message arrived → surface it at the top.
+      const nextThreads = [nextThread, ...previous.filter((thread) => thread.id !== id)].slice(0, 50);
+      persistStoredState({ activeThreadId: id, threads: nextThreads });
+      return nextThreads;
+    });
+
+    if (shouldRouteNewThread) replaceBrowserUrl(threadHref(id));
+  }, [aui, hydrated, routeThreadId, threadHref]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+
+    let timeout: number | undefined;
+    const schedulePersist = () => {
+      window.clearTimeout(timeout);
+      timeout = window.setTimeout(persistCurrentThread, 150);
+    };
+
+    schedulePersist();
+    const unsubscribe = aui.thread.subscribe(schedulePersist);
+
+    return () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
+  }, [aui, hydrated, persistCurrentThread]);
 
   const createNewThread = useCallback(() => {
     activeThreadIdRef.current = null;
     setActiveThreadId(null);
+    setMissingThreadId(null);
     restoringRef.current = true;
     aui.thread.reset();
     window.setTimeout(() => {
       restoringRef.current = false;
     }, 0);
-  }, [aui]);
+    pushBrowserUrl(dashboardHref);
+  }, [aui, dashboardHref]);
 
   const selectThread = useCallback(
     (threadId: string) => {
@@ -312,13 +376,15 @@ export function LocalThreadHistoryProvider({ children }: { children: ReactNode }
       if (!thread) return;
       activeThreadIdRef.current = thread.id;
       setActiveThreadId(thread.id);
+      setMissingThreadId(null);
       restoringRef.current = true;
       restoreThread(aui, thread);
       window.setTimeout(() => {
         restoringRef.current = false;
       }, 0);
+      pushBrowserUrl(threadHref(thread.id));
     },
-    [aui, threads],
+    [aui, threadHref, threads],
   );
 
   const deleteThread = useCallback(
@@ -332,14 +398,15 @@ export function LocalThreadHistoryProvider({ children }: { children: ReactNode }
   );
 
   const title = useMemo(() => {
+    if (missingThreadId) return "Conversation not found";
     if (messages.length > 0) return deriveThreadTitle(messages);
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     return activeThread?.title ?? "New Chat";
-  }, [activeThreadId, messages, threads]);
+  }, [activeThreadId, messages, missingThreadId, threads]);
 
   const value = useMemo(
-    () => ({ threads, activeThreadId, title, createNewThread, selectThread, deleteThread }),
-    [activeThreadId, createNewThread, deleteThread, selectThread, threads, title],
+    () => ({ threads, activeThreadId, title, missingThreadId, createNewThread, selectThread, deleteThread }),
+    [activeThreadId, createNewThread, deleteThread, missingThreadId, selectThread, threads, title],
   );
 
   return <LocalThreadHistoryContext.Provider value={value}>{children}</LocalThreadHistoryContext.Provider>;
@@ -407,15 +474,36 @@ export const LocalThreadList: FC = () => {
                 >
                   <span className="aui-thread-list-item-title min-w-0 flex-1 truncate">{thread.title}</span>
                 </button>
-                <button
-                  className="aui-thread-list-item-more absolute end-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md p-0 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                  type="button"
-                  aria-label={`Delete ${thread.title}`}
-                  onClick={() => deleteThread(thread.id)}
-                >
-                  <TrashIcon className="size-3.5" />
-                  <MoreHorizontalIcon className="sr-only" />
-                </button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      className="aui-thread-list-item-more absolute end-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md p-0 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                      type="button"
+                      aria-label={`Delete ${thread.title}`}
+                    >
+                      <TrashIcon className="size-3.5" />
+                      <MoreHorizontalIcon className="sr-only" />
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        &ldquo;{thread.title}&rdquo; will be permanently removed from this browser. This
+                        action cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/40"
+                        onClick={() => deleteThread(thread.id)}
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             ))}
           </div>

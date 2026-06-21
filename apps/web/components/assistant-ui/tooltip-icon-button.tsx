@@ -17,7 +17,7 @@ export function TooltipIconButton({ tooltip, className, children, ...props }: To
       type="button"
       aria-label={tooltip}
       title={tooltip}
-      className={cn("inline-flex size-8 items-center justify-center rounded-md transition-colors hover:bg-muted disabled:opacity-50", className)}
+      className={cn("inline-flex size-8 items-center justify-center rounded-md transition-colors hover:bg-muted disabled:opacity-50 [&_svg:not([class*='size-'])]:size-4", className)}
       {...props}
     >
       {children}

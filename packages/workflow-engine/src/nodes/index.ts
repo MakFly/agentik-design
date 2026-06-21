@@ -4,6 +4,22 @@ import { apiNode } from "./api";
 import { codeNode } from "./code";
 import { endNode } from "./end";
 import { decisionNode } from "./decision";
+import { slackNode } from "./slack";
+import {
+  setNode,
+  filterNode,
+  limitNode,
+  mergeNode,
+  noopNode,
+  sortNode,
+  aggregateNode,
+  splitOutNode,
+  removeDuplicatesNode,
+  renameKeysNode,
+  cryptoNode,
+  dateTimeNode,
+  summarizeNode,
+} from "./core";
 
 export { createAgentNode, type AgentNodeOptions } from "./agent";
 
@@ -17,6 +33,20 @@ export const builtinExecutors: NodeExecutor[] = [
   codeNode,
   endNode,
   decisionNode,
+  setNode,
+  filterNode,
+  limitNode,
+  mergeNode,
+  noopNode,
+  sortNode,
+  aggregateNode,
+  splitOutNode,
+  removeDuplicatesNode,
+  renameKeysNode,
+  cryptoNode,
+  dateTimeNode,
+  summarizeNode,
+  slackNode,
 ];
 
 export function buildRegistry(extra: NodeExecutor[] = []): Map<string, NodeExecutor> {
@@ -27,3 +57,7 @@ export function buildRegistry(extra: NodeExecutor[] = []): Map<string, NodeExecu
 }
 
 export { triggerNode, apiNode, codeNode, endNode, decisionNode };
+export { setNode, filterNode, limitNode, mergeNode, noopNode };
+export { sortNode, aggregateNode, splitOutNode, removeDuplicatesNode, renameKeysNode, cryptoNode };
+export { dateTimeNode, summarizeNode };
+export { slackNode } from "./slack";

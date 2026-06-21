@@ -2,20 +2,42 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import {
+  createCredentialInput,
   createWorkflowInput,
   runWorkflowInput,
   saveVersionInput,
 } from "@agentik/workflow-schema";
 import {
+  createCredential,
   createRun,
   createWorkflow,
+  deleteCredential,
+  getCredentialDecrypted,
   getRun,
   getWorkflow,
+  listCredentials,
   listWorkflows,
   resolveTeam,
   saveVersion,
+  setCredentialData,
 } from "./repo";
+import { encryptJson, decryptJson } from "./crypto";
+import { buildGoogleAuthUrl, exchangeGoogleCode } from "./oauth";
+import { env } from "./env";
 import { enqueueRun } from "./queue";
+import {
+  cancelAgentTask,
+  createAgent,
+  createTestTask,
+  getAgentTaskSnapshot,
+  getRunUnified,
+  getSystemInfo,
+  listAgentRows,
+  listRunsUnion,
+  publishAgent,
+  workflowDetailToWeb,
+} from "./agents-repo";
+import { daemon } from "./daemon-routes";
 
 type Vars = { teamId: string; teamSlug: string };
 
@@ -73,10 +95,161 @@ api.post("/workflows/:id/run", async (c) => {
   return c.json(run, 202);
 });
 
+api.get("/credentials", async (c) => {
+  const items = await listCredentials(c.get("teamId"));
+  return c.json({ items, total: items.length });
+});
+
+api.post("/credentials", async (c) => {
+  const parsed = createCredentialInput.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const cred = await createCredential(c.get("teamId"), parsed.data);
+  return c.json(cred, 201);
+});
+
+api.delete("/credentials/:id", async (c) => {
+  const ok = await deleteCredential(c.get("teamId"), c.req.param("id"));
+  if (!ok) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
+});
+
+/* ─────────────────────────── OAuth2 (Google) ─────────────────────────── */
+
+function oauthResultHtml(ok: boolean, message?: string): string {
+  return `<!doctype html><meta charset="utf-8"><title>${ok ? "Connected" : "Failed"}</title>
+<body style="font-family:system-ui;display:grid;place-items:center;height:100dvh;margin:0;background:#0b0f17;color:#e5e7eb">
+<div style="text-align:center">
+  <h1 style="font-size:1.2rem">${ok ? "✅ Google connected" : "❌ Connection failed"}</h1>
+  <p style="color:#9ca3af">${ok ? "You can close this window." : (message ?? "Unknown error")}</p>
+</div>
+<script>try{window.opener&&window.opener.postMessage({type:"oauth",ok:${ok}},"*")}catch(e){}; setTimeout(()=>window.close(),1200);</script>
+</body>`;
+}
+
+/** Start the Google consent flow for a googleOAuth2 credential. */
+api.get("/credentials/:id/authorize", async (c) => {
+  const cred = await getCredentialDecrypted(c.req.param("id"));
+  if (!cred) return c.json({ error: "not_found" }, 404);
+  if (cred.row.type !== "googleOAuth2") return c.json({ error: "not_oauth_credential" }, 400);
+  const clientId = cred.data.clientId || env.GOOGLE_CLIENT_ID || "";
+  if (!clientId) return c.html(oauthResultHtml(false, "No Google client id (set GOOGLE_CLIENT_ID)."));
+  const state = encryptJson({ id: cred.row.id });
+  return c.redirect(buildGoogleAuthUrl({ clientId, scope: cred.data.scope ?? "", state }));
+});
+
+/** OAuth redirect target — exchange the code and store tokens on the credential. */
+api.get("/oauth/google/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  if (!code || !state) return c.html(oauthResultHtml(false, "Missing code or state."));
+
+  let id: string;
+  try {
+    id = decryptJson<{ id: string }>(state).id;
+  } catch {
+    return c.html(oauthResultHtml(false, "Invalid state."));
+  }
+
+  const cred = await getCredentialDecrypted(id);
+  if (!cred) return c.html(oauthResultHtml(false, "Credential not found."));
+
+  try {
+    const tokens = await exchangeGoogleCode({
+      code,
+      clientId: cred.data.clientId || env.GOOGLE_CLIENT_ID || "",
+      clientSecret: cred.data.clientSecret || env.GOOGLE_CLIENT_SECRET || "",
+    });
+    const data: Record<string, string> = {
+      ...cred.data,
+      access_token: tokens.access_token,
+      expires_at: String(Date.now() + tokens.expires_in * 1000),
+      token_type: tokens.token_type ?? "Bearer",
+      scope: tokens.scope ?? cred.data.scope ?? "",
+    };
+    if (tokens.refresh_token) data.refresh_token = tokens.refresh_token;
+    await setCredentialData(id, data);
+    return c.html(oauthResultHtml(true));
+  } catch (e) {
+    return c.html(oauthResultHtml(false, e instanceof Error ? e.message : "Token exchange failed."));
+  }
+});
+
+/* ─────────────────────────── Agents (harness) ────────────────────────── */
+
+api.get("/agents", async (c) => {
+  const items = await listAgentRows(c.get("teamId"));
+  return c.json({ items, nextCursor: null, total: items.length });
+});
+
+api.get("/agent-task-snapshot", async (c) => {
+  return c.json(await getAgentTaskSnapshot(c.get("teamId")));
+});
+
+/** System view: daemons, runtimes, detected CLIs, provider key presence. */
+api.get("/system", async (c) => {
+  const info = await getSystemInfo(c.get("teamId"));
+  return c.json({
+    daemonEnabled: env.DAEMON_ENABLED,
+    providers: {
+      anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+      openai: Boolean(env.OPENAI_API_KEY),
+      google: Boolean(env.GOOGLE_CLIENT_ID),
+    },
+    ...info,
+  });
+});
+
+api.post("/agents", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { name?: string; role?: string; goal?: string; tags?: string[] } | null;
+  if (!body?.name) return c.json({ error: "invalid_body" }, 400);
+  const res = await createAgent(c.get("teamId"), { name: body.name, role: body.role, goal: body.goal, tags: body.tags });
+  return c.json(res, 201);
+});
+
+api.post("/agents/:id/publish", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { config?: unknown; changelog?: string };
+  const res = await publishAgent(c.get("teamId"), c.req.param("id"), body.config, body.changelog);
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res);
+});
+
+api.post("/agents/test", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { config?: unknown; input?: string; runtime?: string };
+  const res = await createTestTask(c.get("teamId"), body.config, body.input ?? "", body.runtime ?? "echo");
+  return c.json(res, 202);
+});
+
+/* ───────────────────────────── Runs (union) ──────────────────────────── */
+
+api.get("/runs", async (c) => {
+  const items = await listRunsUnion(c.get("teamId"), {
+    status: c.req.query("status") ?? undefined,
+    agentId: c.req.query("agentId") ?? undefined,
+  });
+  return c.json({ items, nextCursor: null, total: items.length });
+});
+
 api.get("/runs/:id", async (c) => {
-  const run = await getRun(c.req.param("id"));
-  if (!run) return c.json({ error: "not_found" }, 404);
-  return c.json(run);
+  const id = c.req.param("id");
+  if (id.startsWith("atask_")) {
+    const detail = await getRunUnified(id);
+    if (!detail) return c.json({ error: "not_found" }, 404);
+    return c.json(detail);
+  }
+  const detail = await getRun(id);
+  if (!detail) return c.json({ error: "not_found" }, 404);
+  // Re-shape the flat workflow detail into the web's { run, steps } contract.
+  return c.json(workflowDetailToWeb(detail as never));
+});
+
+api.post("/runs/:id/cancel", async (c) => {
+  const ok = await cancelAgentTask(c.req.param("id"));
+  return c.json({ ok }, ok ? 200 : 404);
+});
+
+api.post("/runs/:id/approve", async (c) => {
+  // P1 stub — approval gate wired in Phase 4.
+  return c.json({ ok: true }, 202);
 });
 
 /**
@@ -90,7 +263,7 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 api.get("/runs/:id/live", (c) => {
   const id = c.req.param("id");
   return streamSSE(c, async (stream) => {
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 1500; i++) {
       const run = await getRun(id);
       if (!run) {
         await stream.writeSSE({ event: "error", data: JSON.stringify({ error: "not_found" }) });
@@ -98,11 +271,13 @@ api.get("/runs/:id/live", (c) => {
       }
       await stream.writeSSE({ event: "run", data: JSON.stringify(run) });
       if (TERMINAL.has(run.status)) return;
-      await stream.sleep(500);
+      // Tight poll so the canvas loader tracks node-by-node progress live.
+      await stream.sleep(200);
     }
   });
 });
 
 app.route("/api/v1", api);
+app.route("/daemon", daemon);
 
 export default app;
