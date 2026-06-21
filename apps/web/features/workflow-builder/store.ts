@@ -869,10 +869,8 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
 
       if (!team) return failRun("No active team for this workflow.");
 
-      // A run executes the workflow's current version, so save first.
-      const id = await get().saveToEngine(team);
-      if (!id) return failRun("Could not save the workflow before running.");
-
+      // Show the loading state immediately on click — it covers the save +
+      // enqueue latency, before the first run-status event arrives.
       set({
         runState: "running",
         nodeExecutions: initialExecutions(get().nodes),
@@ -880,6 +878,10 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
         lastRunAt: startedAt,
         showExecutions: true,
       });
+
+      // A run executes the workflow's current version, so save first.
+      const id = await get().saveToEngine(team);
+      if (!id) return failRun("Could not save the workflow before running.");
 
       let queued: RunDetail;
       try {

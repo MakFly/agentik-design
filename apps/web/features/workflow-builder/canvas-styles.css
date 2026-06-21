@@ -163,3 +163,37 @@
 .n8n-workflow .react-flow__attribution {
   display: none !important;
 }
+
+/* Run progress: indeterminate bar across the top of the canvas while executing. */
+.wf-progress-track {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  height: 2px;
+  overflow: hidden;
+  background: var(--n8n-brand-soft);
+  z-index: 20;
+}
+
+.wf-progress-bar {
+  height: 100%;
+  width: 28%;
+  border-radius: 9999px;
+  background: var(--n8n-brand);
+  animation: wf-indeterminate 1.15s ease-in-out infinite;
+}
+
+@keyframes wf-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(460%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-progress-bar {
+    animation-duration: 2.4s;
+  }
+}

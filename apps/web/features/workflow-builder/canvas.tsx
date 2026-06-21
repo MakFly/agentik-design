@@ -33,6 +33,7 @@ export function Canvas() {
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const setPaletteOpen = useWorkflowStore((s) => s.setPaletteOpen);
   const runState = useWorkflowStore((s) => s.runState);
+  const nodeExecutions = useWorkflowStore((s) => s.nodeExecutions);
   const runLog = useWorkflowStore((s) => s.runLog);
   const lastRunAt = useWorkflowStore((s) => s.lastRunAt);
   const runHistory = useWorkflowStore((s) => s.runHistory);
@@ -68,6 +69,18 @@ export function Canvas() {
     [],
   );
 
+  // Real run progress derived from per-node execution state.
+  const totalSteps = nodes.length;
+  const doneSteps = useMemo(
+    () => Object.values(nodeExecutions).filter((e) => e.status === "success").length,
+    [nodeExecutions],
+  );
+  const runningLabel = useMemo(() => {
+    const runningId = Object.entries(nodeExecutions).find(([, e]) => e.status === "running")?.[0];
+    if (!runningId) return null;
+    return (nodes.find((n) => n.id === runningId)?.data as { label?: string } | undefined)?.label ?? null;
+  }, [nodeExecutions, nodes]);
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -96,11 +109,25 @@ export function Canvas() {
         size={1}
         color="var(--n8n-canvas-dot)"
       />
+      {runState === "running" && (
+        <div className="wf-progress-track" aria-hidden>
+          <div className="wf-progress-bar" />
+        </div>
+      )}
       <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
         {runState === "running" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-2.5 text-xs text-muted-foreground shadow-sm">
+          <span
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--n8n-border)] bg-[var(--n8n-surface)] px-2.5 text-xs text-foreground shadow-sm"
+            role="status"
+            aria-live="polite"
+          >
             <Loader2 className="size-3.5 animate-spin text-[var(--n8n-brand)]" />
-            Executing workflow
+            <span className="truncate max-w-[180px]">
+              {runningLabel ? `Running · ${runningLabel}` : "Running…"}
+            </span>
+            <span className="tabular-nums text-muted-foreground">
+              {doneSteps}/{totalSteps}
+            </span>
           </span>
         )}
         {runState === "success" && (
