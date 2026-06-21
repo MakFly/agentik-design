@@ -12,6 +12,14 @@ N := \033[0m
 WEB := apps/web
 ENGINE := apps/engine
 
+# Web dev port: override with `make dev WEB_PORT=4000`. If unset, the first free
+# port among the list below is picked at runtime (the machine often has :3000
+# busy with another project).
+WEB_PORT ?=
+WEB_PORT_CANDIDATES := 3333 3344 3355 3399 4000 4123
+ENGINE_PORT ?= 8787
+API_URL ?= http://localhost:$(ENGINE_PORT)
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
@@ -32,16 +40,23 @@ install: ## Install all workspace dependencies (bun)
 # ── Development ──────────────────────────────────────────────────────────────
 
 .PHONY: dev dev/web dev/engine dev/worker
-dev: ## Start web + engine API + run worker in parallel
+dev: ## Start web + engine API + run worker in parallel (auto-picks a free web port)
 	@printf "$(B)$(G)Starting dev servers...$(N)\n"
 	@$(MAKE) -j3 dev/web dev/engine dev/worker
 
-dev/web: ## Start Next.js dev server (:3000)
-	@printf "$(C)→ Next.js on http://localhost:3000$(N)\n"
-	@cd $(WEB) && bun run dev
+dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT=4000)
+	@PORT="$(WEB_PORT)"; \
+	if [ -z "$$PORT" ]; then \
+		for p in $(WEB_PORT_CANDIDATES); do \
+			if ! (ss -ltn 2>/dev/null | grep -q ":$$p "); then PORT=$$p; break; fi; \
+		done; \
+	fi; \
+	if [ -z "$$PORT" ]; then printf "$(R)No free web port found in: $(WEB_PORT_CANDIDATES)$(N)\n"; exit 1; fi; \
+	printf "$(C)→ Next.js on http://localhost:$$PORT  (API → $(API_URL))$(N)\n"; \
+	cd $(WEB) && PORT=$$PORT API_URL=$(API_URL) bun run dev
 
 dev/engine: ## Start workflow engine API (:8787)
-	@printf "$(C)→ Engine API on http://localhost:8787$(N)\n"
+	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
 	@cd $(ENGINE) && bun run dev
 
 dev/worker: ## Start the BullMQ run worker
