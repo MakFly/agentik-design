@@ -93,6 +93,20 @@ describe("executeWorkflow", () => {
     expect(result.outputs.after).toBeUndefined();
   });
 
+  test("runs the default trigger → end graph (end passes input through)", async () => {
+    const end = (id: string): WorkflowGraph["nodes"][number] => ({
+      id,
+      type: "end",
+      position: { x: 0, y: 0 },
+      label: "End",
+      config: { type: "end" },
+    });
+    const g = graph([trigger("t"), end("e")], [edge("t", "e")]);
+    const result = await executeWorkflow({ graph: g, payload: { ok: 1 } });
+    expect(result.status).toBe("succeeded");
+    expect(result.outputs.e).toEqual({ ok: 1 });
+  });
+
   test("fails gracefully when the graph has no trigger", async () => {
     const result = await executeWorkflow({ graph: graph([code("a", "return 1")]), payload: {} });
     expect(result.status).toBe("failed");

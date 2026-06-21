@@ -2,9 +2,10 @@ import type { NodeExecutor } from "../types";
 import { triggerNode } from "./trigger";
 import { apiNode } from "./api";
 import { codeNode } from "./code";
+import { endNode } from "./end";
 
-/** Node types the engine can execute today (Phase 1). */
-export const builtinExecutors: NodeExecutor[] = [triggerNode, apiNode, codeNode];
+/** Node types the engine can execute today. */
+export const builtinExecutors: NodeExecutor[] = [triggerNode, apiNode, codeNode, endNode];
 
 export function buildRegistry(extra: NodeExecutor[] = []): Map<string, NodeExecutor> {
   const map = new Map<string, NodeExecutor>();
@@ -13,4 +14,4 @@ export function buildRegistry(extra: NodeExecutor[] = []): Map<string, NodeExecu
   return map;
 }
 
-export { triggerNode, apiNode, codeNode };
+export { triggerNode, apiNode, codeNode, endNode };

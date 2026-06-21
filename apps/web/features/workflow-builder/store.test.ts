@@ -118,56 +118,9 @@ describe("workflow builder execution", () => {
     expect(result.log.map((entry) => entry.label)).toEqual(["Manual trigger", "Score lead", "Done"]);
   });
 
-  it("executes a workflow and records per-node statuses and logs", async () => {
-    useWorkflowStore.getState().init("acme");
-    const trigger = useWorkflowStore
-      .getState()
-      .nodes.find((node) => node.data?.nodeType === "trigger");
-    const end = useWorkflowStore
-      .getState()
-      .nodes.find((node) => node.data?.nodeType === "end");
-    const agent = createNode("agent", { x: 260, y: 250 }, "Score lead");
-
-    expect(trigger).toBeDefined();
-    expect(end).toBeDefined();
-    useWorkflowStore.getState().addNode(agent, {
-      insertOnEdge: { id: edgeId(trigger?.id ?? "", end?.id ?? ""), source: trigger?.id ?? "", target: end?.id ?? "" },
-    });
-
-    const result = await useWorkflowStore.getState().executeWorkflow();
-    const state = useWorkflowStore.getState();
-
-    expect(result.ok).toBe(true);
-    expect(state.runState).toBe("success");
-    expect(state.runLog).toHaveLength(3);
-    expect(state.runHistory).toHaveLength(1);
-    expect(state.runHistory[0]).toMatchObject({ status: "success", nodeCount: 3 });
-    expect(Object.values(state.nodeExecutions).map((entry) => entry.status)).toEqual(["success", "success", "success"]);
-    expect(state.runLog.map((entry) => entry.label)).toContain("Score lead");
-
-    const raw = window.localStorage.getItem(workflowDraftStorageKey("acme"));
-    const saved = JSON.parse(raw ?? "{}") as { runHistory?: unknown[] };
-    expect(saved.runHistory).toHaveLength(1);
-
-    useWorkflowStore.getState().init("acme");
-    expect(useWorkflowStore.getState().runHistory).toHaveLength(1);
-  });
-
-  it("fails execution when no trigger exists", async () => {
-    useWorkflowStore.getState().init("acme");
-    useWorkflowStore.setState((state) => ({
-      nodes: state.nodes.filter((node) => node.data?.nodeType !== "trigger"),
-      edges: [],
-    }));
-
-    const result = await useWorkflowStore.getState().executeWorkflow();
-
-    expect(result.ok).toBe(false);
-    expect(useWorkflowStore.getState().runState).toBe("error");
-    expect(useWorkflowStore.getState().runLog[0]?.message).toMatch(/trigger/i);
-    expect(useWorkflowStore.getState().runHistory[0]?.status).toBe("error");
-    expect(useWorkflowStore.getState().showExecutions).toBe(true);
-  });
+  // Live execution now runs on the engine (apps/engine) via POST /run + SSE.
+  // It is covered by the engine's own tests (packages/workflow-engine) and the
+  // end-to-end smoke test, not here — vitest/jsdom has no backend.
 });
 
 describe("workflow builder JSON import/export", () => {

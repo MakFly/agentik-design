@@ -3,7 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Plus } from "lucide-react";
-import { useWorkflowStore } from "./store";
+import { useWorkflowStore, type WorkflowSnapshot } from "./store";
 import { Toolbar } from "./toolbar";
 import { NodePalette } from "./node-palette";
 import { NodePanel } from "./node-panel";
@@ -27,13 +27,23 @@ function useIsDesktop() {
   return useSyncExternalStore(subscribeToMedia, getIsDesktop, () => false);
 }
 
-export function WorkflowBuilder({ team }: { team: string }) {
+export function WorkflowBuilder({
+  team,
+  workflowId,
+  initialSnapshot,
+}: {
+  team: string;
+  workflowId?: string;
+  initialSnapshot?: WorkflowSnapshot;
+}) {
   const init = useWorkflowStore((s) => s.init);
+  const initFromEngine = useWorkflowStore((s) => s.initFromEngine);
   const paletteOpen = useWorkflowStore((s) => s.paletteOpen);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const setSaveState = useWorkflowStore((s) => s.setSaveState);
   const setPaletteOpen = useWorkflowStore((s) => s.setPaletteOpen);
   const persistDraft = useWorkflowStore((s) => s.persistDraft);
+  const saveToEngine = useWorkflowStore((s) => s.saveToEngine);
   const executeWorkflow = useWorkflowStore((s) => s.executeWorkflow);
   const copySelectedNode = useWorkflowStore((s) => s.copySelectedNode);
   const pasteClipboardNode = useWorkflowStore((s) => s.pasteClipboardNode);
@@ -46,8 +56,9 @@ export function WorkflowBuilder({ team }: { team: string }) {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    init(team);
-  }, [init, team]);
+    if (workflowId && initialSnapshot) initFromEngine(team, workflowId, initialSnapshot);
+    else init(team);
+  }, [init, initFromEngine, team, workflowId, initialSnapshot]);
 
   useEffect(() => () => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -87,8 +98,7 @@ export function WorkflowBuilder({ team }: { team: string }) {
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        setSaveState("saving");
-        setSaveState(persistDraft(team) ? "saved" : "dirty");
+        void saveToEngine(team);
       }
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
@@ -139,10 +149,9 @@ export function WorkflowBuilder({ team }: { team: string }) {
     duplicateSelectedNode,
     executeWorkflow,
     pasteClipboardNode,
-    persistDraft,
     redo,
+    saveToEngine,
     setPaletteOpen,
-    setSaveState,
     team,
     undo,
   ]);

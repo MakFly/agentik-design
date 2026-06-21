@@ -11,6 +11,9 @@ import {
 } from "@xyflow/react";
 import { createInitialNodes, edgeId, nodeId } from "./utils";
 import type { NodeType } from "@/types/domain";
+import type { RunDetail } from "@agentik/workflow-schema";
+import { toGraph } from "./serialize";
+import { createWorkflow, saveVersion, startRun, subscribeRun } from "./api";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved";
 export type RunState = "idle" | "running" | "success" | "error";
@@ -25,6 +28,7 @@ type AddNodeOptions = {
 
 export type PersistedWorkflowDraft = {
   version: typeof WORKFLOW_STORAGE_VERSION;
+  workflowId: string | null;
   workflowName: string;
   active: boolean;
   nodes: Node[];
@@ -130,8 +134,14 @@ interface WorkflowBuilderState {
   redo: () => boolean;
   rev: number;
   currentTeam: string | null;
+  workflowId: string | null;
+  setWorkflowId: (id: string | null) => void;
 
   init: (team: string) => void;
+  /** Hydrate the builder from a persisted engine workflow (edit route). */
+  initFromEngine: (team: string, id: string, snapshot: WorkflowSnapshot) => void;
+  /** Create-or-version the workflow on the engine. Returns the workflow id. */
+  saveToEngine: (team: string) => Promise<string | null>;
   persistDraft: (team: string) => boolean;
   resetDraft: (team: string) => void;
   exportWorkflowSnapshot: () => WorkflowSnapshot;
@@ -307,8 +317,40 @@ function initialExecutions(nodes: Node[]): Record<string, NodeExecution> {
   return Object.fromEntries(nodes.map((node) => [node.id, { status: "waiting" as const }]));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Map engine run steps onto the canvas per-node execution overlay. */
+function stepsToExecutions(run: RunDetail): Record<string, NodeExecution> {
+  const map: Record<string, NodeExecution> = {};
+  for (const s of run.steps) {
+    const status: NodeExecutionStatus =
+      s.status === "succeeded"
+        ? "success"
+        : s.status === "failed"
+          ? "error"
+          : s.status === "running" || s.status === "retrying"
+            ? "running"
+            : "waiting";
+    map[s.nodeId] = {
+      status,
+      startedAt: s.startedAt,
+      finishedAt: s.endedAt ?? undefined,
+      message: s.error ?? undefined,
+      output: s.output ?? undefined,
+    };
+  }
+  return map;
+}
+
+function stepsToLog(run: RunDetail): RunLogEntry[] {
+  return run.steps
+    .filter((s) => s.status === "succeeded" || s.status === "failed")
+    .map((s) => ({
+      id: s.id,
+      nodeId: s.nodeId,
+      label: s.label,
+      status: s.status === "succeeded" ? "success" : "error",
+      message: s.error ?? `${s.label} ${s.status}`,
+      timestamp: s.endedAt ?? s.startedAt,
+    }));
 }
 
 function prependHistory(
@@ -449,6 +491,7 @@ function readDraft(team: string): PersistedWorkflowDraft | null {
 
     return {
       version: WORKFLOW_STORAGE_VERSION,
+      workflowId: typeof parsed.workflowId === "string" ? parsed.workflowId : null,
       workflowName: parsed.workflowName,
       active: typeof parsed.active === "boolean" ? parsed.active : false,
       nodes: parsed.nodes,
@@ -492,7 +535,10 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
     undoStack: [],
     redoStack: [],
     currentTeam: null,
+    workflowId: null,
     rev: 0,
+
+    setWorkflowId: (id) => set({ workflowId: id }),
 
     init: (team) => {
       const saved = readDraft(team);
@@ -513,6 +559,7 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
           undoStack: [],
           redoStack: [],
           currentTeam: team,
+          workflowId: saved.workflowId,
           rev: 0,
           workflowName: saved.workflowName,
           active: saved.active,
@@ -537,10 +584,56 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
         undoStack: [],
         redoStack: [],
         currentTeam: team,
+        workflowId: null,
         rev: s.rev + 1,
         workflowName: "Untitled workflow",
         active: false,
       }));
+    },
+
+    initFromEngine: (team, id, snapshot) => {
+      set({
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
+        workflowName: snapshot.name,
+        active: snapshot.active,
+        workflowId: id,
+        currentTeam: team,
+        selectedNodeId: null,
+        clipboardNode: null,
+        paletteOpen: true,
+        saveState: "saved",
+        runState: "idle",
+        nodeExecutions: {},
+        runLog: [],
+        lastRunAt: null,
+        runHistory: [],
+        showExecutions: false,
+        undoStack: [],
+        redoStack: [],
+        rev: 0,
+      });
+    },
+
+    saveToEngine: async (team) => {
+      const { workflowId, workflowName, active, nodes, edges } = get();
+      const graph = toGraph(nodes, edges);
+      set({ saveState: "saving" });
+      try {
+        let id = workflowId;
+        if (!id) {
+          const created = await createWorkflow(team, workflowName || "Untitled workflow");
+          id = created.id;
+          set({ workflowId: id });
+        }
+        await saveVersion(team, id, { graph, name: workflowName, active });
+        set({ saveState: "saved" });
+        get().persistDraft(team);
+        return id;
+      } catch {
+        set({ saveState: "dirty" });
+        return null;
+      }
     },
 
     onNodesChange: (changes) =>
@@ -697,103 +790,98 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
       return true;
     },
     executeWorkflow: async () => {
-      const { nodes, edges } = get();
-      const planned = planWorkflowRun(nodes, edges);
-      const runId = `exec_${Date.now()}`;
       const startedAt = new Date().toISOString();
+      const team = get().currentTeam;
 
-      if (!planned.ok) {
-        const timestamp = new Date().toISOString();
-        const errorLog: RunLogEntry[] = [{
-          id: `run_error_${Date.now()}`,
-          nodeId: "",
-          label: "Workflow",
-          status: "error",
-          message: planned.error ?? "Workflow execution failed.",
-          timestamp,
-        }];
-        const historyEntry: WorkflowRunHistoryEntry = {
-          id: runId,
-          status: "error",
-          startedAt,
-          finishedAt: timestamp,
-          durationMs: Math.max(0, Date.parse(timestamp) - Date.parse(startedAt)),
-          nodeCount: 0,
-          log: errorLog,
-          error: planned.error ?? "Workflow execution failed.",
-        };
-
+      const failRun = (message: string): WorkflowRunResult => {
+        const ts = new Date().toISOString();
+        const errorLog: RunLogEntry[] = [
+          { id: `run_error_${ts}`, nodeId: "", label: "Workflow", status: "error", message, timestamp: ts },
+        ];
         set((s) => ({
           runState: "error",
           nodeExecutions: {},
           runLog: errorLog,
-          lastRunAt: timestamp,
-          runHistory: prependHistory(s.runHistory, historyEntry),
+          lastRunAt: ts,
+          runHistory: prependHistory(s.runHistory, {
+            id: `exec_${ts}`,
+            status: "error",
+            startedAt,
+            finishedAt: ts,
+            durationMs: 0,
+            nodeCount: 0,
+            log: errorLog,
+            error: message,
+          }),
           showExecutions: true,
         }));
-        const team = get().currentTeam;
         if (team) get().persistDraft(team);
-        return { ...planned, log: errorLog };
-      }
+        return { ok: false, orderedNodeIds: [], log: errorLog, error: message };
+      };
+
+      if (!team) return failRun("No active team for this workflow.");
+
+      // A run executes the workflow's current version, so save first.
+      const id = await get().saveToEngine(team);
+      if (!id) return failRun("Could not save the workflow before running.");
 
       set({
         runState: "running",
-        nodeExecutions: initialExecutions(nodes),
+        nodeExecutions: initialExecutions(get().nodes),
         runLog: [],
         lastRunAt: startedAt,
+        showExecutions: true,
       });
 
-      const completedLog: RunLogEntry[] = [];
-      for (const entry of planned.log) {
-        const started = new Date().toISOString();
-        set((s) => ({
-          nodeExecutions: {
-            ...s.nodeExecutions,
-            [entry.nodeId]: { status: "running", startedAt: started, message: entry.message },
-          },
-        }));
-
-        await sleep(120);
-
-        completedLog.push(entry);
-        set((s) => ({
-          nodeExecutions: {
-            ...s.nodeExecutions,
-            [entry.nodeId]: {
-              status: "success",
-              startedAt: s.nodeExecutions[entry.nodeId]?.startedAt ?? started,
-              finishedAt: new Date().toISOString(),
-              message: entry.message,
-              output: { ok: true, nodeId: entry.nodeId, label: entry.label },
-            },
-          },
-          runLog: completedLog,
-        }));
+      let queued: RunDetail;
+      try {
+        queued = await startRun(team, id);
+      } catch {
+        return failRun("The engine rejected the run request.");
       }
 
-      const finishedAt = new Date().toISOString();
-      const historyEntry: WorkflowRunHistoryEntry = {
-        id: runId,
-        status: "success",
-        startedAt,
-        finishedAt,
-        durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)),
-        nodeCount: planned.orderedNodeIds.length,
-        log: planned.log,
-      };
-      set((s) => ({
-        runState: "success",
-        lastRunAt: finishedAt,
-        runHistory: prependHistory(s.runHistory, historyEntry),
-      }));
-      const team = get().currentTeam;
-      if (team) get().persistDraft(team);
-      return planned;
+      const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+      return await new Promise<WorkflowRunResult>((resolve) => {
+        let settled = false;
+        const finish = (final: RunDetail) => {
+          if (settled) return;
+          settled = true;
+          const ok = final.status === "succeeded";
+          const log = stepsToLog(final);
+          set((s) => ({
+            runState: ok ? "success" : "error",
+            nodeExecutions: stepsToExecutions(final),
+            runLog: log,
+            lastRunAt: final.endedAt ?? new Date().toISOString(),
+            runHistory: prependHistory(s.runHistory, {
+              id: final.id,
+              status: ok ? "success" : "error",
+              startedAt,
+              finishedAt: final.endedAt ?? new Date().toISOString(),
+              durationMs: final.durationMs ?? 0,
+              nodeCount: final.stepCount,
+              log,
+              error: final.error ?? undefined,
+            }),
+          }));
+          get().persistDraft(team);
+          resolve({ ok, orderedNodeIds: final.steps.map((st) => st.nodeId), log, error: final.error ?? undefined });
+        };
+
+        subscribeRun(queued.id, {
+          onRun: (r) => {
+            set({ nodeExecutions: stepsToExecutions(r), runLog: stepsToLog(r) });
+            if (TERMINAL.has(r.status)) finish(r);
+          },
+          onError: () => finish({ ...queued, status: "failed", error: "Lost connection to the run stream.", steps: [] }),
+        });
+      });
     },
     persistDraft: (team) => {
-      const { workflowName, active, nodes, edges, runHistory } = get();
+      const { workflowId, workflowName, active, nodes, edges, runHistory } = get();
       return writeDraft(team, {
         version: WORKFLOW_STORAGE_VERSION,
+        workflowId,
         workflowName,
         active,
         nodes,
@@ -821,6 +909,7 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
         runHistory: [],
         showExecutions: false,
         currentTeam: team,
+        workflowId: null,
         rev: 0,
         workflowName: "Untitled workflow",
         active: false,

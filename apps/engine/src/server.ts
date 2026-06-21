@@ -79,9 +79,15 @@ api.get("/runs/:id", async (c) => {
   return c.json(run);
 });
 
-/** Live run status via SSE — polls the run until it reaches a terminal state. */
+/**
+ * Live run status via SSE — polls the run until it reaches a terminal state.
+ * Path is `/runs/:id/live` (not `/stream`) on purpose: apps/web already ships a
+ * mock `/runs/:id/stream` route handler for the run-view demo, which would
+ * shadow this through the Next rewrite. `/live` has no FS route and no MSW
+ * handler, so it bypasses straight to the engine.
+ */
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
-api.get("/runs/:id/stream", (c) => {
+api.get("/runs/:id/live", (c) => {
   const id = c.req.param("id");
   return streamSSE(c, async (stream) => {
     for (let i = 0; i < 600; i++) {

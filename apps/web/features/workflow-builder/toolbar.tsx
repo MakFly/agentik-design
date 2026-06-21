@@ -42,6 +42,7 @@ export function Toolbar({ team }: { team: string }) {
   const edges = useWorkflowStore((s) => s.edges);
   const setSaveState = useWorkflowStore((s) => s.setSaveState);
   const persistDraft = useWorkflowStore((s) => s.persistDraft);
+  const saveToEngine = useWorkflowStore((s) => s.saveToEngine);
   const runState = useWorkflowStore((s) => s.runState);
   const executeWorkflow = useWorkflowStore((s) => s.executeWorkflow);
   const active = useWorkflowStore((s) => s.active);
@@ -75,10 +76,7 @@ export function Toolbar({ team }: { team: string }) {
 
   const commitSave = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    setSaveState("saving");
-    timerRef.current = setTimeout(() => {
-      setSaveState(persistDraft(team) ? "saved" : "dirty");
-    }, 520);
+    void saveToEngine(team);
   };
 
   const runWorkflow = async () => {

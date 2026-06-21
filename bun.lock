@@ -28,6 +28,7 @@
       "name": "agentik-web",
       "version": "0.1.0",
       "dependencies": {
+        "@agentik/workflow-schema": "workspace:*",
         "@ai-sdk/openai": "^3.0.71",
         "@assistant-ui/react": "^0.14.23",
         "@assistant-ui/react-ai-sdk": "^1.3.37",
