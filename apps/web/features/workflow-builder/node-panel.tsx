@@ -118,6 +118,8 @@ function NodeConfigForm({
   nodeId: string;
 }) {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
+  const renameDecisionBranch = useWorkflowStore((s) => s.renameDecisionBranch);
+  const removeDecisionBranch = useWorkflowStore((s) => s.removeDecisionBranch);
   const patch = (partial: Record<string, unknown>) => {
     updateNodeData(nodeId, { config: { ...config, ...partial } });
   };
@@ -256,16 +258,64 @@ function NodeConfigForm({
         </Field>
       );
 
-    case "decision":
+    case "decision": {
+      const branches = (config.branches as Array<{ label: string; expression: string }>) ?? [];
+      const setExpression = (i: number, expression: string) =>
+        patch({ branches: branches.map((b, j) => (j === i ? { ...b, expression } : b)) });
       return (
-        <Field label="Default branch">
-          <Input
-            value={(config.default as string) ?? ""}
-            onChange={(e) => patch({ default: e.target.value })}
-            className="h-8 text-sm"
-          />
-        </Field>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
+            {branches.map((b, i) => (
+              <div key={i} className="flex flex-col gap-1.5 rounded-md border border-[var(--n8n-border)] p-2.5">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={b.label}
+                    onChange={(e) => renameDecisionBranch(nodeId, i, e.target.value)}
+                    placeholder="branch label"
+                    className="h-8 text-sm"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 shrink-0 text-muted-foreground hover:text-danger"
+                    onClick={() => removeDecisionBranch(nodeId, i)}
+                    aria-label="Remove branch"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+                <Input
+                  value={b.expression}
+                  onChange={(e) => setExpression(i, e.target.value)}
+                  placeholder="input.amount > 100"
+                  className="h-8 font-mono text-xs"
+                />
+              </div>
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => patch({ branches: [...branches, { label: `branch_${branches.length + 1}`, expression: "true" }] })}
+            >
+              Add branch
+            </Button>
+          </div>
+          <Field label="Default branch (fallback)">
+            <Input
+              value={(config.default as string) ?? ""}
+              onChange={(e) => patch({ default: e.target.value })}
+              placeholder="default"
+              className="h-8 text-sm"
+            />
+          </Field>
+          <p className="text-[11px] text-muted-foreground">
+            The first branch whose expression is truthy is taken; otherwise the default. Each branch is a
+            connection point on the node. Use <code>input</code>, <code>payload</code> in expressions.
+          </p>
+        </div>
       );
+    }
 
     case "approval":
       return (

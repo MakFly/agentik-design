@@ -3,14 +3,14 @@ import type { WorkflowGraph } from "@agentik/workflow-schema";
 export interface TopoResult {
   /** Node ids in execution order (reachable from a trigger, cycle-free). */
   order: string[];
-  /** node id -> ids of its direct upstream nodes. */
-  incoming: Map<string, string[]>;
 }
 
 /**
  * Topological order of the nodes reachable from any trigger, via Kahn's
- * algorithm. Unreachable nodes are skipped. Cycles are rejected — loop nodes
- * (Phase 3) will model iteration explicitly rather than via graph cycles.
+ * algorithm. Unreachable nodes are skipped. Cycles are rejected — a future loop
+ * node will model iteration explicitly rather than via graph cycles. Edge wiring
+ * (incoming/outgoing, handles) is rebuilt by the executor, which needs the full
+ * edge objects, so it is intentionally not returned here.
  */
 export function topoSort(graph: WorkflowGraph): TopoResult {
   const triggers = graph.nodes.filter((n) => n.type === "trigger").map((n) => n.id);
@@ -61,9 +61,5 @@ export function topoSort(graph: WorkflowGraph): TopoResult {
     throw new Error("Workflow graph contains a cycle.");
   }
 
-  const reachableIncoming = new Map<string, string[]>();
-  for (const id of order) {
-    reachableIncoming.set(id, (incoming.get(id) ?? []).filter((s) => reachable.has(s)));
-  }
-  return { order, incoming: reachableIncoming };
+  return { order };
 }

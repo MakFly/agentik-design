@@ -29,6 +29,7 @@ export function createAgentNode(opts: AgentNodeOptions = {}): NodeExecutor {
     async execute({ node, input, payload, outputs, signal }) {
       if (node.config.type !== "agent") throw new Error("agent node: config mismatch");
       if (!opts.apiKey) throw new Error("Agent node requires an API key on the engine (OPENAI_API_KEY).");
+      if (signal?.aborted) throw new Error("Run cancelled before the agent call.");
 
       const cfg = node.config;
       const scope: Scope = { input, payload, outputs };

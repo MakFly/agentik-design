@@ -101,6 +101,10 @@ interface WorkflowBuilderState {
   onConnect: (connection: Connection) => void;
   addNode: (node: Node, options?: AddNodeOptions) => void;
   updateNodeData: (id: string, data: Record<string, unknown>) => void;
+  /** Rename a decision branch and keep its outgoing edge handles in sync. */
+  renameDecisionBranch: (nodeId: string, index: number, newLabel: string) => void;
+  /** Remove a decision branch and drop the edges leaving its handle. */
+  removeDecisionBranch: (nodeId: string, index: number) => void;
   deleteSelected: () => void;
 
   selectedNodeId: string | null;
@@ -712,6 +716,45 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
         ...withUndo(s),
         ...dirty(s),
       })),
+
+    renameDecisionBranch: (nodeId, index, newLabel) =>
+      set((s) => {
+        const node = s.nodes.find((n) => n.id === nodeId);
+        const config = (node?.data as { config?: Record<string, unknown> } | undefined)?.config ?? {};
+        const branches = (config.branches as Array<{ label: string; expression: string }>) ?? [];
+        const oldLabel = branches[index]?.label;
+        const nextBranches = branches.map((b, j) => (j === index ? { ...b, label: newLabel } : b));
+        return {
+          nodes: s.nodes.map((n) =>
+            n.id === nodeId ? { ...n, data: { ...n.data, config: { ...config, branches: nextBranches } } } : n,
+          ),
+          edges:
+            oldLabel === undefined || oldLabel === newLabel
+              ? s.edges
+              : s.edges.map((e) =>
+                  e.source === nodeId && e.sourceHandle === oldLabel ? { ...e, sourceHandle: newLabel } : e,
+                ),
+          ...withUndo(s),
+          ...dirty(s),
+        };
+      }),
+
+    removeDecisionBranch: (nodeId, index) =>
+      set((s) => {
+        const node = s.nodes.find((n) => n.id === nodeId);
+        const config = (node?.data as { config?: Record<string, unknown> } | undefined)?.config ?? {};
+        const branches = (config.branches as Array<{ label: string; expression: string }>) ?? [];
+        const removed = branches[index]?.label;
+        const nextBranches = branches.filter((_, j) => j !== index);
+        return {
+          nodes: s.nodes.map((n) =>
+            n.id === nodeId ? { ...n, data: { ...n.data, config: { ...config, branches: nextBranches } } } : n,
+          ),
+          edges: s.edges.filter((e) => !(e.source === nodeId && e.sourceHandle === removed)),
+          ...withUndo(s),
+          ...dirty(s),
+        };
+      }),
 
     selectNode: (id) => set({ selectedNodeId: id }),
     setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

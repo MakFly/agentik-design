@@ -107,6 +107,35 @@ describe("executeWorkflow", () => {
     expect(result.outputs.e).toEqual({ ok: 1 });
   });
 
+  test("decision routes to the matching branch and skips the others", async () => {
+    const decision = (id: string): WorkflowGraph["nodes"][number] => ({
+      id,
+      type: "decision",
+      position: { x: 0, y: 0 },
+      label: "Branch",
+      config: { type: "decision", branches: [{ label: "big", expression: "input.n > 3" }], default: "small" },
+    });
+    const handleEdge = (source: string, handle: string, target: string) => ({
+      id: `${source}:${handle}->${target}`,
+      source,
+      sourceHandle: handle,
+      target,
+    });
+    const g = graph(
+      [trigger("t"), decision("d"), code("big", "return { took: 'big' }"), code("small", "return { took: 'small' }")],
+      [edge("t", "d"), handleEdge("d", "big", "big"), handleEdge("d", "small", "small")],
+    );
+
+    const big = await executeWorkflow({ graph: g, payload: { n: 5 } });
+    expect(big.status).toBe("succeeded");
+    expect(big.outputs.big).toEqual({ took: "big" });
+    expect(big.outputs.small).toBeUndefined();
+
+    const small = await executeWorkflow({ graph: g, payload: { n: 1 } });
+    expect(small.outputs.small).toEqual({ took: "small" });
+    expect(small.outputs.big).toBeUndefined();
+  });
+
   test("fails gracefully when the graph has no trigger", async () => {
     const result = await executeWorkflow({ graph: graph([code("a", "return 1")]), payload: {} });
     expect(result.status).toBe("failed");

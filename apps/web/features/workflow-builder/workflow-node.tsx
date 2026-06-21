@@ -54,9 +54,41 @@ function WorkflowNodeRaw({ id, data, selected }: NodeProps<WfNode>) {
         <NodeStatus status={execution?.status} />
       </div>
 
-      {data.nodeType !== "end" && (
-        <Handle type="source" position={Position.Right} />
+      {data.nodeType === "decision" ? (
+        <DecisionHandles config={data.config} />
+      ) : (
+        data.nodeType !== "end" && <Handle type="source" position={Position.Right} />
       )}
+    </>
+  );
+}
+
+/** One labelled source handle per branch (+ default) so edges carry sourceHandle. */
+function DecisionHandles({ config }: { config?: NodeConfig }) {
+  const branches =
+    config?.type === "decision"
+      ? [...config.branches.map((b) => b.label), config.default]
+      : ["default"];
+  const handles = Array.from(new Set(branches.filter(Boolean)));
+
+  return (
+    <>
+      {handles.map((label, i) => {
+        const top = ((i + 1) / (handles.length + 1)) * 100;
+        return (
+          <Handle
+            key={label}
+            id={label}
+            type="source"
+            position={Position.Right}
+            style={{ top: `${top}%` }}
+          >
+            <span className="pointer-events-none absolute left-3 -translate-y-1/2 whitespace-nowrap text-[9px] font-medium text-muted-foreground">
+              {label}
+            </span>
+          </Handle>
+        );
+      })}
     </>
   );
 }

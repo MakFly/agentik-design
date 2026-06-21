@@ -11,7 +11,7 @@ export interface Scope {
  * `{{ ... }}` interpolations. The vm context is a convenience sandbox, NOT a
  * security boundary — inputs come from the workflow author, who is trusted.
  */
-function evalExpr(expr: string, scope: Scope): unknown {
+export function evaluate(expr: string, scope: Scope): unknown {
   const sandbox = Object.freeze({
     input: scope.input,
     payload: scope.payload,
@@ -31,10 +31,10 @@ const TEMPLATE = /\{\{([\s\S]+?)\}\}/g;
  */
 export function resolveTemplate(str: string, scope: Scope): unknown {
   const single = str.match(/^\s*\{\{([\s\S]+?)\}\}\s*$/);
-  if (single) return evalExpr(single[1]!, scope);
+  if (single) return evaluate(single[1]!, scope);
 
   return str.replace(TEMPLATE, (_m, expr: string) => {
-    const value = evalExpr(expr, scope);
+    const value = evaluate(expr, scope);
     return typeof value === "string" ? value : JSON.stringify(value);
   });
 }

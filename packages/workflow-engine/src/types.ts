@@ -15,6 +15,12 @@ export interface NodeContext {
 export interface NodeExecutor {
   type: NodeType;
   execute(ctx: NodeContext): Promise<unknown>;
+  /**
+   * Branching nodes return the chosen outgoing handle id; the executor then
+   * activates only the edges leaving that handle. Absent → all outgoing edges
+   * are activated (linear flow).
+   */
+  route?(ctx: NodeContext): Promise<string>;
 }
 
 export type StepStatusOut = "succeeded" | "failed" | "skipped";
