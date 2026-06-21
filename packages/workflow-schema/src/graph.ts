@@ -61,10 +61,15 @@ export const nodeConfig = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("agent"),
-    agentId: z.string(),
-    versionId: z.string(),
+    // Optional binding to a registry agent (future). When absent, the node runs
+    // self-contained from the inline model/instructions/prompt below.
+    agentId: z.string().optional(),
+    versionId: z.string().optional(),
+    model: z.string().optional(),
+    instructions: z.string().optional(),
+    prompt: z.string().optional(),
     inputMap: ioMap.default({}),
-    onError: nodeErrorPolicy,
+    onError: nodeErrorPolicy.optional(),
     timeoutMs: z.number().int().positive().default(30_000),
   }),
   z.object({

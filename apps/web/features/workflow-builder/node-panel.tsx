@@ -158,12 +158,28 @@ function NodeConfigForm({
     case "agent":
       return (
         <div className="flex flex-col gap-4">
-          <Field label="Agent">
+          <Field label="Model">
             <Input
-              value={(config.agentId as string) ?? ""}
-              onChange={(e) => patch({ agentId: e.target.value })}
-              placeholder="Select an agent…"
+              value={(config.model as string) ?? ""}
+              onChange={(e) => patch({ model: e.target.value })}
+              placeholder="gpt-4.1-mini"
               className="h-8 text-sm"
+            />
+          </Field>
+          <Field label="Instructions (system)">
+            <Textarea
+              value={(config.instructions as string) ?? ""}
+              onChange={(e) => patch({ instructions: e.target.value })}
+              placeholder="You are a helpful assistant…"
+              className="min-h-[80px] text-sm"
+            />
+          </Field>
+          <Field label="Prompt">
+            <Textarea
+              value={(config.prompt as string) ?? ""}
+              onChange={(e) => patch({ prompt: e.target.value })}
+              placeholder="{{ input.text }}"
+              className="min-h-[80px] font-mono text-xs leading-relaxed"
             />
           </Field>
           <Field label="Timeout (ms)">

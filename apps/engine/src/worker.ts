@@ -1,9 +1,14 @@
 import { Worker } from "bullmq";
 import { eq, sql } from "drizzle-orm";
-import { executeWorkflow } from "@agentik/workflow-engine";
+import { createAgentNode, executeWorkflow } from "@agentik/workflow-engine";
+import { env } from "./env";
 import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { connection, RUN_QUEUE, type RunJobData } from "./queue";
+
+// Agent node needs an API key — injected here so the engine package stays
+// provider-agnostic. Without a key, agent nodes fail with a clear message.
+const agentNode = createAgentNode({ apiKey: env.OPENAI_API_KEY });
 
 const { runs, workflowVersions, runSteps } = schema;
 
@@ -34,6 +39,7 @@ async function runWorkflow(runId: string): Promise<void> {
   const result = await executeWorkflow({
     graph: version.graph,
     payload: run.payload,
+    executors: [agentNode],
     hooks: {
       async onStepStart(ev) {
         const id = genId("step");

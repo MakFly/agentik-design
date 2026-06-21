@@ -4,7 +4,12 @@ import { apiNode } from "./api";
 import { codeNode } from "./code";
 import { endNode } from "./end";
 
-/** Node types the engine can execute today. */
+export { createAgentNode, type AgentNodeOptions } from "./agent";
+
+/**
+ * Node types the engine executes without extra config. The agent node is NOT
+ * here — it needs an API key, so the worker injects it via createAgentNode().
+ */
 export const builtinExecutors: NodeExecutor[] = [triggerNode, apiNode, codeNode, endNode];
 
 export function buildRegistry(extra: NodeExecutor[] = []): Map<string, NodeExecutor> {

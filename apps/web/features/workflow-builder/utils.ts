@@ -16,7 +16,14 @@ function defaultConfigForType(type: NodeType): NodeConfig {
     case "trigger":
       return { type: "trigger", trigger: "manual" };
     case "agent":
-      return { type: "agent", agentId: "" as never, versionId: "live", inputMap: {}, onError: { onError: "fail" }, timeoutMs: 60_000 };
+      return {
+        type: "agent",
+        model: "gpt-4.1-mini",
+        instructions: "You are a helpful assistant inside a workflow. Respond concisely.",
+        prompt: "{{ JSON.stringify(input) }}",
+        inputMap: {},
+        timeoutMs: 60_000,
+      };
     case "tool":
       return { type: "tool", toolId: "" as never, action: "", argsMap: {}, scopes: [] };
     case "api":

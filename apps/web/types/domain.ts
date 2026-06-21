@@ -198,7 +198,7 @@ export type NodeErrorPolicy = {
 
 export type NodeConfig =
   | { type: "trigger"; trigger: "manual" | "webhook" | "schedule" | "event"; schema?: JsonSchema; cron?: string }
-  | { type: "agent"; agentId: AgentId; versionId: VersionId | "live"; inputMap: IOMap; onError: NodeErrorPolicy; timeoutMs: number }
+  | { type: "agent"; agentId?: AgentId; versionId?: VersionId | "live"; model?: string; instructions?: string; prompt?: string; inputMap: IOMap; onError?: NodeErrorPolicy; timeoutMs: number }
   | { type: "tool"; toolId: ToolId; action: string; argsMap: IOMap; scopes: string[] }
   | { type: "api"; method: HttpMethod; url: string; headers?: Record<string, string>; bodyMap?: IOMap; auth?: string; timeoutMs: number }
   | { type: "decision"; branches: Array<{ label: string; expression: string }>; default: string }
