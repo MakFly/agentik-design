@@ -548,7 +548,10 @@ export const useWorkflowStore = create<WorkflowBuilderState>((set, get) => {
 
     init: (team) => {
       const saved = readDraft(team);
-      if (saved) {
+      // Only restore genuinely-unsaved NEW work. A draft carrying a workflowId
+      // belongs to a persisted workflow (edited via /[id]); restoring it on
+      // /new would silently bind "New workflow" to that existing workflow.
+      if (saved && saved.workflowId === null) {
         set({
           nodes: saved.nodes,
           edges: saved.edges,

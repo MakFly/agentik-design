@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Plus } from "lucide-react";
 import { useWorkflowStore, type WorkflowSnapshot } from "./store";
@@ -36,8 +37,10 @@ export function WorkflowBuilder({
   workflowId?: string;
   initialSnapshot?: WorkflowSnapshot;
 }) {
+  const router = useRouter();
   const init = useWorkflowStore((s) => s.init);
   const initFromEngine = useWorkflowStore((s) => s.initFromEngine);
+  const storeWorkflowId = useWorkflowStore((s) => s.workflowId);
   const paletteOpen = useWorkflowStore((s) => s.paletteOpen);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const setSaveState = useWorkflowStore((s) => s.setSaveState);
@@ -59,6 +62,22 @@ export function WorkflowBuilder({
     if (workflowId && initialSnapshot) initFromEngine(team, workflowId, initialSnapshot);
     else init(team);
   }, [init, initFromEngine, team, workflowId, initialSnapshot]);
+
+  // On /new (no workflowId prop), once the first save creates the workflow,
+  // move to its canonical edit URL. Armed only after we've observed the clean
+  // null state post-init, so the singleton store's stale id (left over from a
+  // previously-edited workflow) can't bounce us on mount.
+  const redirectArmedRef = useRef(false);
+  useEffect(() => {
+    if (workflowId) return; // edit route — never redirect
+    if (!storeWorkflowId) {
+      redirectArmedRef.current = true;
+      return;
+    }
+    if (redirectArmedRef.current) {
+      router.replace(`/${team}/workflows/${storeWorkflowId}`);
+    }
+  }, [workflowId, storeWorkflowId, team, router]);
 
   useEffect(() => () => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
