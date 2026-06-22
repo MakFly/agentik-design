@@ -18,6 +18,16 @@ const schema = z.object({
   /** Agent-execution harness. The daemon authenticates with this shared token. */
   DAEMON_ENABLED: z.coerce.boolean().default(false),
   DAEMON_AUTH_TOKEN: z.string().min(16).optional(),
+  /**
+   * Allow the dev x-team/x-role header fallback when there is no session cookie.
+   * Defaults true for local dev/tests; set "false" in production so unauthenticated
+   * requests are rejected and tenancy is never trusted from the client.
+   * NOTE: parsed by string compare — z.coerce.boolean treats "false" as true.
+   */
+  AUTH_DEV_HEADERS: z
+    .string()
+    .optional()
+    .transform((v) => v !== "false"),
 });
 
 const parsed = schema.safeParse(process.env);

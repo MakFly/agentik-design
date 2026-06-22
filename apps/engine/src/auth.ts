@@ -3,6 +3,7 @@ import { getCookie } from "hono/cookie";
 import { roleCan, type Permission, type Role } from "@agentik/workflow-schema";
 import { resolveTeam } from "./repo";
 import { getMembership, getSessionUser, listUserOrgs } from "./auth-repo";
+import { env } from "./env";
 
 export const SESSION_COOKIE = "agentik_session";
 export const ORG_COOKIE = "agentik_org";
@@ -44,7 +45,7 @@ function parseRole(raw: string | undefined): Role {
  *   and role from the membership. orgId is "" when the user has no org yet (→ onboarding).
  * - No session cookie → DEV fallback to x-team/x-role headers (local dev & header-based tests).
  */
-export async function resolveAuth(c: Context): Promise<AuthContext & { teamSlug: string }> {
+export async function resolveAuth(c: Context): Promise<(AuthContext & { teamSlug: string }) | null> {
   const sessionToken = getCookie(c, SESSION_COOKIE);
   if (sessionToken) {
     const user = await getSessionUser(sessionToken);
@@ -59,6 +60,8 @@ export async function resolveAuth(c: Context): Promise<AuthContext & { teamSlug:
       return { userId: user.userId, orgId: "", role: "viewer", teamSlug: "" };
     }
   }
+  // No valid session. Only fall back to client headers when explicitly allowed (dev/tests).
+  if (!env.AUTH_DEV_HEADERS) return null;
   const slug = c.req.header("x-team") ?? "acme";
   const orgId = await resolveTeam(slug);
   const role = parseRole(c.req.header("x-role"));
@@ -70,7 +73,9 @@ export { getMembership };
 
 /** Populate teamId/teamSlug/auth on the request context. */
 export const withAuth: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
-  const { teamSlug, ...auth } = await resolveAuth(c);
+  const resolved = await resolveAuth(c);
+  if (!resolved) return c.json({ error: "unauthenticated" }, 401);
+  const { teamSlug, ...auth } = resolved;
   c.set("teamSlug", teamSlug);
   c.set("teamId", auth.orgId);
   c.set("auth", auth);
