@@ -26,7 +26,12 @@ export default function OnboardingPage() {
       const res = await authApi.createOrg({ name, slug: slug || slugify(name) });
       setCreated(res);
     } catch (err) {
-      setError(err instanceof Error && err.message === "slug_taken" ? "That slug is taken — try another." : "Could not create the organization.");
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "email_unverified") {
+        router.push("/verify?pending=1");
+        return;
+      }
+      setError(msg === "slug_taken" ? "That slug is taken — try another." : "Could not create the organization.");
     } finally {
       setBusy(false);
     }

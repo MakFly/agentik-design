@@ -47,13 +47,10 @@ d("Phase 0 — identity, org lifecycle & tenancy isolation", () => {
     expect("error" in dup && dup.error).toBe("email_taken");
   });
 
-  test("login issues a working session; wrong password fails", async () => {
+  test("wrong password fails; unverified login is blocked (verify-before-access)", async () => {
     expect(await login({ email: aliceEmail, password: "wrong" })).toBeNull();
-    const ok = await login({ email: aliceEmail, password: "supersecret1" });
-    expect(ok).not.toBeNull();
-    const user = await getSessionUser(ok!.session.token);
-    expect(user?.email).toBe(aliceEmail);
-    expect(await getSessionUser("garbage-token")).toBeNull();
+    const blocked = await login({ email: aliceEmail, password: "supersecret1" });
+    expect(blocked && "error" in blocked && blocked.error).toBe("email_unverified");
   });
 
   test("verify email clears the token", async () => {
@@ -61,6 +58,14 @@ d("Phase 0 — identity, org lifecycle & tenancy isolation", () => {
     expect(await verifyEmail(row!.verifyToken!)).toBe(true);
     const [after] = await db.select().from(schema.appUsers).where(eq(schema.appUsers.email, aliceEmail)).limit(1);
     expect(after?.emailVerifiedAt).not.toBeNull();
+  });
+
+  test("after verification, login issues a working session", async () => {
+    const ok = await login({ email: aliceEmail, password: "supersecret1" });
+    if (!ok || "error" in ok) throw new Error("verified login should succeed");
+    const user = await getSessionUser(ok.session.token);
+    expect(user?.email).toBe(aliceEmail);
+    expect(await getSessionUser("garbage-token")).toBeNull();
   });
 
   test("create org → owner membership + org-scoped daemon token", async () => {

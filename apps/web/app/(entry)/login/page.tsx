@@ -24,8 +24,13 @@ export default function LoginPage() {
       const me = await authApi.me();
       const slug = me?.orgs[0]?.slug;
       router.push(slug ? `/${slug}/runs` : "/onboarding");
-    } catch {
-      setError("Invalid email or password.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      setError(
+        msg === "email_unverified"
+          ? "Please verify your email before signing in — check your inbox."
+          : "Invalid email or password.",
+      );
       setBusy(false);
     }
   }

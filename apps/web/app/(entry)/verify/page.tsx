@@ -9,13 +9,14 @@ import { authApi } from "@/lib/auth/api";
 function VerifyInner() {
   const params = useSearchParams();
   const token = params.get("token");
+  const awaitingEmail = params.get("pending") === "1";
   const [state, setState] = useState<"pending" | "ok" | "error">("pending");
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (!token) {
-        if (!cancelled) setState("error");
+        if (!cancelled) setState(awaitingEmail ? "pending" : "error");
         return;
       }
       try {
@@ -28,7 +29,19 @@ function VerifyInner() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, awaitingEmail]);
+
+  // No token yet, just told to check the inbox.
+  if (awaitingEmail && !token) {
+    return (
+      <div className="text-center">
+        <h1 className="text-2xl font-semibold tracking-tight">Check your email</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          We sent a verification link to your inbox. Open it to activate your account, then continue.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="text-center">
@@ -42,7 +55,7 @@ function VerifyInner() {
             ? "This link is invalid or expired."
             : "One moment."}
       </p>
-      {state !== "pending" && (
+      {state === "ok" && (
         <Button asChild className="mt-6 min-h-11">
           <Link href="/onboarding">Continue</Link>
         </Button>

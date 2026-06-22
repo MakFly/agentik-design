@@ -59,6 +59,7 @@ export async function login(input: { email: string; password: string }) {
   const [user] = await db.select().from(appUsers).where(eq(appUsers.email, email)).limit(1);
   if (!user) return null;
   if (!(await verifyPassword(input.password, user.passwordHash))) return null;
+  if (!user.emailVerifiedAt) return { error: "email_unverified" as const };
   const session = await createSession(user.id);
   return { session, user: { id: user.id, email: user.email, name: user.name } };
 }

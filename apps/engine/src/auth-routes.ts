@@ -5,6 +5,7 @@ import {
   acceptInvitation,
   createInvitation,
   createOrg,
+  createSession,
   getMembership,
   getSessionUser,
   listUserOrgs,
@@ -41,11 +42,14 @@ auth.post("/signup", async (c) => {
   if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   const res = await signUp(parsed.data);
   if ("error" in res) return c.json({ error: res.error }, 409);
-  const session = await login({ email: parsed.data.email, password: parsed.data.password });
-  if (session) setCookie(c, SESSION_COOKIE, session.session.token, sessionCookieOpts);
-  // DEV: surface the verify link instead of sending email (Mailpit SMTP is a later add).
+  // Identify the new (still-unverified) user with a session so onboarding can resume after
+  // verification — but org creation & re-login require a verified email (enforced below).
+  const session = await createSession(res.user.id);
+  setCookie(c, SESSION_COOKIE, session.token, sessionCookieOpts);
+  // Surface the verify link only when dev-headers mode is on (no SMTP sender in the MVP).
+  // In prod (AUTH_DEV_HEADERS=false) the link is withheld — wire a real email sender there.
   const verifyUrl = `${env.WEB_PUBLIC_URL}/verify?token=${res.verifyToken}`;
-  return c.json({ user: res.user, verifyUrl: isProd ? undefined : verifyUrl }, 201);
+  return c.json({ user: res.user, verifyUrl: env.AUTH_DEV_HEADERS ? verifyUrl : undefined }, 201);
 });
 
 auth.post("/verify", async (c) => {
@@ -60,6 +64,7 @@ auth.post("/login", async (c) => {
   if (!parsed.success) return c.json({ error: "invalid_body" }, 400);
   const res = await login(parsed.data);
   if (!res) return c.json({ error: "invalid_credentials" }, 401);
+  if ("error" in res) return c.json({ error: res.error }, 403); // email_unverified
   setCookie(c, SESSION_COOKIE, res.session.token, sessionCookieOpts);
   return c.json({ user: res.user });
 });
@@ -81,6 +86,8 @@ auth.get("/me", async (c) => {
 auth.post("/orgs", async (c) => {
   const user = await currentUser(c);
   if (!user) return c.json({ error: "unauthenticated" }, 401);
+  // Guideline flow: sign-up → verify → create org. No org until the email is verified.
+  if (!user.emailVerifiedAt) return c.json({ error: "email_unverified" }, 403);
   const parsed = orgBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   const res = await createOrg(user.userId, parsed.data);
