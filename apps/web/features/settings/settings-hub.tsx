@@ -5,14 +5,8 @@ import { ShieldX } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRbac } from "@/lib/auth/rbac";
 import type { Permission } from "@/config/permissions";
-import { ApiKeysTab } from "./tabs/api-keys-tab";
 import { RuntimesTab } from "./tabs/runtimes-tab";
 import { ProvidersTab } from "./tabs/providers-tab";
-import { TeamTab } from "./tabs/team-tab";
-import { RolesTab } from "./tabs/roles-tab";
-import { BillingTab } from "./tabs/billing-tab";
-import { SecurityTab } from "./tabs/security-tab";
-import { AuditTab } from "./tabs/audit-tab";
 
 interface TabDef {
   value: string;
@@ -22,15 +16,12 @@ interface TabDef {
   render: (team: string) => React.ReactNode;
 }
 
+// Only tabs backed by the real engine are exposed. The rest (API keys, team,
+// roles, billing, security, audit) are mock-only UI with no backend yet — parked
+// out of the nav to avoid shipping tabs that 404. Their code lives in ./tabs/*.
 const TABS: TabDef[] = [
   { value: "runtimes", label: "Runtimes", render: (t) => <RuntimesTab team={t} /> },
-  { value: "api-keys", label: "API keys", render: (t) => <ApiKeysTab team={t} /> },
   { value: "providers", label: "Providers", render: (t) => <ProvidersTab team={t} /> },
-  { value: "team", label: "Team", render: (t) => <TeamTab team={t} /> },
-  { value: "roles", label: "Roles", render: (t) => <RolesTab team={t} /> },
-  { value: "billing", label: "Billing", permission: "billing:read", render: (t) => <BillingTab team={t} /> },
-  { value: "security", label: "Security", render: (t) => <SecurityTab team={t} /> },
-  { value: "audit", label: "Audit log", permission: "audit:read", render: (t) => <AuditTab team={t} /> },
 ];
 
 function NoAccess() {
@@ -47,8 +38,8 @@ function NoAccess() {
 
 export function SettingsHub({ team }: { team: string }) {
   const { can } = useRbac();
-  const [tab, setTab] = useQueryState("tab", { defaultValue: "api-keys" });
-  const active = TABS.some((t) => t.value === tab) ? tab : "api-keys";
+  const [tab, setTab] = useQueryState("tab", { defaultValue: "runtimes" });
+  const active = TABS.some((t) => t.value === tab) ? tab : "runtimes";
 
   return (
     <Tabs value={active} onValueChange={setTab} className="gap-6">
