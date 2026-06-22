@@ -37,7 +37,21 @@ import {
   workflowDetailToWeb,
 } from "./agents-repo";
 import { daemon } from "./daemon-routes";
-import { withAuth, type AuthVars } from "./auth";
+import { withAuth, requirePermission, type AuthVars } from "./auth";
+import { createAgentVersionInput } from "@agentik/workflow-schema";
+import {
+  applyRunReview,
+  createAgentVersion,
+  generateRunReview,
+  getRunReview,
+  getRunReviewByRunId,
+  listAgentVersions,
+  listMemory,
+  listSkills,
+  listSkillVersions,
+  reviewChangeIds,
+  setRunReviewStatus,
+} from "./learning-repo";
 
 type Vars = AuthVars;
 
@@ -48,6 +62,19 @@ app.use("*", cors());
 app.get("/api/v1/health", (c) => c.json({ ok: true, service: "engine" }));
 
 const api = new Hono<{ Variables: Vars }>();
+
+/** Annotate a run review's proposals with stable changeIds for per-change approval. */
+function withChangeIds(review: {
+  proposedMemories: unknown[];
+  proposedSkillChanges: unknown[];
+} & Record<string, unknown>) {
+  return {
+    ...review,
+    proposedMemories: review.proposedMemories.map((m, i) => ({ changeId: `m${i}`, ...(m as object) })),
+    proposedSkillChanges: review.proposedSkillChanges.map((s, i) => ({ changeId: `s${i}`, ...(s as object) })),
+    changeIds: reviewChangeIds(review as never),
+  };
+}
 
 /**
  * Tenancy + auth: derive org/role server-side (Phase 0 seam — swap `resolveAuth` for a
@@ -215,6 +242,72 @@ api.post("/agents/test", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { config?: unknown; input?: string; runtime?: string };
   const res = await createTestTask(c.get("teamId"), body.config, body.input ?? "", body.runtime ?? "echo");
   return c.json(res, 202);
+});
+
+/* ── Agent versions (formalize publish) ──────────────────────────────── */
+
+api.post("/agents/:id/versions", requirePermission("agent:create"), async (c) => {
+  const parsed = createAgentVersionInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const res = await createAgentVersion(c.get("teamId"), c.req.param("id"), parsed.data);
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res, 201);
+});
+
+api.get("/agents/:id/versions", requirePermission("agent:read"), async (c) => {
+  const items = await listAgentVersions(c.get("teamId"), c.req.param("id"));
+  return c.json({ items, total: items.length });
+});
+
+/* ── Run reviews (runId = agent_tasks.id) — the learning loop ─────────── */
+
+api.post("/runs/:id/review", requirePermission("run:read"), async (c) => {
+  const existing = await getRunReviewByRunId(c.get("teamId"), c.req.param("id"));
+  if (existing) return c.json(withChangeIds(existing));
+  const review = await generateRunReview(c.get("teamId"), c.req.param("id"));
+  if (!review) return c.json({ error: "not_found" }, 404);
+  return c.json(withChangeIds(review), 201);
+});
+
+api.get("/runs/:id/review", requirePermission("review:read"), async (c) => {
+  const review = await getRunReviewByRunId(c.get("teamId"), c.req.param("id"));
+  if (!review) return c.json({ error: "not_found" }, 404);
+  return c.json(withChangeIds(review));
+});
+
+api.post("/run-reviews/:id/approve", requirePermission("review:approve"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { changeIds?: string[] };
+  const res = await applyRunReview(c.get("teamId"), c.req.param("id"), body.changeIds);
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json({ status: "applied", ...res });
+});
+
+api.post("/run-reviews/:id/reject", requirePermission("review:approve"), async (c) => {
+  const ok = await setRunReviewStatus(c.get("teamId"), c.req.param("id"), "rejected");
+  return c.json({ status: "rejected", ok }, ok ? 200 : 404);
+});
+
+/* ── Memory & skills (read for UI + injection; writes only via approval) ─ */
+
+api.get("/memory", requirePermission("memory:read"), async (c) => {
+  const items = await listMemory(c.get("teamId"), {
+    scope: (c.req.query("scope") as never) || undefined,
+    targetId: c.req.query("targetId") ?? undefined,
+  });
+  return c.json({ items, total: items.length });
+});
+
+api.get("/skills", requirePermission("skill:read"), async (c) => {
+  const items = await listSkills(c.get("teamId"), {
+    scope: (c.req.query("scope") as never) || undefined,
+    targetId: c.req.query("targetId") ?? undefined,
+  });
+  return c.json({ items, total: items.length });
+});
+
+api.get("/skills/:id/versions", requirePermission("skill:read"), async (c) => {
+  const items = await listSkillVersions(c.get("teamId"), c.req.param("id"));
+  return c.json({ items, total: items.length });
 });
 
 /* ───────────────────────────── Runs (union) ──────────────────────────── */

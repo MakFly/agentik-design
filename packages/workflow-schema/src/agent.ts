@@ -57,3 +57,15 @@ export const DEFAULT_SKILL_POLICY: SkillPolicy = {
   scopes: ["agent", "team"],
   maxSkills: 10,
 };
+
+/** Validated body for POST /agents/:id/versions — never trust client input. */
+export const createAgentVersionInput = z.object({
+  model: z.string().optional(),
+  instructions: z.string().default(""),
+  tools: z.array(z.string()).default([]),
+  runtimeKind: runtimeKindSchema.default("echo"),
+  memoryPolicy: memoryPolicy.default(DEFAULT_MEMORY_POLICY),
+  skillPolicy: skillPolicy.default(DEFAULT_SKILL_POLICY),
+  changelog: z.string().optional(),
+});
+export type CreateAgentVersionInputParsed = z.infer<typeof createAgentVersionInput>;
