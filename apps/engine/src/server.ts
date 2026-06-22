@@ -17,7 +17,6 @@ import {
   getWorkflow,
   listCredentials,
   listWorkflows,
-  resolveTeam,
   saveVersion,
   setCredentialData,
 } from "./repo";
@@ -38,8 +37,9 @@ import {
   workflowDetailToWeb,
 } from "./agents-repo";
 import { daemon } from "./daemon-routes";
+import { withAuth, type AuthVars } from "./auth";
 
-type Vars = { teamId: string; teamSlug: string };
+type Vars = AuthVars;
 
 const app = new Hono<{ Variables: Vars }>();
 
@@ -49,13 +49,11 @@ app.get("/api/v1/health", (c) => c.json({ ok: true, service: "engine" }));
 
 const api = new Hono<{ Variables: Vars }>();
 
-/** Dev tenancy: resolve team from x-team header (defaults to "acme"). */
-api.use("*", async (c, next) => {
-  const slug = c.req.header("x-team") ?? "acme";
-  c.set("teamSlug", slug);
-  c.set("teamId", await resolveTeam(slug));
-  await next();
-});
+/**
+ * Tenancy + auth: derive org/role server-side (Phase 0 seam — swap `resolveAuth` for a
+ * better-auth session later without touching routes). Keeps `teamId` for existing routes.
+ */
+api.use("*", withAuth);
 
 api.get("/workflows", async (c) => {
   const items = await listWorkflows(c.get("teamId"));
