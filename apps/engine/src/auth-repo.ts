@@ -99,6 +99,13 @@ export async function listUserOrgs(userId: string) {
     .where(eq(orgMembers.userId, userId));
 }
 
+/** Resolve the org (team) that owns a given org-scoped daemon token, or null. */
+export async function resolveTeamByDaemonToken(daemonToken: string): Promise<string | null> {
+  if (!daemonToken) return null;
+  const [row] = await db.select({ id: teams.id }).from(teams).where(eq(teams.daemonToken, daemonToken)).limit(1);
+  return row?.id ?? null;
+}
+
 export async function getMembership(userId: string, teamId: string): Promise<OrgRole | null> {
   const [row] = await db
     .select({ role: orgMembers.role })

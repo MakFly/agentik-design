@@ -10,19 +10,26 @@ import {
   startTask,
   type IncomingMessage,
 } from "./daemon-repo";
+import { resolveTeamByDaemonToken } from "./auth-repo";
+
+type DaemonVars = { daemonTeamId?: string };
 
 /**
  * Daemon protocol. Mounted at /daemon, OUTSIDE the x-team middleware: daemons
- * are not browser tenants — they send their team in the register body and
- * authenticate with a shared Bearer token. Never expose this publicly without
- * DAEMON_AUTH_TOKEN set.
+ * are not browser tenants. A daemon authenticates with EITHER an org-scoped token
+ * (issued at org creation → the engine derives the team server-side, never trusting
+ * the request body) OR the shared DAEMON_AUTH_TOKEN (legacy/dev, team from body).
  */
-export const daemon = new Hono();
+export const daemon = new Hono<{ Variables: DaemonVars }>();
 
 daemon.use("*", async (c, next) => {
   if (!env.DAEMON_ENABLED) return c.json({ error: "daemon_disabled" }, 503);
   const token = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!env.DAEMON_AUTH_TOKEN || token !== env.DAEMON_AUTH_TOKEN) {
+  if (!token) return c.json({ error: "unauthorized" }, 401);
+  const orgTeamId = await resolveTeamByDaemonToken(token);
+  if (orgTeamId) {
+    c.set("daemonTeamId", orgTeamId); // tenancy derived server-side from the org token
+  } else if (!env.DAEMON_AUTH_TOKEN || token !== env.DAEMON_AUTH_TOKEN) {
     return c.json({ error: "unauthorized" }, 401);
   }
   await next();
@@ -35,10 +42,19 @@ daemon.post("/register", async (c) => {
     meta?: Record<string, unknown>;
     runtimes?: Array<{ kind: string; capabilities?: { maxConcurrent?: number; agentKinds?: string[] } }>;
   } | null;
-  if (!body?.team || !body.name || !Array.isArray(body.runtimes) || body.runtimes.length === 0) {
+  const daemonTeamId = c.get("daemonTeamId");
+  if (!body?.name || !Array.isArray(body.runtimes) || body.runtimes.length === 0) {
     return c.json({ error: "invalid_body" }, 400);
   }
-  const res = await registerDaemon({ team: body.team, name: body.name, meta: body.meta, runtimes: body.runtimes });
+  // Org-token path derives the team server-side; legacy shared-token path uses the body slug.
+  if (!daemonTeamId && !body.team) return c.json({ error: "invalid_body" }, 400);
+  const res = await registerDaemon({
+    teamId: daemonTeamId,
+    team: body.team,
+    name: body.name,
+    meta: body.meta,
+    runtimes: body.runtimes,
+  });
   return c.json(res, 201);
 });
 

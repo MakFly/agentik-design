@@ -12,14 +12,18 @@ const { daemons, runtimes, agentTasks, taskMessages } = schema;
 const TERMINAL_MSG: TaskMessageType[] = ["text", "tool_result", "error"];
 
 export interface RegisterInput {
-  team: string;
+  /** Slug (legacy shared-token path). Ignored when teamId is provided. */
+  team?: string;
+  /** Team resolved server-side from an org-scoped daemon token (preferred). */
+  teamId?: string;
   name: string;
   meta?: Record<string, unknown>;
   runtimes: Array<{ kind: string; capabilities?: { maxConcurrent?: number; agentKinds?: string[] } }>;
 }
 
 export async function registerDaemon(input: RegisterInput) {
-  const teamId = await resolveTeam(input.team);
+  const teamId = input.teamId ?? (input.team ? await resolveTeam(input.team) : null);
+  if (!teamId) throw new Error("register: no team resolved");
 
   const [existing] = await db
     .select()

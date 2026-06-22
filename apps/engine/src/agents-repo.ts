@@ -167,8 +167,19 @@ const SEED_AGENTS = [
   { name: "Scraper", role: "Collector", goal: "Extract data from pages", runtimeKind: "echo" },
 ];
 
-/** Populate a fresh team with a few agents so the UI isn't empty in dev. */
+/**
+ * Populate a LEGACY dev team (one with no real org membership, e.g. the mock "acme")
+ * with demo agents so the dev UI isn't empty. Real onboarded orgs always have ≥1
+ * member (the owner) and are left EMPTY so the first-run empty states show and the
+ * "zero mocked data" acceptance holds.
+ */
 export async function ensureDevAgents(teamId: string): Promise<void> {
+  const [member] = await db
+    .select({ id: schema.orgMembers.id })
+    .from(schema.orgMembers)
+    .where(eq(schema.orgMembers.teamId, teamId))
+    .limit(1);
+  if (member) return; // real org — never seed mock data
   const existing = await db.select({ id: agents.id }).from(agents).where(eq(agents.teamId, teamId)).limit(1);
   if (existing[0]) return;
   await db.insert(agents).values(
