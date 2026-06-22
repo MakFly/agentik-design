@@ -267,6 +267,13 @@ export async function generateRunReview(teamId: string, taskId: string) {
   return getRunReview(teamId, id);
 }
 
+/** List reviews for the org, newest first, optionally filtered by status (for the Review Inbox). */
+export async function listRunReviews(teamId: string, status?: RunReviewStatus) {
+  const wheres = [eq(runReviews.teamId, teamId)];
+  if (status) wheres.push(eq(runReviews.status, status));
+  return db.select().from(runReviews).where(and(...wheres)).orderBy(desc(runReviews.createdAt)).limit(200);
+}
+
 export async function getRunReviewByRunId(teamId: string, runId: string) {
   const [row] = await db
     .select()

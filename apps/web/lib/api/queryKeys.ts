@@ -30,6 +30,10 @@ export const qk = {
     detail: (team: string, id: string) => ["team", team, "tools", "detail", id] as const,
     catalog: (team: string) => ["team", team, "tools", "catalog"] as const,
   },
+  reviews: {
+    all: (team: string) => ["team", team, "reviews"] as const,
+    list: (team: string, status?: string) => ["team", team, "reviews", "list", status ?? "all"] as const,
+  },
   memory: {
     all: (team: string) => ["team", team, "memory"] as const,
     list: (team: string) => ["team", team, "memory", "list"] as const,

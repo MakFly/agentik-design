@@ -7,6 +7,7 @@ import {
   Wrench,
   Database,
   FlaskConical,
+  ClipboardCheck,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "tools", label: "Tools", segment: "tools", icon: Wrench, group: "author", hotkey: "t", permission: "tool:read" },
   { key: "memory", label: "Memory", segment: "memory", icon: Database, group: "author", hotkey: "m", permission: "memory:read" },
   // QUALITY
+  { key: "reviews", label: "Reviews", segment: "reviews", icon: ClipboardCheck, group: "quality", hotkey: "v", permission: "review:read" },
   { key: "evals", label: "Evals", segment: "evals", icon: FlaskConical, group: "quality", hotkey: "e", permission: "eval:read" },
   // SYSTEM
   { key: "settings", label: "Settings", segment: "settings", icon: Settings, group: "system", hotkey: "s", permission: "settings:read" },

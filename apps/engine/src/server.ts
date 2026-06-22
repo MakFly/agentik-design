@@ -48,11 +48,13 @@ import {
   getRunReviewByRunId,
   listAgentVersions,
   listMemory,
+  listRunReviews,
   listSkills,
   listSkillVersions,
   reviewChangeIds,
   setRunReviewStatus,
 } from "./learning-repo";
+import type { RunReviewStatus } from "@agentik/workflow-schema";
 
 type Vars = AuthVars;
 
@@ -274,6 +276,12 @@ api.get("/runs/:id/review", requirePermission("review:read"), async (c) => {
   const review = await getRunReviewByRunId(c.get("teamId"), c.req.param("id"));
   if (!review) return c.json({ error: "not_found" }, 404);
   return c.json(withChangeIds(review));
+});
+
+api.get("/run-reviews", requirePermission("review:read"), async (c) => {
+  const status = c.req.query("status") as RunReviewStatus | undefined;
+  const rows = await listRunReviews(c.get("teamId"), status);
+  return c.json({ items: rows.map(withChangeIds), total: rows.length });
 });
 
 api.post("/run-reviews/:id/approve", requirePermission("review:approve"), async (c) => {
