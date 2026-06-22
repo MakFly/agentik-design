@@ -31,6 +31,13 @@ export const authApi = {
     if (!res.ok) return null;
     return res.json();
   },
+  /** DEV ONLY: seeded demo accounts for one-click login (empty in production). */
+  async devUsers(): Promise<{ email: string; password: string; role: string; org: string }[]> {
+    const res = await fetch(`/api/v1/auth/dev/users`);
+    if (!res.ok) return [];
+    const d = (await res.json()) as { items?: { email: string; password: string; role: string; org: string }[] };
+    return d.items ?? [];
+  },
 };
 
 /** Slugify an org name for the slug field default. */

@@ -116,6 +116,56 @@ export async function getMembership(userId: string, teamId: string): Promise<Org
   return row?.role ?? null;
 }
 
+/* ── Dev quick-login accounts (dev only — gated by the route) ────────── */
+
+/** Shared password for the seeded demo accounts. Dev convenience only. */
+export const DEV_ACCOUNT_PASSWORD = "agentik-demo";
+
+const DEV_ACCOUNTS = [
+  { email: "owner@agentik.dev", name: "Demo Owner", role: "owner" as OrgRole },
+  { email: "member@agentik.dev", name: "Demo Member", role: "engineer" as OrgRole },
+];
+
+/**
+ * Idempotently ensure a couple of verified demo accounts exist (an owner + a member of a
+ * shared "Demo Org"), so dev one-click login works. Returns email + the known password.
+ * NEVER expose in production — the calling route gates this on AUTH_DEV_HEADERS.
+ */
+export async function ensureDevAccounts() {
+  const now = new Date().toISOString();
+  const hash = await hashPassword(DEV_ACCOUNT_PASSWORD);
+
+  async function ensureUser(email: string, name: string) {
+    const [existing] = await db.select().from(appUsers).where(eq(appUsers.email, email)).limit(1);
+    if (existing) return existing.id;
+    const id = genId("usr");
+    await db.insert(appUsers).values({ id, email, name, passwordHash: hash, emailVerifiedAt: now });
+    return id;
+  }
+
+  const ownerId = await ensureUser(DEV_ACCOUNTS[0]!.email, DEV_ACCOUNTS[0]!.name);
+  const memberId = await ensureUser(DEV_ACCOUNTS[1]!.email, DEV_ACCOUNTS[1]!.name);
+
+  // Demo org (slug "demo") owned by the owner; member joins as engineer.
+  let [org] = await db.select().from(teams).where(eq(teams.slug, "demo")).limit(1);
+  if (!org) {
+    const teamId = genId("team");
+    await db.insert(teams).values({ id: teamId, slug: "demo", name: "Demo Org", daemonToken: genId("usr") });
+    org = (await db.select().from(teams).where(eq(teams.id, teamId)).limit(1))[0];
+  }
+  if (org) {
+    await db
+      .insert(orgMembers)
+      .values([
+        { id: genId("mbr"), teamId: org.id, userId: ownerId, role: "owner" },
+        { id: genId("mbr"), teamId: org.id, userId: memberId, role: "engineer" },
+      ])
+      .onConflictDoNothing({ target: [orgMembers.teamId, orgMembers.userId] });
+  }
+
+  return DEV_ACCOUNTS.map((a) => ({ email: a.email, password: DEV_ACCOUNT_PASSWORD, role: a.role, org: "demo" }));
+}
+
 /* ── Invitations ─────────────────────────────────────────────────────── */
 
 export async function createInvitation(teamId: string, email: string, role: OrgRole, invitedBy: string) {

@@ -6,6 +6,7 @@ import {
   createInvitation,
   createOrg,
   createSession,
+  ensureDevAccounts,
   getMembership,
   getSessionUser,
   listUserOrgs,
@@ -50,6 +51,13 @@ auth.post("/signup", async (c) => {
   // In prod (AUTH_DEV_HEADERS=false) the link is withheld — wire a real email sender there.
   const verifyUrl = `${env.WEB_PUBLIC_URL}/verify?token=${res.verifyToken}`;
   return c.json({ user: res.user, verifyUrl: env.AUTH_DEV_HEADERS ? verifyUrl : undefined }, 201);
+});
+
+/** DEV ONLY: ensure + list demo accounts (email + password) for one-click login. */
+auth.get("/dev/users", async (c) => {
+  if (!env.AUTH_DEV_HEADERS) return c.json({ items: [] });
+  const items = await ensureDevAccounts();
+  return c.json({ items });
 });
 
 auth.post("/verify", async (c) => {

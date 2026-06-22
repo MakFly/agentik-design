@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/auth/api";
+import { DevLogin } from "@/features/session/dev-login";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -85,6 +86,7 @@ export default function SignupPage() {
           Sign in
         </Link>
       </p>
+      <DevLogin />
     </div>
   );
 }
