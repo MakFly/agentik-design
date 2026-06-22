@@ -376,15 +376,21 @@ export async function publishAgent(teamId: string, agentId: string, config: unkn
     .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)))
     .limit(1);
   if (!agent) return null;
-  const created = await createAgentVersion(teamId, agentId, {
-    ...configToVersionInput(config, agent.runtimeKind),
-    changelog,
-  });
+  const versionInput = configToVersionInput(config, agent.runtimeKind);
+  const created = await createAgentVersion(teamId, agentId, { ...versionInput, changelog });
   if (!created) return null;
-  // Point liveVersionId at the immutable version; keep config jsonb for back-compat.
+  // Point liveVersionId at the immutable version AND sync the agent's runtime_kind to the
+  // published version — claimTask matches tasks to runtimes on agents.runtime_kind, so a
+  // claude version must flip the agent off "echo" or the wrong runtime would claim its runs.
   await db
     .update(agents)
-    .set({ liveVersionId: created.id, config: (config ?? {}) as Record<string, unknown>, health: "healthy", updatedAt: sql`now()` })
+    .set({
+      liveVersionId: created.id,
+      runtimeKind: versionInput.runtimeKind,
+      config: (config ?? {}) as Record<string, unknown>,
+      health: "healthy",
+      updatedAt: sql`now()`,
+    })
     .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)));
   return { versionId: created.id, version: created.version, status: "published" as const };
 }

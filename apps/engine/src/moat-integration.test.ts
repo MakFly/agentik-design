@@ -56,6 +56,9 @@ d("Phase B — publishAgent writes immutable, monotonic versions", () => {
     expect(res?.version).toBe(1);
     const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)).limit(1);
     expect(agent?.liveVersionId).toBe(res!.versionId);
+    // publish must sync the agent's runtime_kind to the version, or claimTask routes runs to the
+    // wrong runtime (a claude agent would be claimed by an echo daemon).
+    expect(agent?.runtimeKind).toBe("claude");
     const versions = await listAgentVersions(teamId, agentId);
     expect(versions).toHaveLength(1);
     expect(versions[0]?.instructions).toBe("do v1");

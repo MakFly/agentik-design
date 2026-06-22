@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -10,26 +10,24 @@ function VerifyInner() {
   const params = useSearchParams();
   const token = params.get("token");
   const awaitingEmail = params.get("pending") === "1";
-  const [state, setState] = useState<"pending" | "ok" | "error">("pending");
+  const [state, setState] = useState<"pending" | "ok" | "error">(token ? "pending" : "error");
+  // The verify token is single-use (cleared server-side on first success). Guard against React
+  // strict-mode's double-invoke so we POST exactly once — otherwise the 2nd call fails on the
+  // already-cleared token and overwrites the success state.
+  const ran = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!token || ran.current) return;
+    ran.current = true;
     void (async () => {
-      if (!token) {
-        if (!cancelled) setState(awaitingEmail ? "pending" : "error");
-        return;
-      }
       try {
         const r = await authApi.verify(token);
-        if (!cancelled) setState(r.ok ? "ok" : "error");
+        setState(r.ok ? "ok" : "error");
       } catch {
-        if (!cancelled) setState("error");
+        setState("error");
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, awaitingEmail]);
+  }, [token]);
 
   // No token yet, just told to check the inbox.
   if (awaitingEmail && !token) {
