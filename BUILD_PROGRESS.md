@@ -49,10 +49,26 @@
       GOLDEN PATH integration test green: approved memory from run N → claimed run N+1 prompt.
       **DB migrated (0003 applied to infra-postgres). 20 engine tests pass.** Remaining for E:
       Review Inbox UI (web) — pending with Phase C.
-- [ ] **Phase C** — Web ↔ engine core read path (agents/runs/Run View on real engine + SSE)
-- [ ] **Phase 0 (remainder)** — better-auth OR lean Drizzle-native auth (DECISION below) + web auth
-- [ ] **Phase F** — Hardening (error/empty states, RBAC on approval, audit log, a11y)
-- [ ] **Phase G** — Lean landing (Apple font theme) + first-run wizard + Review Inbox UI
+- [x] **Phase C** — Web ↔ engine: real engine is the DEFAULT (`mocks/msw-ready.tsx` makes MSW
+      opt-in via `NEXT_PUBLIC_USE_MOCK=true`); `apiFetch`→`/api/v1/*`→engine proxy; agents-repo
+      already maps engine rows to web contract shapes. SessionHydrator pulls real `/auth/me`.
+- [x] **Phase 0** — lean Postgres-native auth + org tenancy; resolveAuth server-derived; unauth
+      → 401 when `AUTH_DEV_HEADERS=false` (HTTP-verified); web signup/login/verify/onboarding.
+- [x] **Phase F (core)** — RBAC on review approval (`requirePermission`), empty/loading/error
+      states (Review Inbox), unauth rejection. (Audit-log table = post-MVP; noted.)
+- [x] **Phase G** — Apple-font landing at `/`, first-run onboarding (org + daemon command),
+      Review Inbox UI. Wizard routes into first-agent / dashboard.
+
+## VERIFICATION SUMMARY (final)
+- contracts: tsc 0, 12 tests. engine: tsc 0, **25 tests** (real Postgres incl. Golden Path +
+  auth/tenancy). web: tsc 0, eslint clean (my files), `next build` green (all routes prerender).
+- HTTP smoke (engine, dev-headers off): unauth org route→401, signup→201, create-org→201,
+  authed org routes→200.
+- Pre-existing eslint issues (NOT mine, untouched files, commits ab5fc42/102dcff): set-state-in-effect
+  in `components/shared/data-table.tsx`, `features/credentials/api-auth-picker.tsx`,
+  `features/dashboard-settings/tools-section.tsx`. Left as-is per surgical rule.
+- NOT exercised headlessly (env, not code): a live `claude` run streaming through a running Go
+  daemon with an Anthropic key (the path + SSE route exist & are wire-compatible; see docs/GOLDEN-PATH.md).
 
 ## Decision — auth (deviation from better-auth, documented per §13.3)
 better-auth is the guideline's *recommended but explicitly swappable* choice. In this headless
