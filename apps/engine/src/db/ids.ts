@@ -11,7 +11,13 @@ export type IdPrefix =
   | "atask"
   | "amsg"
   | "daemon"
-  | "runtime";
+  | "runtime"
+  // learning loop
+  | "aver"
+  | "mem"
+  | "skill"
+  | "sver"
+  | "rev";
 
 export function genId(prefix: IdPrefix): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;

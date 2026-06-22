@@ -1,5 +1,6 @@
 import {
   boolean,
+  doublePrecision,
   integer,
   jsonb,
   pgTable,
@@ -7,7 +8,21 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
-import type { RunStatus, StepStatus, TriggerKind, WorkflowGraph } from "@agentik/workflow-schema";
+import type {
+  CreatedBy,
+  KnowledgeScope,
+  MemoryPolicy,
+  ProposedMemoryChange,
+  ProposedSkillChange,
+  RiskLevel,
+  RunStatus,
+  RunReviewStatus,
+  RuntimeKind,
+  SkillPolicy,
+  StepStatus,
+  TriggerKind,
+  WorkflowGraph,
+} from "@agentik/workflow-schema";
 
 const ts = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "string" });
@@ -195,3 +210,92 @@ export const taskMessages = pgTable(
   },
   (t) => [unique("task_messages_task_seq_unique").on(t.taskId, t.seq)],
 );
+
+/* ── Learning loop (the moat) ────────────────────────────────────────── */
+
+/** Immutable, versioned agent config. Replaces overwriting agents.config on publish. */
+export const agentVersions = pgTable(
+  "agent_versions",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(), // monotonic per agent
+    model: text("model"),
+    instructions: text("instructions").notNull().default(""),
+    tools: jsonb("tools").$type<string[]>().notNull().default([]),
+    runtimeKind: text("runtime_kind").$type<RuntimeKind>().notNull().default("echo"),
+    memoryPolicy: jsonb("memory_policy").$type<MemoryPolicy>().notNull(),
+    skillPolicy: jsonb("skill_policy").$type<SkillPolicy>().notNull(),
+    createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
+    changelog: text("changelog"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("agent_versions_agent_version_unique").on(t.agentId, t.version)],
+);
+
+/** Declarative knowledge. teamId is a soft ref (like runs/agents). */
+export const memoryEntries = pgTable("memory_entries", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  scope: text("scope").$type<KnowledgeScope>().notNull(),
+  targetId: text("target_id"),
+  content: text("content").notNull(),
+  sourceRunId: text("source_run_id"), // = agent_tasks.id
+  confidence: doublePrecision("confidence").notNull().default(0.5),
+  createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Procedural knowledge (head row). Points at its current version. */
+export const skills = pgTable("skills", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  scope: text("scope").$type<KnowledgeScope>().notNull(),
+  targetId: text("target_id"),
+  currentVersionId: text("current_version_id"),
+  createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const skillVersions = pgTable(
+  "skill_versions",
+  {
+    id: text("id").primaryKey(),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(), // monotonic per skill
+    bodyMd: text("body_md").notNull().default(""),
+    triggerConditions: jsonb("trigger_conditions").$type<string[]>().notNull().default([]),
+    pitfalls: jsonb("pitfalls").$type<string[]>().notNull().default([]),
+    verificationSteps: jsonb("verification_steps").$type<string[]>().notNull().default([]),
+    sourceRunId: text("source_run_id"),
+    createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
+    changelog: text("changelog"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("skill_versions_skill_version_unique").on(t.skillId, t.version)],
+);
+
+/** Propose-only review of a finished run. runId = agent_tasks.id (soft ref). */
+export const runReviews = pgTable("run_reviews", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  runId: text("run_id").notNull(),
+  status: text("status").$type<RunReviewStatus>().notNull().default("pending"),
+  summary: text("summary").notNull().default(""),
+  riskLevel: text("risk_level").$type<RiskLevel>().notNull().default("low"),
+  proposedMemories: jsonb("proposed_memories").$type<ProposedMemoryChange[]>().notNull().default([]),
+  proposedSkillChanges: jsonb("proposed_skill_changes")
+    .$type<ProposedSkillChange[]>()
+    .notNull()
+    .default([]),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
