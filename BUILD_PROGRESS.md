@@ -19,7 +19,18 @@
         + pure helpers `nextVersion` / `selectMemoriesForInjection` / `selectSkillsForInjection`
         (offline-testable) + `learning-repo.test.ts` (engine 8 tests pass)
   - **Phase A DONE & verified.**
-- [ ] **Phase 0** — better-auth org tenancy backbone (server-derived orgId, RBAC, daemon token)
+- [~] **Phase 0** — better-auth org tenancy backbone (server-derived orgId, RBAC, daemon token)
+  - AUDIT (iter 2): the client-supplied tenancy is **one middleware** —
+    `apps/engine/src/server.ts:52-58` `api.use("*")` reads `x-team` header (default "acme") →
+    `resolveTeam(slug)` (in `repo.ts`) → `c.set("teamId", …)`. Every route reads `c.get("teamId")`.
+    So replacing that single middleware with a session→orgId resolver flows everywhere (low blast radius).
+  - RBAC config lives in `apps/web/config/permissions.ts` (currently web-only; must enforce on engine).
+  - Mocked session: `apps/web/lib/stores/session.store.ts`. better-auth NOT yet a dependency.
+  - PLAN next iter: (1) add better-auth + org plugin to engine, Drizzle/PG adapter, its tables via
+    migration; (2) mount its Hono handler; (3) new `requireSession` middleware sets teamId=orgId from
+    session, keeping `x-team` only as a dev fallback behind a flag; (4) port permissions to engine +
+    enforce; (5) org-scoped daemon token. Pre-mortem: keep auth ONE flow (email+pw+verify+invite),
+    no SSO/seats; don't rewrite session.store wholesale — back its existing shape with real data.
 - [ ] **Phase B** — Agent versions real (`publishAgent` writes `agent_versions`)
 - [ ] **Phase C** — Web ↔ engine core read path (agents/runs/Run View on real engine + SSE)
 - [ ] **Phase D** — Review loop backend (deterministic reviewer → run_reviews → approve/reject apply)
