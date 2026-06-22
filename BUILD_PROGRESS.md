@@ -39,12 +39,31 @@
     (2) swap `resolveAuth` to read the verified session; (3) email+pw+verify (Mailpit) + invites;
     (4) org-scoped daemon token; (5) web sign-up/login backing `session.store` with real data.
     Pre-mortem: ONE auth flow only (no SSO/seats); don't rewrite session.store shape — back it.
-- [ ] **Phase B** — Agent versions real (`publishAgent` writes `agent_versions`)
+- [x] **Phase B** — `publishAgent` writes immutable monotonic `agent_versions`, repoints
+      liveVersionId. Real-DB integration tests (monotonicity + tenancy). DONE & verified.
+- [x] **Phase D** — Review loop backend: deterministic Review Agent (`review-agent.ts`,
+      propose-only), `generateRunReview`, transactional `applyRunReview`, §7 routes wired with
+      server-side `requirePermission` RBAC. DONE & verified.
+- [x] **Phase E (engine+runtime side)** — `resolveInjectionContext` (bounded by live-version
+      policy) + `buildInjectionPreamble`; `claimTask` folds learned context into `input.prompt`.
+      GOLDEN PATH integration test green: approved memory from run N → claimed run N+1 prompt.
+      **DB migrated (0003 applied to infra-postgres). 20 engine tests pass.** Remaining for E:
+      Review Inbox UI (web) — pending with Phase C.
 - [ ] **Phase C** — Web ↔ engine core read path (agents/runs/Run View on real engine + SSE)
-- [ ] **Phase D** — Review loop backend (deterministic reviewer → run_reviews → approve/reject apply)
-- [ ] **Phase E** — Review Inbox UI + memory/skill injection into daemon RuntimeContext
+- [ ] **Phase 0 (remainder)** — better-auth OR lean Drizzle-native auth (DECISION below) + web auth
 - [ ] **Phase F** — Hardening (error/empty states, RBAC on approval, audit log, a11y)
-- [ ] **Phase G** — Lean landing (Apple font theme) + first-run wizard
+- [ ] **Phase G** — Lean landing (Apple font theme) + first-run wizard + Review Inbox UI
+
+## Decision — auth (deviation from better-auth, documented per §13.3)
+better-auth is the guideline's *recommended but explicitly swappable* choice. In this headless
+loop I cannot interactively verify its email-verify/invite round-trips, and it adds a heavy
+CLI-generated-schema dependency — exactly the "auth balloons / half-wired" pre-mortem risk (§3.5).
+The NON-NEGOTIABLES are: server-derived orgId, RBAC server-side, org isolation, email+pw sign-up +
+invites, self-hostable/no-vendor-lock, Postgres-backed. A lean Drizzle-native auth (Bun.password
+argon2id, `app_users`/`user_sessions`/`org_members`/`org_invitations` tables — names chosen to avoid
+the legacy Laravel `users`/`sessions` tables in the shared DB, httpOnly cookie sessions, Mailpit for
+verify) satisfies ALL of them, is MORE aligned with the PaaS/no-lock thesis, and is fully
+offline-testable. The `resolveAuth` seam (already in `auth.ts`) is where it plugs in.
 
 ## Decisions / notes
 - Zod v4, Drizzle 0.38, drizzle-kit 0.30. Bun workspaces.

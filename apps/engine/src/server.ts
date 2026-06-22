@@ -37,6 +37,7 @@ import {
   workflowDetailToWeb,
 } from "./agents-repo";
 import { daemon } from "./daemon-routes";
+import { auth } from "./auth-routes";
 import { withAuth, requirePermission, type AuthVars } from "./auth";
 import { createAgentVersionInput } from "@agentik/workflow-schema";
 import {
@@ -368,6 +369,8 @@ api.get("/runs/:id/live", (c) => {
   });
 });
 
+// Auth routes are NOT org-scoped — mount before the org middleware app.
+app.route("/api/v1/auth", auth);
 app.route("/api/v1", api);
 app.route("/daemon", daemon);
 

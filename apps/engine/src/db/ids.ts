@@ -17,7 +17,12 @@ export type IdPrefix =
   | "mem"
   | "skill"
   | "sver"
-  | "rev";
+  | "rev"
+  // identity & org
+  | "usr"
+  | "sess"
+  | "mbr"
+  | "inv";
 
 export function genId(prefix: IdPrefix): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;

@@ -1,6 +1,11 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import { roleCan, type Permission, type Role } from "@agentik/workflow-schema";
 import { resolveTeam } from "./repo";
+import { getMembership, getSessionUser, listUserOrgs } from "./auth-repo";
+
+export const SESSION_COOKIE = "agentik_session";
+export const ORG_COOKIE = "agentik_org";
 
 /**
  * Auth context derived SERVER-SIDE (never trusted from the client for tenancy).
@@ -33,13 +38,35 @@ function parseRole(raw: string | undefined): Role {
   }
 }
 
-/** Resolve caller org + role. DEV: headers. PROD (Phase 0): better-auth session. */
+/**
+ * Resolve caller org + role SERVER-SIDE.
+ * - Real session cookie present → derive userId, active org (org cookie or first membership),
+ *   and role from the membership. orgId is "" when the user has no org yet (→ onboarding).
+ * - No session cookie → DEV fallback to x-team/x-role headers (local dev & header-based tests).
+ */
 export async function resolveAuth(c: Context): Promise<AuthContext & { teamSlug: string }> {
+  const sessionToken = getCookie(c, SESSION_COOKIE);
+  if (sessionToken) {
+    const user = await getSessionUser(sessionToken);
+    if (user) {
+      const orgs = await listUserOrgs(user.userId);
+      const wantOrg = getCookie(c, ORG_COOKIE);
+      const active = orgs.find((o) => o.teamId === wantOrg) ?? orgs[0];
+      if (active) {
+        return { userId: user.userId, orgId: active.teamId, role: active.role as Role, teamSlug: active.slug };
+      }
+      // Authenticated but no org yet — safe empty tenancy until onboarding completes.
+      return { userId: user.userId, orgId: "", role: "viewer", teamSlug: "" };
+    }
+  }
   const slug = c.req.header("x-team") ?? "acme";
   const orgId = await resolveTeam(slug);
   const role = parseRole(c.req.header("x-role"));
   return { userId: `usr_dev_${slug}`, orgId, role, teamSlug: slug };
 }
+
+/** Look up a user's role in an org for direct checks (used by auth-aware routes). */
+export { getMembership };
 
 /** Populate teamId/teamSlug/auth on the request context. */
 export const withAuth: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
