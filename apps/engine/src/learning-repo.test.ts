@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { KnowledgeScope, MemoryPolicy, SkillPolicy } from "@agentik/workflow-schema";
-import { nextVersion, selectMemoriesForInjection, selectSkillsForInjection } from "./learning-repo";
+import {
+  buildInjectionPreamble,
+  nextVersion,
+  selectMemoriesForInjection,
+  selectSkillsForInjection,
+} from "./learning-repo";
 
 describe("nextVersion (monotonicity)", () => {
   test("starts at 1 with no prior versions", () => {
@@ -39,5 +44,21 @@ describe("selectSkillsForInjection (bounded)", () => {
       policy,
     );
     expect(out).toHaveLength(1);
+  });
+});
+
+describe("buildInjectionPreamble", () => {
+  test("empty context → empty string (prompt untouched)", () => {
+    expect(buildInjectionPreamble({ memories: [], skills: [] })).toBe("");
+  });
+  test("renders memory + skill sections", () => {
+    const out = buildInjectionPreamble({
+      memories: [{ content: "avoid timeouts", confidence: 0.6, scope: "agent" }],
+      skills: [{ name: "Deploy", bodyMd: "run the script", triggerConditions: ["on release"] }],
+    });
+    expect(out).toContain("avoid timeouts");
+    expect(out).toContain("Deploy");
+    expect(out).toContain("on release");
+    expect(out.endsWith("---\n\n")).toBe(true);
   });
 });

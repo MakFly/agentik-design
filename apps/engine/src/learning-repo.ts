@@ -450,3 +450,22 @@ export async function resolveInjectionContext(teamId: string, agentId: string): 
     skills: outSkills,
   };
 }
+
+/** Format injected context as a compact prompt preamble. Empty when nothing to inject. */
+export function buildInjectionPreamble(ctx: InjectionContext): string {
+  if (ctx.memories.length === 0 && ctx.skills.length === 0) return "";
+  const lines: string[] = ["# Learned context (from past runs, human-approved)"];
+  if (ctx.memories.length) {
+    lines.push("", "## Memory");
+    for (const m of ctx.memories) lines.push(`- ${m.content}`);
+  }
+  if (ctx.skills.length) {
+    lines.push("", "## Skills");
+    for (const s of ctx.skills) {
+      lines.push(`### ${s.name}`);
+      if (s.triggerConditions.length) lines.push(`When: ${s.triggerConditions.join("; ")}`);
+      lines.push(s.bodyMd);
+    }
+  }
+  return `${lines.join("\n")}\n\n---\n\n`;
+}

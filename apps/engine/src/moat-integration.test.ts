@@ -15,6 +15,7 @@ import {
   listAgentVersions,
   resolveInjectionContext,
 } from "./learning-repo";
+import { claimTask } from "./daemon-repo";
 
 let dbUp = false;
 try {
@@ -141,5 +142,32 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     const ctx = await resolveInjectionContext(teamId, agentId);
     expect(ctx.memories.length).toBeGreaterThanOrEqual(1);
     expect(ctx.memories.some((m) => m.content.includes("timed out"))).toBe(true);
+  });
+
+  test("step 9 (runtime side): a claimed next-run task carries the memory in its prompt", async () => {
+    // Register a daemon + echo runtime for this team so the queued task is claimable.
+    const daemonId = genId("daemon");
+    const runtimeId = genId("runtime");
+    await db.insert(schema.daemons).values({ id: daemonId, teamId, name: "itest-daemon" });
+    await db.insert(schema.runtimes).values({ id: runtimeId, daemonId, teamId, kind: "echo" });
+    // Queue run N+1 for the same (echo) agent.
+    const nextTaskId = genId("atask");
+    await db.insert(schema.agentTasks).values({
+      id: nextTaskId,
+      teamId,
+      agentId,
+      status: "queued",
+      kind: "direct",
+      input: { prompt: "do the next thing" },
+    });
+
+    const claimed = await claimTask(runtimeId);
+    expect(claimed?.id).toBe(nextTaskId);
+    const input = claimed!.input as { prompt: string };
+    expect(input.prompt).toContain("do the next thing"); // original preserved
+    expect(input.prompt).toContain("timed out"); // injected learned memory
+    expect(claimed!.context?.memories.length).toBeGreaterThanOrEqual(1);
+
+    await db.delete(schema.daemons).where(eq(schema.daemons.id, daemonId)); // cascade → runtimes
   });
 });

@@ -3,6 +3,7 @@ import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { resolveTeam } from "./repo";
 import { hub } from "./hub";
+import { buildInjectionPreamble, resolveInjectionContext, type InjectionContext } from "./learning-repo";
 import type { TaskMessageType } from "./db/schema";
 
 const { daemons, runtimes, agentTasks, taskMessages } = schema;
@@ -67,6 +68,8 @@ export interface ClaimedTask {
   kind: string;
   input: unknown;
   workDir: string;
+  /** Bounded learned context the engine injected for this run (also folded into input.prompt). */
+  context?: InjectionContext;
 }
 
 /**
@@ -99,7 +102,19 @@ export async function claimTask(runtimeId: string): Promise<ClaimedTask | null> 
 
   const rows = result as unknown as ClaimedTask[];
   const task = rows[0] ?? null;
-  if (task) hub.publish(task.teamId, { kind: "run", action: "dispatched", runId: task.id });
+  if (task) {
+    // Phase E injection: resolve bounded memory/skills per the agent's live-version policy
+    // and fold them into the prompt the runtime receives (the daemon reads input.prompt).
+    const ctx = await resolveInjectionContext(task.teamId, task.agentId);
+    const preamble = buildInjectionPreamble(ctx);
+    if (preamble) {
+      const input = (task.input && typeof task.input === "object" ? task.input : {}) as Record<string, unknown>;
+      const prompt = typeof input.prompt === "string" ? input.prompt : "";
+      task.input = { ...input, prompt: preamble + prompt };
+    }
+    task.context = ctx;
+    hub.publish(task.teamId, { kind: "run", action: "dispatched", runId: task.id });
+  }
   return task;
 }
 
