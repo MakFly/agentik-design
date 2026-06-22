@@ -395,3 +395,47 @@
     font-weight: 650;
   }
 }
+
+/* ============================================================================
+   Apple-themed landing — scoped palette + entrance, isolated from app tokens.
+   Light: near-black ink on white/#f5f5f7. Dark: #f5f5f7 on true black. One blue accent.
+   ========================================================================== */
+.theme-apple {
+  --ink: #1d1d1f;
+  --ink-2: #6e6e73;
+  --bg: #ffffff;
+  --bg-2: #f5f5f7;
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --line: #d2d2d7;
+}
+.dark .theme-apple {
+  --ink: #f5f5f7;
+  --ink-2: #86868b;
+  --bg: #000000;
+  --bg-2: #0a0a0c;
+  --accent: #2997ff;
+  --accent-hover: #50a8ff;
+  --line: #2a2a2d;
+}
+
+@keyframes apple-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.apple-reveal {
+  opacity: 0;
+  animation: apple-fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .apple-reveal {
+    opacity: 1;
+    animation: none;
+  }
+}

@@ -39,18 +39,39 @@ export default function SignupPage() {
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Create your account</h1>
       <p className="mt-1 text-sm text-muted-foreground">Start shipping agents that learn from every run.</p>
-      <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4" noValidate>
+      <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4" name="register" aria-label="Create account" noValidate>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="name">Name</Label>
-          <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input id="name" name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            inputMode="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="password">Password</Label>
-          <Input id="password" type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <Input
+            id="password"
+            name="password"
+            type="password"
+            required
+            minLength={8}
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
           <p className="text-xs text-subtle-foreground">At least 8 characters.</p>
         </div>
         {error && <p role="alert" className="text-sm text-[var(--danger,oklch(0.6_0.2_25))]">{error}</p>}
