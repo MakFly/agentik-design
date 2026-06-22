@@ -15,7 +15,10 @@
   - [x] migration generated: `drizzle/0003_chemical_colonel_america.sql` (5 CREATE, 2 FK, 0 DROP)
   - [x] tests `packages/workflow-schema/src/learning.test.ts` (7 pass)
   - [x] verify: schema tsc=0, engine tsc=0, engine+schema `bun test` green
-  - [ ] **NEXT:** repos in `apps/engine/src/` per entity (mirror `agents-repo.ts`)
+  - [x] repos: `apps/engine/src/learning-repo.ts` (agent versions, memory, skills, reviews)
+        + pure helpers `nextVersion` / `selectMemoriesForInjection` / `selectSkillsForInjection`
+        (offline-testable) + `learning-repo.test.ts` (engine 8 tests pass)
+  - **Phase A DONE & verified.**
 - [ ] **Phase 0** — better-auth org tenancy backbone (server-derived orgId, RBAC, daemon token)
 - [ ] **Phase B** — Agent versions real (`publishAgent` writes `agent_versions`)
 - [ ] **Phase C** — Web ↔ engine core read path (agents/runs/Run View on real engine + SSE)
