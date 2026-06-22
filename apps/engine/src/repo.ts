@@ -207,19 +207,24 @@ export async function listCredentials(teamId: string): Promise<CredentialSummary
 
 /** Decrypt a credential by id (for OAuth routes / token refresh). */
 export async function getCredentialDecrypted(
+  teamId: string,
   id: string,
 ): Promise<{ row: typeof credentials.$inferSelect; data: Record<string, string> } | null> {
-  const [row] = await db.select().from(credentials).where(eq(credentials.id, id)).limit(1);
+  const [row] = await db
+    .select()
+    .from(credentials)
+    .where(and(eq(credentials.id, id), eq(credentials.teamId, teamId)))
+    .limit(1);
   if (!row) return null;
   return { row, data: decryptJson<Record<string, string>>(row.data) };
 }
 
 /** Re-encrypt and persist a credential's secret payload. */
-export async function setCredentialData(id: string, data: Record<string, string>): Promise<void> {
+export async function setCredentialData(teamId: string, id: string, data: Record<string, string>): Promise<void> {
   await db
     .update(credentials)
     .set({ data: encryptJson(data), updatedAt: sql`now()` })
-    .where(eq(credentials.id, id));
+    .where(and(eq(credentials.id, id), eq(credentials.teamId, teamId)));
 }
 
 export async function deleteCredential(teamId: string, id: string): Promise<boolean> {

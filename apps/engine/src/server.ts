@@ -157,7 +157,7 @@ function oauthResultHtml(ok: boolean, message?: string): string {
 
 /** Start the Google consent flow for a googleOAuth2 credential. */
 api.get("/credentials/:id/authorize", async (c) => {
-  const cred = await getCredentialDecrypted(c.req.param("id"));
+  const cred = await getCredentialDecrypted(c.get("teamId"), c.req.param("id"));
   if (!cred) return c.json({ error: "not_found" }, 404);
   if (cred.row.type !== "googleOAuth2") return c.json({ error: "not_oauth_credential" }, 400);
   const clientId = cred.data.clientId || env.GOOGLE_CLIENT_ID || "";
@@ -179,7 +179,7 @@ api.get("/oauth/google/callback", async (c) => {
     return c.html(oauthResultHtml(false, "Invalid state."));
   }
 
-  const cred = await getCredentialDecrypted(id);
+  const cred = await getCredentialDecrypted(c.get("teamId"), id);
   if (!cred) return c.html(oauthResultHtml(false, "Credential not found."));
 
   try {
@@ -196,7 +196,7 @@ api.get("/oauth/google/callback", async (c) => {
       scope: tokens.scope ?? cred.data.scope ?? "",
     };
     if (tokens.refresh_token) data.refresh_token = tokens.refresh_token;
-    await setCredentialData(id, data);
+    await setCredentialData(c.get("teamId"), id, data);
     return c.html(oauthResultHtml(true));
   } catch (e) {
     return c.html(oauthResultHtml(false, e instanceof Error ? e.message : "Token exchange failed."));
