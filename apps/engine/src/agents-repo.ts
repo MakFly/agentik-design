@@ -385,6 +385,25 @@ export async function publishAgent(teamId: string, agentId: string, config: unkn
   return { versionId: created.id, version: created.version, status: "published" as const };
 }
 
+/**
+ * Enqueue a real run of a PUBLISHED agent (Golden Path step 3). A daemon advertising the
+ * agent's runtime claims it and the engine injects the agent's approved memory/skills into
+ * the task at claim time. Returns {error} if the agent isn't published yet.
+ */
+export async function runAgent(teamId: string, agentId: string, input: string) {
+  const [agent] = await db
+    .select({ id: agents.id, liveVersionId: agents.liveVersionId })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)))
+    .limit(1);
+  if (!agent) return null;
+  if (!agent.liveVersionId) return { error: "not_published" as const };
+  const taskId = genId("atask");
+  await db.insert(agentTasks).values({ id: taskId, teamId, agentId, status: "queued", kind: "chat", input: { prompt: input } });
+  hub.publish(teamId, { kind: "run", action: "created", runId: taskId });
+  return { runId: taskId };
+}
+
 /** Create a queued sandbox task and return its id as a runId. The runtime
  * (echo|claude) selects which daemon runtime picks it up. */
 export async function createTestTask(teamId: string, config: unknown, input: string, runtime = "echo") {

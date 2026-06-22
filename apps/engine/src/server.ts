@@ -34,6 +34,7 @@ import {
   listAgentRows,
   listRunsUnion,
   publishAgent,
+  runAgent,
   workflowDetailToWeb,
 } from "./agents-repo";
 import { daemon } from "./daemon-routes";
@@ -239,6 +240,14 @@ api.post("/agents/:id/publish", async (c) => {
   const res = await publishAgent(c.get("teamId"), c.req.param("id"), body.config, body.changelog);
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res);
+});
+
+api.post("/agents/:id/run", requirePermission("run:run"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { input?: string };
+  const res = await runAgent(c.get("teamId"), c.req.param("id"), body.input ?? "");
+  if (!res) return c.json({ error: "not_found" }, 404);
+  if ("error" in res) return c.json(res, 409);
+  return c.json(res, 202);
 });
 
 api.post("/agents/test", async (c) => {
