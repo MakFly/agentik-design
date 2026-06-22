@@ -43,6 +43,13 @@
       "when": 1782158005485,
       "tag": "0005_chunky_obadiah_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782161059312,
+      "tag": "0006_funny_jean_grey",
+      "breakpoints": true
     }
   ]
 }

@@ -273,7 +273,7 @@ api.get("/agents/:id/versions", requirePermission("agent:read"), async (c) => {
 
 /* ── Run reviews (runId = agent_tasks.id) — the learning loop ─────────── */
 
-api.post("/runs/:id/review", requirePermission("run:read"), async (c) => {
+api.post("/runs/:id/review", requirePermission("run:run"), async (c) => {
   const existing = await getRunReviewByRunId(c.get("teamId"), c.req.param("id"));
   if (existing) return c.json(withChangeIds(existing));
   const review = await generateRunReview(c.get("teamId"), c.req.param("id"));
@@ -340,19 +340,20 @@ api.get("/runs", async (c) => {
 
 api.get("/runs/:id", async (c) => {
   const id = c.req.param("id");
+  const teamId = c.get("teamId");
   if (id.startsWith("atask_")) {
-    const detail = await getRunUnified(id);
+    const detail = await getRunUnified(teamId, id);
     if (!detail) return c.json({ error: "not_found" }, 404);
     return c.json(detail);
   }
-  const detail = await getRun(id);
+  const detail = await getRun(id, teamId);
   if (!detail) return c.json({ error: "not_found" }, 404);
   // Re-shape the flat workflow detail into the web's { run, steps } contract.
   return c.json(workflowDetailToWeb(detail as never));
 });
 
 api.post("/runs/:id/cancel", async (c) => {
-  const ok = await cancelAgentTask(c.req.param("id"));
+  const ok = await cancelAgentTask(c.get("teamId"), c.req.param("id"));
   return c.json({ ok }, ok ? 200 : 404);
 });
 
@@ -371,9 +372,10 @@ api.post("/runs/:id/approve", async (c) => {
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 api.get("/runs/:id/live", (c) => {
   const id = c.req.param("id");
+  const teamId = c.get("teamId");
   return streamSSE(c, async (stream) => {
     for (let i = 0; i < 1500; i++) {
-      const run = await getRun(id);
+      const run = await getRun(id, teamId);
       if (!run) {
         await stream.writeSSE({ event: "error", data: JSON.stringify({ error: "not_found" }) });
         return;

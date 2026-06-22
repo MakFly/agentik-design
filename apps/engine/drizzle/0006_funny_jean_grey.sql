@@ -1,0 +1,1 @@
+ALTER TABLE "teams" ADD CONSTRAINT "teams_daemon_token_unique" UNIQUE("daemon_token");

@@ -46,7 +46,7 @@ export const teams = pgTable("teams", {
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   /** Org-scoped token a daemon uses to register/claim for this org (issued at org creation). */
-  daemonToken: text("daemon_token"),
+  daemonToken: text("daemon_token").unique(),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 

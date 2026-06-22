@@ -205,7 +205,7 @@ export async function patchSkillFromProposal(
   const version = nextVersion(existing.map((r) => r.version));
   const versionId = genId("sver");
   const baseBody = current?.bodyMd ?? "";
-  const newBody = baseBody.includes(patch.oldText) ? baseBody.replace(patch.oldText, patch.newText) : patch.newText;
+  const newBody = baseBody.includes(patch.oldText) ? baseBody.replaceAll(patch.oldText, patch.newText) : patch.newText;
   await db.insert(skillVersions).values({
     id: versionId,
     skillId,
@@ -320,13 +320,26 @@ export function reviewChangeIds(review: Pick<RunReviewRow, "proposedMemories" | 
 export async function applyRunReview(teamId: string, reviewId: string, changeIds?: string[]) {
   const review = await getRunReview(teamId, reviewId);
   if (!review) return null;
-  if (review.status === "applied") return { applied: 0, alreadyApplied: true as const };
+  // Only a still-pending review may be applied (never re-apply, never apply a rejected one).
+  if (review.status !== "pending") return { applied: 0, alreadyApplied: true as const };
 
   const wantMem = (i: number) => !changeIds || changeIds.includes(`m${i}`);
   const wantSkill = (i: number) => !changeIds || changeIds.includes(`s${i}`);
   let applied = 0;
+  let claimed = true;
 
   await db.transaction(async (tx) => {
+    // Atomic claim: flip pending→applied only if still pending. If a concurrent approve
+    // already claimed it, bail (0 rows) so we never double-write. Rolls back on any error below.
+    const got = await tx
+      .update(runReviews)
+      .set({ status: "applied", updatedAt: sql`now()` })
+      .where(and(eq(runReviews.id, reviewId), eq(runReviews.teamId, teamId), eq(runReviews.status, "pending")))
+      .returning({ id: runReviews.id });
+    if (!got[0]) {
+      claimed = false;
+      return;
+    }
     for (let i = 0; i < review.proposedMemories.length; i++) {
       if (!wantMem(i)) continue;
       const c = review.proposedMemories[i]!;
@@ -389,7 +402,7 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
         const version = nextVersion(existing.map((r) => r.version));
         const versionId = genId("sver");
         const baseBody = current?.bodyMd ?? "";
-        const newBody = baseBody.includes(c.oldText) ? baseBody.replace(c.oldText, c.newText) : c.newText;
+        const newBody = baseBody.includes(c.oldText) ? baseBody.replaceAll(c.oldText, c.newText) : c.newText;
         await tx.insert(skillVersions).values({
           id: versionId,
           skillId: c.skillId,
@@ -406,10 +419,10 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
         applied++;
       }
     }
-
-    await tx.update(runReviews).set({ status: "applied", updatedAt: sql`now()` }).where(eq(runReviews.id, reviewId));
+    // status was already flipped to "applied" by the atomic claim above.
   });
 
+  if (!claimed) return { applied: 0, alreadyApplied: true as const };
   return { applied, alreadyApplied: false as const };
 }
 

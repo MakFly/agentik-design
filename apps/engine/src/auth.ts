@@ -75,6 +75,8 @@ export { getMembership };
 export const withAuth: MiddlewareHandler<{ Variables: AuthVars }> = async (c, next) => {
   const resolved = await resolveAuth(c);
   if (!resolved) return c.json({ error: "unauthenticated" }, 401);
+  // Authenticated but no org yet → must onboard. Never treat "" as a valid tenant.
+  if (!resolved.orgId) return c.json({ error: "no_org", hint: "create or join an organization" }, 403);
   const { teamSlug, ...auth } = resolved;
   c.set("teamSlug", teamSlug);
   c.set("teamId", auth.orgId);

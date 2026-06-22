@@ -12,10 +12,13 @@ import { createAgent, publishAgent } from "./agents-repo";
 import {
   applyRunReview,
   generateRunReview,
+  getRunReview,
   listAgentVersions,
   resolveInjectionContext,
+  setRunReviewStatus,
 } from "./learning-repo";
 import { claimTask } from "./daemon-repo";
+import { cancelAgentTask, getRunUnified } from "./agents-repo";
 
 let dbUp = false;
 try {
@@ -169,5 +172,52 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     expect(claimed!.context?.memories.length).toBeGreaterThanOrEqual(1);
 
     await db.delete(schema.daemons).where(eq(schema.daemons.id, daemonId)); // cascade → runtimes
+  });
+});
+
+d("Security regressions — tenancy & review-state guards", () => {
+  const slug = `itest-sec-${Date.now()}`;
+  let teamId: string;
+  let otherTeam: string;
+  let agentId: string;
+  let taskId: string;
+
+  beforeAll(async () => {
+    teamId = await resolveTeam(slug);
+    otherTeam = await resolveTeam(`${slug}-other`);
+    const a = await createAgent(teamId, { name: "Sec Agent" });
+    agentId = a.id;
+    await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "echo" });
+    taskId = genId("atask");
+    await db.insert(schema.agentTasks).values({ id: taskId, teamId, agentId, status: "failed", kind: "direct", input: { prompt: "p" }, error: "boom" });
+  });
+
+  afterAll(async () => {
+    await db.delete(schema.agentTasks).where(eq(schema.agentTasks.teamId, teamId));
+    await db.delete(schema.runReviews).where(eq(schema.runReviews.teamId, teamId));
+    await db.delete(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
+    await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
+    await db.delete(schema.teams).where(eq(schema.teams.id, teamId));
+    await db.delete(schema.teams).where(eq(schema.teams.id, otherTeam));
+  });
+
+  test("getRunUnified / cancelAgentTask reject a run from another org", async () => {
+    expect(await getRunUnified(otherTeam, taskId)).toBeNull();
+    expect(await getRunUnified(teamId, taskId)).not.toBeNull();
+    expect(await cancelAgentTask(otherTeam, taskId)).toBe(false);
+  });
+
+  test("a rejected review can never be applied", async () => {
+    const review = await generateRunReview(teamId, taskId);
+    await setRunReviewStatus(teamId, review!.id, "rejected");
+    const res = await applyRunReview(teamId, review!.id, ["m0"]);
+    expect(res?.alreadyApplied).toBe(true);
+    expect(res?.applied).toBe(0);
+    // no memory was written by the rejected apply
+    const mem = await db.select().from(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
+    expect(mem).toHaveLength(0);
+    // and the status stays rejected, not flipped to applied
+    const after = await getRunReview(teamId, review!.id);
+    expect(after?.status).toBe("rejected");
   });
 });

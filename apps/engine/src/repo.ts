@@ -230,8 +230,12 @@ export async function deleteCredential(teamId: string, id: string): Promise<bool
   return deleted.length > 0;
 }
 
-export async function getRun(runId: string): Promise<RunDetail | null> {
-  const [r] = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+export async function getRun(runId: string, teamId?: string): Promise<RunDetail | null> {
+  const [r] = await db
+    .select()
+    .from(runs)
+    .where(teamId ? and(eq(runs.id, runId), eq(runs.teamId, teamId)) : eq(runs.id, runId))
+    .limit(1);
   if (!r) return null;
   const steps = await db
     .select()

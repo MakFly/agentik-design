@@ -20,7 +20,7 @@ export async function handleControl(ws: AppWebSocket, raw: string | Buffer): Pro
 
   let accepted = true;
   if (type === "run.cancel") {
-    accepted = await cancelAgentTask(runId);
+    accepted = await cancelAgentTask(ws.data.teamId, runId);
   }
 
   ws.send(JSON.stringify({ kind: "control.ack", runId, action: type, accepted }));

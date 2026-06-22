@@ -301,10 +301,14 @@ export async function listRunsUnion(teamId: string, filters: { status?: string; 
   return items;
 }
 
-/** Branch on id prefix: workflow run vs agent task. */
-export async function getRunUnified(id: string) {
+/** Branch on id prefix: workflow run vs agent task. Tenancy-scoped by teamId. */
+export async function getRunUnified(teamId: string, id: string) {
   if (id.startsWith("atask_")) {
-    const [task] = await db.select().from(agentTasks).where(eq(agentTasks.id, id)).limit(1);
+    const [task] = await db
+      .select()
+      .from(agentTasks)
+      .where(and(eq(agentTasks.id, id), eq(agentTasks.teamId, teamId)))
+      .limit(1);
     if (!task) return null;
     const msgs = await db.select().from(taskMessages).where(eq(taskMessages.taskId, id)).orderBy(taskMessages.seq);
     const names = await agentNameMap(task.teamId);
@@ -421,13 +425,13 @@ export async function createTestTask(teamId: string, config: unknown, input: str
   return { runId: taskId };
 }
 
-/** Cancel an agent task (workflow runs handled elsewhere). Returns true if flipped. */
-export async function cancelAgentTask(id: string): Promise<boolean> {
+/** Cancel an agent task (workflow runs handled elsewhere). Tenancy-scoped. Returns true if flipped. */
+export async function cancelAgentTask(teamId: string, id: string): Promise<boolean> {
   if (!id.startsWith("atask_")) return false;
   const updated = await db
     .update(agentTasks)
     .set({ status: "cancelled", endedAt: sql`now()` })
-    .where(and(eq(agentTasks.id, id), inArray(agentTasks.status, ["queued", "dispatched", "running"])))
+    .where(and(eq(agentTasks.id, id), eq(agentTasks.teamId, teamId), inArray(agentTasks.status, ["queued", "dispatched", "running"])))
     .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
   if (!updated[0]) return false;
   hub.publish(updated[0].teamId, { kind: "run", action: "cancelled", runId: id });
