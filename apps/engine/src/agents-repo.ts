@@ -2,6 +2,8 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { hub } from "./hub";
+import { createAgentVersion, type CreateAgentVersionInput } from "./learning-repo";
+import { DEFAULT_MEMORY_POLICY, DEFAULT_SKILL_POLICY, runtimeKindSchema } from "@agentik/workflow-schema";
 import type { AgentTaskStatus } from "./db/schema";
 
 const { agents, daemons, runtimes, agentTasks, taskMessages, runs, runSteps, workflows } = schema;
@@ -329,15 +331,47 @@ export async function createAgent(teamId: string, input: { name: string; role?: 
   return { id, draftVersionId };
 }
 
-export async function publishAgent(teamId: string, agentId: string, config: unknown, _changelog?: string) {
-  const liveVersionId = genId("ver");
-  const updated = await db
-    .update(agents)
-    .set({ liveVersionId, config: config as Record<string, unknown>, health: "healthy", updatedAt: sql`now()` })
+/** Map the web's free-form config jsonb onto an immutable version's typed fields. */
+function configToVersionInput(config: unknown, fallbackRuntime: string): CreateAgentVersionInput {
+  const cfg = (config && typeof config === "object" ? config : {}) as Record<string, unknown>;
+  const m = cfg.model;
+  const model =
+    typeof m === "string"
+      ? m
+      : m && typeof m === "object" && typeof (m as { model?: unknown }).model === "string"
+        ? (m as { model: string }).model
+        : undefined;
+  const rk = runtimeKindSchema.safeParse(cfg.runtimeKind ?? fallbackRuntime);
+  return {
+    model,
+    instructions: typeof cfg.instructions === "string" ? cfg.instructions : "",
+    tools: Array.isArray(cfg.tools) ? cfg.tools.filter((t): t is string => typeof t === "string") : [],
+    runtimeKind: rk.success ? rk.data : "echo",
+    memoryPolicy: DEFAULT_MEMORY_POLICY,
+    skillPolicy: DEFAULT_SKILL_POLICY,
+    createdBy: "user",
+  };
+}
+
+/** Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId. */
+export async function publishAgent(teamId: string, agentId: string, config: unknown, changelog?: string) {
+  const [agent] = await db
+    .select({ runtimeKind: agents.runtimeKind })
+    .from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)))
-    .returning({ id: agents.id });
-  if (!updated[0]) return null;
-  return { versionId: liveVersionId, version: 1, status: "published" as const };
+    .limit(1);
+  if (!agent) return null;
+  const created = await createAgentVersion(teamId, agentId, {
+    ...configToVersionInput(config, agent.runtimeKind),
+    changelog,
+  });
+  if (!created) return null;
+  // Point liveVersionId at the immutable version; keep config jsonb for back-compat.
+  await db
+    .update(agents)
+    .set({ liveVersionId: created.id, config: (config ?? {}) as Record<string, unknown>, health: "healthy", updatedAt: sql`now()` })
+    .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)));
+  return { versionId: created.id, version: created.version, status: "published" as const };
 }
 
 /** Create a queued sandbox task and return its id as a runId. The runtime
