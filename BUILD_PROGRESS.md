@@ -87,6 +87,22 @@ offline-testable. The `resolveAuth` seam (already in `auth.ts`) is where it plug
 - n8n engine PARKED — do not touch `packages/workflow-engine`, `workflows`, `workflow_versions`.
 - Landing requirement (user): **Apple-style font theme** ("agentik" brand).
 
+## Live E2E test + bug-fix pass (22-06-2026, browser via ghostchrome + crew-reviewer)
+Drove the real app (make dev stack) through the full Golden Path; fixed every bug found:
+- **Mock agents in real orgs** → `ensureDevAgents` only seeds legacy dev teams (no membership);
+  real orgs stay empty (zero-mocked-data). Verified: fresh org → 0 agents.
+- **Org-scoped daemon token** wired: daemon authenticates with the org token; engine derives the
+  team server-side. Verified live: daemon registered an echo runtime for the org via its token.
+- **Added `POST /agents/:id/run`** (Golden Path step 3 had no route — only sandbox test).
+- crew-reviewer findings fixed: run routes tenancy-scoped (getRunUnified/cancelAgentTask/getRun +
+  WS cancel); applyRunReview applies only PENDING reviews via atomic claim (no re-apply/race);
+  withAuth 403 `no_org`; review-gen gated run:run; skill patch replaceAll; teams.daemon_token UNIQUE;
+  **decrypted credentials scoped by org**. +2 security regression tests (27 engine tests pass).
+- **LIVE PROOF**: run1 → review → approve memory → run2's daemon (echo) output contains the injected
+  memory. no-org user → 403. Full §2 loop verified end-to-end on the running stack, zero mocked data.
+- Documented deviations (not bugs): email-verify not enforced at login (lean MVP; token+endpoint exist);
+  dev-only verify link in signup response gated on NODE_ENV.
+
 ## Last iteration
 - 22-06-2026 — iter 1: audited repo (matches guideline §3). Phase A schemas+tables+migration+tests
   DONE & verified (schema/engine tsc=0, tests green). Committed. NEXT: Phase A repos, then Phase 0.
