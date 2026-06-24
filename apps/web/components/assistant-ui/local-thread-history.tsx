@@ -13,7 +13,8 @@ import {
   type FC,
   type ReactNode,
 } from "react";
-import { useAuiState, type AssistantRuntime } from "@assistant-ui/react";
+import { useAssistantRuntime, useAuiState, type AssistantRuntime } from "@assistant-ui/react";
+import { usePathname } from "next/navigation";
 import { MoreHorizontalIcon, PlusIcon, TrashIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useDemoRuntime } from "@/components/runtime/demo-runtime-provider";
 import { cn } from "@/lib/utils";
 
 // The runtime's own serialization format (assistant-ui external state). We persist
@@ -236,7 +236,7 @@ export function LocalThreadHistoryProvider({
   routeThreadId?: string;
   team: string;
 }) {
-  const runtime = useDemoRuntime();
+  const runtime = useAssistantRuntime();
   const aui = runtime;
   const messages = useAuiState((state) => state.thread.messages);
   const [threads, setThreads] = useState<StoredThread[]>([]);
@@ -245,7 +245,13 @@ export function LocalThreadHistoryProvider({
   const [hydrated, setHydrated] = useState(false);
   const activeThreadIdRef = useRef<string | null>(null);
   const restoringRef = useRef(false);
-  const dashboardHref = useMemo(() => `/${encodeURIComponent(team)}/thechat`, [team]);
+  // Base path of the surface hosting this chat (e.g. /team/thechat or /team/chat),
+  // derived from the URL so threads route back to the right surface.
+  const pathname = usePathname();
+  const dashboardHref = useMemo(() => {
+    const segment = pathname.split("/").filter(Boolean)[1] ?? "thechat";
+    return `/${encodeURIComponent(team)}/${segment}`;
+  }, [team, pathname]);
   const threadHref = useCallback(
     (threadId: string) => `${dashboardHref}/c/${encodeURIComponent(threadId)}`,
     [dashboardHref],
