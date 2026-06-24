@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, Loader2, MessageSquarePlus, Send, User } from "lucide-react";
+import { AlertCircle, Bot, Loader2, MessageSquarePlus, Send, User } from "lucide-react";
 import { qk } from "@/lib/api/queryKeys";
 import { realtime } from "@/lib/realtime/ws-client";
 import { useAgents } from "@/features/agent-registry/api";
@@ -23,6 +23,10 @@ import { useChatSession, useChatSessions, useCreateChatSession, useSendChatMessa
 export function AgentChat({ team }: { team: string }) {
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Task currently awaiting a reply (drives the thinking indicator); cleared when the
+  // assistant turn lands or the run fails — so a failed run never spins forever.
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const agents = useAgents(team);
   const sessions = useChatSessions(team);
@@ -30,21 +34,35 @@ export function AgentChat({ team }: { team: string }) {
   const createSession = useCreateChatSession(team);
   const sendMessage = useSendChatMessage(team, activeId ?? "");
 
-  // Realtime: refetch the open session when its task streams a reply or finishes.
+  // Reset the per-conversation transient state when switching sessions.
+  useEffect(() => {
+    setPendingTaskId(null);
+    setRunError(null);
+  }, [activeId]);
+
+  // Realtime: a reply landing clears the spinner; a run failure surfaces an error
+  // (a failed task writes no assistant turn, so without this the UI would hang).
   useEffect(() => {
     const unsub = realtime.subscribe((e) => {
       if (e.kind === "chat.message" && e.sessionId === activeId) {
         qc.invalidateQueries({ queryKey: qk.chat.session(team, e.sessionId) });
+        setPendingTaskId(null);
+        setRunError(null);
       }
-      if (e.kind === "run" && (e.action === "succeeded" || e.action === "failed") && activeId) {
-        qc.invalidateQueries({ queryKey: qk.chat.session(team, activeId) });
+      if (e.kind === "run" && pendingTaskId && e.runId === pendingTaskId) {
+        if (e.action === "succeeded") {
+          qc.invalidateQueries({ queryKey: qk.chat.session(team, activeId!) });
+        } else if (e.action === "failed" || e.action === "cancelled") {
+          setPendingTaskId(null);
+          setRunError(e.action === "cancelled" ? "Run cancelled." : "The agent run failed — see Executions for details.");
+        }
       }
     });
     return unsub;
-  }, [team, activeId, qc]);
+  }, [team, activeId, pendingTaskId, qc]);
 
   const messages = session.data?.messages ?? [];
-  const awaitingReply = messages.length > 0 && messages[messages.length - 1]!.role === "user";
+  const awaitingReply = !!pendingTaskId;
 
   return (
     <div className="flex h-full min-h-0 gap-4">
@@ -83,9 +101,24 @@ export function AgentChat({ team }: { team: string }) {
                   messages.map((m) => <Bubble key={m.id} role={m.role} content={m.content} />)
                 )}
                 {awaitingReply && <Bubble role="assistant" content="" pending />}
+                {runError && (
+                  <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                    <AlertCircle className="size-4 shrink-0" />
+                    {runError}
+                  </div>
+                )}
               </div>
             </ScrollArea>
-            <Composer disabled={!activeId || sendMessage.isPending} onSend={(text) => sendMessage.mutate(text)} />
+            <Composer
+              disabled={!activeId}
+              onSend={(text) => {
+                setRunError(null);
+                sendMessage.mutate(text, {
+                  onSuccess: (res) => setPendingTaskId(res.taskId),
+                  onError: () => setRunError("Could not send the message."),
+                });
+              }}
+            />
           </>
         )}
       </section>
