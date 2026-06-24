@@ -3,32 +3,37 @@
 import { useEffect, useState, type FC } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WrenchIcon, XIcon } from "lucide-react";
+import { SlidersHorizontalIcon, WrenchIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToolsSection } from "./tools-section";
+import { PreferencesSection } from "./preferences-section";
 
-type SectionId = "tools";
+type SectionId = "preferences" | "tools";
 
 type Section = {
   id: SectionId;
   label: string;
+  group: string;
   icon: FC<{ className?: string }>;
   render: () => React.ReactNode;
 };
 
 const SECTIONS: readonly Section[] = [
-  { id: "tools", label: "Tools", icon: WrenchIcon, render: () => <ToolsSection /> },
+  { id: "preferences", label: "Preferences", group: "Personal", icon: SlidersHorizontalIcon, render: () => <PreferencesSection /> },
+  { id: "tools", label: "Tools", group: "Assistant", icon: WrenchIcon, render: () => <ToolsSection /> },
 ];
+
+const GROUP_ORDER = ["Personal", "Assistant"] as const;
 
 /**
  * Linear-style settings surface for the dashboard assistant: a full-screen view
  * with a section rail on the left and a content pane on the right. Escape (or the
- * close button) returns to the chat. Reachable at /{team}/dashboard/settings.
+ * close button) returns to the chat. Reachable at /{team}/thechat/settings.
  */
 export function DashboardSettings({ team }: { team: string }) {
   const router = useRouter();
-  const backHref = `/${team}/dashboard`;
-  const [active, setActive] = useState<SectionId>("tools");
+  const backHref = `/${team}/thechat`;
+  const [active, setActive] = useState<SectionId>("preferences");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -63,31 +68,39 @@ export function DashboardSettings({ team }: { team: string }) {
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
           aria-label="Settings sections"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-b-0 md:p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 md:w-56 md:flex-col md:gap-3 md:overflow-y-auto md:border-r md:border-b-0 md:p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          <p className="text-muted-foreground hidden px-2 pt-1 pb-2 text-xs font-medium tracking-wide uppercase md:block">
-            Assistant
-          </p>
-          {SECTIONS.map((s) => {
-            const Icon = s.icon;
-            const isActive = s.id === active;
+          {GROUP_ORDER.map((group) => {
+            const items = SECTIONS.filter((s) => s.group === group);
+            if (!items.length) return null;
             return (
-              <button
-                key={s.id}
-                type="button"
-                aria-current={isActive ? "page" : undefined}
-                onClick={() => setActive(s.id)}
-                className={cn(
-                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors",
-                  "hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-2",
-                  isActive
-                    ? "bg-accent text-accent-foreground font-medium"
-                    : "text-muted-foreground",
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                {s.label}
-              </button>
+              <div key={group} className="flex shrink-0 gap-1 md:flex-col">
+                <p className="text-muted-foreground hidden px-2 pb-1 text-xs font-medium tracking-wide uppercase md:block">
+                  {group}
+                </p>
+                {items.map((s) => {
+                  const Icon = s.icon;
+                  const isActive = s.id === active;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => setActive(s.id)}
+                      className={cn(
+                        "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors",
+                        "hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-2",
+                        isActive
+                          ? "bg-accent text-accent-foreground font-medium"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>

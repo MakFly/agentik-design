@@ -245,7 +245,7 @@ export function LocalThreadHistoryProvider({
   const [hydrated, setHydrated] = useState(false);
   const activeThreadIdRef = useRef<string | null>(null);
   const restoringRef = useRef(false);
-  const dashboardHref = useMemo(() => `/${encodeURIComponent(team)}/dashboard`, [team]);
+  const dashboardHref = useMemo(() => `/${encodeURIComponent(team)}/thechat`, [team]);
   const threadHref = useCallback(
     (threadId: string) => `${dashboardHref}/c/${encodeURIComponent(threadId)}`,
     [dashboardHref],

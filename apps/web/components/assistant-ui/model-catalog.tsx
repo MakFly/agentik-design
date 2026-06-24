@@ -102,16 +102,19 @@ function EffortSelect({
   value,
   onChange,
   className,
+  disabled,
 }: {
   efforts: readonly EffortLevel[];
   value: string | undefined;
   onChange: (effort: string | undefined) => void;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <Select
       value={value ?? EFFORT_OFF}
       onValueChange={(v) => onChange(v === EFFORT_OFF ? undefined : v)}
+      disabled={disabled}
     >
       <SelectTrigger
         size="sm"
@@ -157,6 +160,10 @@ export function ModelPickerSelect({
   const [effort, setEffort] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState(false);
 
+  // No model has a configured API key → nothing usable to pick, so the controls
+  // are disabled (model picker can't open, effort select is inert).
+  const hasUsableModel = useMemo(() => models.some((m) => !m.disabled), [models]);
+
   // Effort resolved against the current model's supported levels (a sticky
   // effort from a previous model is dropped if this one doesn't offer it).
   const activeEffort = useMemo(
@@ -187,7 +194,12 @@ export function ModelPickerSelect({
         open={open}
         onOpenChange={setOpen}
       >
-        <ModelSelector.Trigger variant="ghost" size="sm" className={triggerClassName} />
+        <ModelSelector.Trigger
+          variant="ghost"
+          size="sm"
+          className={triggerClassName}
+          disabled={!hasUsableModel}
+        />
         <ModelSelector.Content>
           <ModelSelector.List>
             <ModelSelector.Group>
@@ -209,6 +221,7 @@ export function ModelPickerSelect({
           value={activeEffort}
           onChange={setEffort}
           className={triggerClassName}
+          disabled={!hasUsableModel}
         />
       ) : null}
     </>

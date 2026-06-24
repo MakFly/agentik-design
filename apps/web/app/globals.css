@@ -252,6 +252,16 @@
     }
   }
 
+  /* Manual override driven by the "Reduce motion" preference (Settings). */
+  html.reduce-motion *,
+  html.reduce-motion ::before,
+  html.reduce-motion ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;

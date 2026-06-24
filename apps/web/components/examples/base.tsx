@@ -110,6 +110,7 @@ import {
   ModelPickerSelect,
 } from "@/components/assistant-ui/model-catalog";
 import { DEFAULT_MODEL_ID } from "@/constants/model";
+import { usePreferencesStore } from "@/lib/stores/preferences.store";
 import { BUILTIN_TOOLS } from "@/lib/tools/catalog";
 import { readCustomTools } from "@/lib/tools/custom-tools";
 
@@ -155,6 +156,12 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
         >
           assistant-ui
         </span>
+        {collapsed ? null : (
+          <div className="ml-auto flex items-center gap-0.5">
+            <DashboardSettingsButton />
+            <ThemeModeToggle />
+          </div>
+        )}
       </div>
       {collapsed ? (
         <TooltipIconButton
@@ -231,7 +238,7 @@ const DashboardSettingsButton: FC = () => {
       tooltip="Settings"
       side="bottom"
       className="size-8"
-      onClick={() => router.push(`/${team}/dashboard/settings`)}
+      onClick={() => router.push(`/${team}/thechat/settings`)}
     >
       <SettingsIcon className="size-4" />
     </TooltipIconButton>
@@ -670,6 +677,7 @@ function DirectiveChip(props: DirectiveChipProps) {
 }
 
 const Composer: FC = () => {
+  const submitMode = usePreferencesStore((s) => s.submitMode);
   const mentionItems = useToolMentionItems();
   const mention = unstable_useMentionAdapter({
     items: mentionItems,
@@ -694,6 +702,7 @@ const Composer: FC = () => {
             <ComposerAttachments />
             <LexicalComposerInput
               directiveChip={DirectiveChip}
+              submitMode={submitMode}
               placeholder="Send a message... (@ to mention, / for commands)"
               className="aui-composer-input [&_.aui-lexical-placeholder]:text-muted-foreground/80 relative max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none [&_.aui-directive-chip]:inline-flex [&_.aui-directive-chip]:items-baseline [&_.aui-directive-chip]:gap-1 [&_.aui-directive-chip]:rounded-md [&_.aui-directive-chip]:bg-blue-100 [&_.aui-directive-chip]:px-1.5 [&_.aui-directive-chip]:py-0.5 [&_.aui-directive-chip]:text-[13px] [&_.aui-directive-chip]:leading-none [&_.aui-directive-chip]:font-medium [&_.aui-directive-chip]:text-blue-700 dark:[&_.aui-directive-chip]:bg-blue-900/50 dark:[&_.aui-directive-chip]:text-blue-300 [&_.aui-directive-chip-icon]:self-center [&_.aui-lexical-input]:min-h-lh [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:right-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:truncate [&_.aui-lexical-placeholder]:px-2.5 [&_.aui-lexical-placeholder]:py-1"
             />
@@ -1061,10 +1070,12 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
 export const Base: FC<{
   team: string;
   threadId?: string;
+  /** Hide the internal chat header (used when embedded in the app shell). */
+  showHeader?: boolean;
   /** `{ [modelId]: hasKey }`, computed server-side (zero client fetch). */
   modelAvailability?: Record<string, boolean>;
   defaultModelId?: string;
-}> = ({ team, threadId, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID }) => {
+}> = ({ team, threadId, showHeader = true, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const models = useMemo(() => buildModelOptions(modelAvailability), [modelAvailability]);
 
@@ -1077,10 +1088,12 @@ export const Base: FC<{
         </div>
         <div className="flex flex-1 flex-col overflow-hidden p-2 md:pl-0">
           <div className="bg-background flex flex-1 flex-col overflow-hidden rounded-lg">
-            <Header
-              sidebarCollapsed={sidebarCollapsed}
-              onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-            />
+            {showHeader ? (
+              <Header
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+              />
+            ) : null}
             <main className="flex-1 overflow-hidden">
               <Thread />
             </main>

@@ -29,7 +29,7 @@ export function TeamSwitcher({ team }: { team: string }) {
   if (!session) return null;
 
   function switchTeam(slug: string) {
-    if (slug !== team) router.push(`/${slug}/dashboard`);
+    if (slug !== team) router.push(`/${slug}/thechat`);
   }
 
   return (

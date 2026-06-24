@@ -78,7 +78,12 @@ function fallbackResponse(messages: unknown, text: string) {
   const stream = createUIMessageStream({
     originalMessages: messages as never,
     execute: async ({ writer }) => {
+      // The UIMessageStream protocol requires opening a text part with `text-start`
+      // before any `text-delta`, then closing it with `text-end` — otherwise the
+      // client throws "Received text-delta for missing text part".
+      await writer.write({ type: "text-start", id: "fallback-text" });
       await writer.write({ type: "text-delta", id: "fallback-text", delta: text });
+      await writer.write({ type: "text-end", id: "fallback-text" });
     },
   });
   return createUIMessageStreamResponse({ stream });

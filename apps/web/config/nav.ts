@@ -32,7 +32,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   // OBSERVE
-  { key: "dashboard", label: "Hermes Lite", segment: "dashboard", icon: LayoutDashboard, group: "observe", hotkey: "d" },
+  { key: "dashboard", label: "Hermes Lite", segment: "thechat", icon: LayoutDashboard, group: "observe", hotkey: "d" },
   { key: "runs", label: "Executions", segment: "runs", icon: Play, group: "observe", hotkey: "r", permission: "run:read", badge: "activeRuns" },
   { key: "observability", label: "Observability", segment: "observability", icon: Activity, group: "observe", hotkey: "o" },
   // AUTHOR

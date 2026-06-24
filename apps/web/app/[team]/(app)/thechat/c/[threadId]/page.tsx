@@ -6,7 +6,7 @@ import {
   getModelAvailabilityMap,
 } from "@/lib/llm/availability";
 
-export const metadata: Metadata = { title: { absolute: "Base demo — assistant-ui" } };
+export const metadata: Metadata = { title: { absolute: "Chat — Agentik" } };
 
 export default async function ConversationPage({
   params,
@@ -18,15 +18,14 @@ export default async function ConversationPage({
   const defaultModelId = getDefaultAvailableModelId();
 
   return (
-    <main className="h-dvh overflow-hidden">
-      <DemoRuntimeProvider>
-        <Base
-          team={team}
-          threadId={threadId}
-          modelAvailability={modelAvailability}
-          defaultModelId={defaultModelId}
-        />
-      </DemoRuntimeProvider>
-    </main>
+    <DemoRuntimeProvider>
+      <Base
+        team={team}
+        threadId={threadId}
+        showHeader={false}
+        modelAvailability={modelAvailability}
+        defaultModelId={defaultModelId}
+      />
+    </DemoRuntimeProvider>
   );
 }
