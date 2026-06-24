@@ -73,7 +73,7 @@ Makefile    `make dev` (web+engine+worker via -j3, NOT daemon). Daemon: make dae
 
 ### A.0 Target model (mapped onto agentik seams)
 
-Multica's "task" = the unit of every agent run, produced by four triggers (issue-assignment, @-mention, chat, autopilot), all converging on one queue with `queued→dispatched→running→completed|failed|cancelled`. Agentik already has that queue (`agent_tasks`) and that exact status enum. Parity work = the **surfaces and lifecycle policy** around it. Of the four triggers, **only chat is in default scope**; issue-assign and @-mention are gated (A.5 / Open Questions).
+Multica's "task" = the unit of every agent run, produced by four triggers (issue-assignment, @-mention, chat, autopilot), all converging on one queue with `queued→dispatched→running→completed|failed|cancelled`. Agentik already has that queue (`agent_tasks`) and that exact status enum. Parity work = the **surfaces and lifecycle policy** around it. Of the four triggers, **only chat is in v1 scope**; issue-assign, @-mention and autopilot are DEFERRED (Locked decisions #1/#2).
 
 ```
                           ┌──────────────────────── apps/web (Next 16) ───────────────────────┐
@@ -108,9 +108,9 @@ The status enum already matches multica. Add the **policy layer** agentik lacks.
    - `running` with `started_at` older than **2.5 h** → fail with reason `timeout` (retryable).
    Use SQL `UPDATE … WHERE status=… AND <ts> < now()-interval` and publish each resulting run event via `hub.publish`.
    - **Where it runs / double-fire guard (be precise).** `make dev` runs engine AND worker as **separate processes** (`worker.ts` is a BullMQ `Worker`, not a cron host). A naive `setInterval` in both → double-scan. **Decision required (do not guess):** host the scanner in exactly ONE process. Recommended: a BullMQ repeatable job registered in `worker.ts` (BullMQ guarantees single delivery), OR a single `setInterval` in the engine `main.ts` guarded by a Postgres advisory lock (`pg_try_advisory_lock`) so only one holder scans. State which you chose and why; the SQL `UPDATE … WHERE` is already idempotent so a stray double-run is safe but wasteful — still pick one owner.
-2. **Retry classification.** Add to `agent_tasks` (NEW columns on this table — note `attempt` already exists on the unrelated `runs` table, do not be misled): `error_reason text` nullable (`runtime_offline|runtime_recovery|timeout|agent_error`) and `attempt int not null default 1`. On `failTask`, derive `error_reason` (`timeout` from the scanner; `agent_error` for runtime-reported failures; `runtime_offline` when no runtime claimed). **Retryable** = `runtime_offline|runtime_recovery|timeout`; **auto-retry** re-queues by resetting the same row to `queued` with `attempt+1` (or inserts a fresh row) **only when** `attempt < 2` and the task is chat-triggered (NOT autopilot). `agent_error` is terminal. **Auto-retry starts a FRESH run — it does NOT preserve or resume any session** (session resumption does not exist yet; see A.1.4 and Open Question #6). Do not import multica's "preserves session_id" language here.
+2. **Retry classification.** Add to `agent_tasks` (NEW columns on this table — note `attempt` already exists on the unrelated `runs` table, do not be misled): `error_reason text` nullable (`runtime_offline|runtime_recovery|timeout|agent_error`) and `attempt int not null default 1`. On `failTask`, derive `error_reason` (`timeout` from the scanner; `agent_error` for runtime-reported failures; `runtime_offline` when no runtime claimed). **Retryable** = `runtime_offline|runtime_recovery|timeout`; **auto-retry** re-queues by resetting the same row to `queued` with `attempt+1` (or inserts a fresh row) **only when** `attempt < 2` and the task is chat-triggered (NOT autopilot). `agent_error` is terminal. **Auto-retry starts a FRESH run — it does NOT preserve or resume any session** (session resumption is out of scope, Locked decision #6; see A.1.4). Do not import multica's "preserves session_id" language here.
 3. **Manual rerun.** `POST /runs/:id/retry`. Cancel any queued/running task for the same subject, enqueue a FRESH task (`attempt=1`, no session inheritance), publish `run.created`. No attempt ceiling. **RBAC: gate on `run:run`** (held by admin/engineer/operator/owner). **Per Locked decision #8, also retrofit `run:control`** onto `POST /runs/:id/cancel` AND the WS control path (`control.ts`) in the same change — it is unguarded today.
-4. **Session resumption — DEFERRED, not in default scope (Open Question #6).** It does not exist today: the Hermes run path is single-shot `-q` with no `--resume`, and `agent_tasks.work_dir` is an **engine-assigned logical path** (`'/work/' || id`, set in `claimTask`), NOT the daemon's real isolated dir (the daemon uses `WORK_ROOT`). So a real resume requires: deciding who owns the resumable real path, persisting a daemon-reported `session_id` + real `work_dir` back via the complete/fail calls, and wiring `--resume <session_id>` in the runtime adapters (skip Gemini). All of this is net-new daemon+protocol work — **do NOT build it unless Open Question #6 is confirmed.** Until then, all retries (auto and manual) are fresh sessions.
+4. **Session resumption — DEFERRED (Locked decision #6).** It does not exist today: the Hermes run path is single-shot `-q` with no `--resume`, and `agent_tasks.work_dir` is an **engine-assigned logical path** (`'/work/' || id`, set in `claimTask`), NOT the daemon's real isolated dir (the daemon uses `WORK_ROOT`). A real resume would be net-new daemon+protocol work (persist a daemon-reported `session_id` + real `work_dir`, wire `--resume`). **Do NOT build it in v1.** All retries (auto and manual) are fresh sessions.
 
 Write every migration by editing `apps/engine/src/db/schema.ts` then `bunx drizzle-kit generate` (output lands in `apps/engine/drizzle`). Never hand-write SQL migrations.
 
@@ -187,10 +187,10 @@ Create `apps/daemon/internal/bundle/bundle.go` with a `Bundle` descriptor and fo
   - `updateAvailable` = read `~/.hermes/.update_check` JSON `behind>0`, or `hermes update --check`.
   - `carriedCommits` = parse `hermes version` ("… local <sha> (+N carried commit)") → surface as upgrade warning (this machine carries +1).
   - Never trust cached `LookPath`; re-probe after any mutating op.
-- **INSTALL** (idempotent): if PROBE installed → no-op return. Else ensure `uv` (`LookPath uv`; if missing, `curl -LsSf https://astral.sh/uv/install.sh | sh`), then run the official installer with controlled env:
-  `HERMES_HOME=<home> PATH=$HOME/.local/bin:$PATH bash -c 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash'`. Stream stdout/stderr lines back as progress. Postcondition: PROBE shows installed+version. After install, **re-probe — do NOT cache `LookPath`** (daemon PATH must include `~/.local/bin`; see B.4). **Both remote-exec calls (hermes installer AND the uv bootstrap) are gated by the SAME network-policy decision (Open Question #3).**
+- **INSTALL** (idempotent): if PROBE installed → no-op return. Else **first check `AGENTIK_ALLOW_BUNDLE_NETWORK_INSTALL`** (Locked decision #3, default `true`); if `false`, return a clear "network installs disabled" error and do nothing. Else ensure `uv` (`LookPath uv`; if missing, `curl -LsSf https://astral.sh/uv/install.sh | sh`), then run the official installer with controlled env:
+  `HERMES_HOME=<home> PATH=$HOME/.local/bin:$PATH bash -c 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash'`. Stream stdout/stderr lines back as progress. Postcondition: PROBE shows installed+version. After install, **re-probe — do NOT cache `LookPath`** (daemon PATH must include `~/.local/bin`; see B.4). The SAME flag gates both remote-exec calls (hermes installer AND the uv bootstrap).
 - **UPGRADE** (idempotent): PROBE; if `!updateAvailable` → no-op. Else surface the carried-commit warning first, then `hermes update --yes --backup` (**`--backup` is mandatory, not optional**, because of the carried local commit). Re-probe.
-- **UNINSTALL** (idempotent): `hermes uninstall --gui-summary` (JSON inventory for the confirm screen) → `hermes uninstall --yes` (keep data) or `--full --yes` (purge ~/.hermes — irreversible). Fallback if CLI broken: `rm -rf ~/.hermes/hermes-agent && rm -f ~/.local/bin/hermes` (+ `rm -rf ~/.hermes` ONLY on full). **Postcondition by mode:** keep-data success = `binary absent AND ~/.hermes/hermes-agent absent` (do NOT assert `~/.hermes` is gone, or idempotency fails — config is intentionally retained); full-purge success = the above AND `~/.hermes` absent.
+- **UNINSTALL** (idempotent, **keep-data only — Locked decision #5**): `hermes uninstall --gui-summary` (JSON inventory for the confirm screen) → `hermes uninstall --yes` (keep data). **Do NOT implement or expose `--full --yes`** (irreversible `~/.hermes` purge) in v1. Fallback if CLI broken: `rm -rf ~/.hermes/hermes-agent && rm -f ~/.local/bin/hermes` (never `rm -rf ~/.hermes`). **Postcondition:** `binary absent AND ~/.hermes/hermes-agent absent` — do NOT assert `~/.hermes` is gone (config is intentionally retained, and asserting otherwise breaks idempotency).
 
 All ops emit structured progress through the daemon's existing streaming/batch-flush pattern.
 
@@ -204,7 +204,7 @@ The loop today only does the data-plane (claim/run). Add a control-plane:
 
 - **Schema (`schema.ts`):** add `bundle_commands(id, teamId, daemonId, bundleId text, op install|upgrade|uninstall, args jsonb, status pending|running|succeeded|failed, progress jsonb, error, createdAt, updatedAt)`. Persist last-known bundle status on `daemons.meta.bundles[]` (already flexible jsonb) so `/system` can render it without a live daemon round-trip.
 - **Daemon-protocol routes (`daemon-routes.ts`, OUTSIDE org middleware, daemon-token auth like existing `/daemon/*`):** `POST /daemon/bundles/poll` (claim next pending command for this daemon), `POST /daemon/bundles/status` (update command status + write `daemons.meta.bundles`).
-- **User-facing routes (`server.ts` `api` group):** `GET /bundles` (status per daemon, from `/system` data), `POST /bundles/:bundleId/install|upgrade|uninstall` (insert `bundle_commands` row → `hub.publish`), `GET /bundles/commands/:id` (status for progress polling). Uninstall body carries `mode: keep|full`. **RBAC per the cross-cutting decision below** (currently `settings:update` is owner-only).
+- **User-facing routes (`server.ts` `api` group):** `GET /bundles` (status per daemon, from `/system` data), `POST /bundles/:bundleId/install|upgrade|uninstall` (insert `bundle_commands` row → `hub.publish`), `GET /bundles/commands/:id` (status for progress polling). Uninstall is **keep-data only** (no `mode` param needed — Locked decision #5). **RBAC: gate all three mutating routes on `settings:update`** (owner-only today — Locked decision #7; do not widen the matrix).
 
 ### B.4 Daemon PATH coupling (critical)
 
@@ -214,23 +214,20 @@ The daemon execs **bare** `"hermes"` (`probe/probe.go`, `runtime/hermes.go`). A 
 
 In `apps/web/features/settings/tabs/runtimes-tab.tsx` (or a new `bundles-section.tsx` mounted there), add a Bundles card per daemon:
 - Status badge (NotInstalled / Installed healthy|degraded / Upgrade available / Installing / Uninstalling) from `GET /bundles`.
-- Buttons **Install**, **Upgrade** (only when `updateAvailable`; show carried-commit warning first), **Uninstall** (confirm dialog that first calls the `--gui-summary` inventory and clearly distinguishes **keep data** vs **full purge**).
+- Buttons **Install**, **Upgrade** (only when `updateAvailable`; show carried-commit warning first), **Uninstall** (confirm dialog that first calls the `--gui-summary` inventory; **keep-data only — no full-purge option**, per Locked decision #5).
 - **Live progress: poll `GET /bundles/commands/:id`** (single chosen mechanism). Do NOT reuse the *run* WS channel for bundle progress — bundles are not runs; conflating them is a category error.
 - RBAC-gate the mutating buttons via `useRbac().can(...)` matching the engine guard.
 - This section is the single place that makes a runtime "appear" in the A.4 agent-builder picker (install → detect → selectable).
 
 ### B.6 Go-daemon lifecycle
 
-Keep the existing **manual** lifecycle (`make daemon/{start,stop,status,restart}`, `bin/agentik-daemon`, pid/log in `/tmp`). Because pid/log live in `/tmp` and the daemon is not reboot-persistent, long-running install/upgrade ops MUST be idempotent and re-drivable from the probe postcondition (no resumable in-memory state). Graduating to a launchd user-agent is **out of scope unless requested** (Open Question #4).
+Keep the existing **manual** lifecycle (`make daemon/{start,stop,status,restart}`, `bin/agentik-daemon`, pid/log in `/tmp`). Because pid/log live in `/tmp` and the daemon is not reboot-persistent, long-running install/upgrade ops MUST be idempotent and re-drivable from the probe postcondition (no resumable in-memory state). A reboot-persistent launchd user-agent is **out of scope** (Locked decision #4).
 
 ---
 
 ## Cross-cutting
 
-- **RBAC — explicit decision required (do not assume admin works).** Today only `owner` has `settings:update`; `admin` has only `settings:read`. For bundle install/upgrade/uninstall you must pick ONE and state it:
-  - (a) **Widen the matrix:** add `settings:update` (and any of `settings:create/delete` you need) to `admin` in `rbac.ts` as a deliberate, called-out change; OR
-  - (b) **Keep owner-only:** gate bundle ops on `settings:update` and document "owner-only; admin currently lacks `settings:update`" — raise as Open Question #7.
-  The **runtime picker** (A.4) is gated on `agent:create`/`agent:update` (admin has these), NOT `settings:update`. **Task retry** (A.1.3) is `run:run` (admin/engineer/operator have it). **Task cancel** currently has NO guard — decide whether to retrofit `run:control`. Prefer reusing existing permissions; add new ones only if none fit. Engine enforces via `requirePermission`; web gates UX via `useRbac().can`.
+- **RBAC — locked.** Bundle install/upgrade/uninstall are gated on `settings:update` = **owner-only** (Locked decision #7; do NOT widen `rbac.ts`). The **runtime picker** (A.4) is gated on `agent:create`/`agent:update` (admin+ have these), NOT `settings:update`. **Task retry** (A.1.3) is `run:run` (admin/engineer/operator have it). **Task cancel** gets a NEW `run:control` guard retrofitted (Locked decision #8). Engine enforces via `requirePermission`; web gates UX via `useRbac().can`.
 - **Secrets.** Reuse `crypto.ts` (AES-256-GCM) and `provider_keys`/`resolveProviderEnv` for any new keys. Bundle ops need NO provider key (hermes authenticates from its own `~/.hermes` or per-run injected config).
 - **Error states.** Every new surface has explicit empty/loading/error states (mirror `runtimes-tab.tsx` patterns). Bundle failures surface `error` + last progress lines; task failures surface `error_reason` + `attempt`.
 - **Observability / cost.** Hermes `-Q` emits **no token usage** → keep cost a genuine zero and label "no usage reported" (never fabricate). Runs that DO report usage keep using `costFromTaskResult` (`agents-repo.ts` approx `:28`). Emit structured logs for the timeout scanner and each bundle op.
@@ -270,30 +267,26 @@ Keep the existing **manual** lifecycle (`make daemon/{start,stop,status,restart}
 - Success (Go test for parsing `hermes version`/`.update_check`): status reflects the real machine (installed, v0.17.0, method=git, +1 carried commit). Playwright: Bundles card shows status.
 
 **Phase 6 — Bundle manager: INSTALL / UPGRADE / UNINSTALL.**
-- Implement the three ops with single-flight lock, streamed progress, idempotent pre/postconditions, fallbacks. Gate BOTH remote `curl|bash` calls behind the network-policy decision (Open Question #3) and the RBAC decision.
-- **SAFETY RAIL (mandatory):** do NOT execute real install/upgrade/uninstall against the user's real `~/.hermes` during development — it holds `auth.json`/`sessions/`/`state.db`. During dev test **PROBE only** against the real home; exercise INSTALL/UPGRADE/UNINSTALL against a **throwaway `HERMES_HOME`** (temp dir) or mocks. The `--full` purge path is **unit-tested with a mocked/throwaway HERMES_HOME, never against the user's home**. No test or Playwright run may trigger `--full` on the real home.
-- Tests: idempotent no-op when already installed; keep-data uninstall then re-install (postcondition: binary+checkout gone, config retained); full-purge confirm flow uses `--gui-summary` inventory (throwaway home). Verify daemon re-probes after install (PATH includes `~/.local/bin`).
-- Success: from the UI, against a throwaway home, uninstall (keep data) then re-install end-to-end; runtime picker (Phase 4) reflects the change. Playwright through the confirm dialog distinguishing keep vs full.
+- Implement the three ops with single-flight lock, streamed progress, idempotent pre/postconditions, fallbacks. Gate BOTH remote `curl|bash` calls behind `AGENTIK_ALLOW_BUNDLE_NETWORK_INSTALL` (Locked #3) and the routes behind `settings:update` (Locked #7).
+- **SAFETY RAIL (mandatory):** do NOT execute real install/upgrade/uninstall against the user's real `~/.hermes` during development — it holds `auth.json`/`sessions/`/`state.db`. During dev test **PROBE only** against the real home; exercise INSTALL/UPGRADE/UNINSTALL against a **throwaway `HERMES_HOME`** (temp dir) or mocks.
+- Tests: install gated off when `AGENTIK_ALLOW_BUNDLE_NETWORK_INSTALL=false`; idempotent no-op when already installed; keep-data uninstall then re-install (postcondition: binary+checkout gone, config retained). Verify daemon re-probes after install (PATH includes `~/.local/bin`).
+- Success: from the UI, against a throwaway home, uninstall (keep data) then re-install end-to-end; runtime picker (Phase 4) reflects the change. Playwright through the keep-data confirm dialog.
 
-**Phase 7 — (Conditional) Issues board + Autopilots.** Only if Open Questions #1/#2 confirm scope. Board assign→enqueue with the one-pending-task partial index (verify final multica shape, 022→037); issue rollback on unrecovered failure; manual "Run now" autopilot first.
+**Phase 7 — DEFERRED.** Issues board + Autopilots are out of v1 scope (Locked decisions #1/#2). Not implemented.
 
 ---
 
-## Out of scope / non-goals
+## Out of scope / non-goals (v1)
+- **Issues/Kanban board and Autopilots** (Locked #1/#2).
+- **Session resumption** (`session_id`/`--resume`) — all retries are fresh runs (Locked #6).
+- **Full-purge uninstall** (`--full`) — keep-data only (Locked #5).
+- **Reboot-persistent daemon** (launchd) — manual lifecycle only (Locked #4).
+- **Widening the RBAC matrix** — bundle ops stay owner-only (Locked #7).
 - Cloud runtimes (multica's "coming soon"); only the local daemon.
 - Squads, reusable structured skills authoring, full-text search, inbox/notifications beyond what already exists.
-- Session resumption (`session_id`/`--resume`) unless Open Question #6 confirms.
-- Reboot-persistent daemon (launchd) unless explicitly requested.
 - Reimplementing hermes' git/uv install steps by hand — always delegate to the official installer / `hermes update` / `hermes uninstall`.
-- Cron/webhook autopilot triggers unless confirmed (manual "Run now" only by default).
-- Generic multi-bundle catalog UI — only hermes is wired.
+- Generic multi-bundle catalog UI — only hermes is wired (the contract generalizes to sibling CLIs later).
 - Executing real bundle mutations against the user's `~/.hermes` during development.
 
-## Open Questions (confirm before executing the gated parts)
-1. Full issues/Kanban board, or task-centric surfaces only (chat/transcript/retry/picker)?
-2. Autopilots: full cron+webhook+manual now, or manual "Run now" + data model only?
-3. Is remote `curl | bash` (hermes installer AND uv bootstrap on nousresearch.com / astral.sh) acceptable from the daemon, or must installs be offline/pinned (gating BOTH behind a flag)?
-4. Graduate the daemon to a reboot-persistent launchd service now, or keep manual `make daemon/start`?
-5. Expose the irreversible `hermes uninstall --full` purge in the UI, or keep-data uninstall only?
-6. Implement session resumption (`session_id`/`--resume`) now, or defer (Hermes run path is single-shot; `work_dir` is engine-assigned, not the real isolated dir)?
-7. RBAC for bundle ops: widen `admin` to include `settings:update` in `rbac.ts`, or keep bundle management owner-only?
+## Decision log (all settled — see "Locked decisions" at the top)
+Every prior open question is resolved in the **Locked decisions (v1 scope)** section near the top of this file. There are no open questions remaining; do not re-ask. If scope must change, amend the Locked decisions section explicitly and propagate.
