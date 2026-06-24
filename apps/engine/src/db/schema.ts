@@ -360,3 +360,22 @@ export const runReviews = pgTable("run_reviews", {
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
+
+/**
+ * Org-scoped runtime provider API keys, managed from the web Settings UI and
+ * injected (decrypted) into the daemon at claim time so runtimes (hermes, claude…)
+ * authenticate without any out-of-band config. `secret` is an AES-256-GCM blob
+ * (see crypto.ts); the plaintext key never leaves the engine except into a claim.
+ */
+export const providerKeys = pgTable(
+  "provider_keys",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    provider: text("provider").notNull(), // openrouter | openai | anthropic | google
+    secret: text("secret").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("provider_keys_team_provider_unique").on(t.teamId, t.provider)],
+);

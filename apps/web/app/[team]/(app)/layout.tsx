@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessionHydrator } from "@/features/session/session-hydrator";
+import { SessionGuard } from "@/features/session/session-guard";
 
 export default async function TeamLayout({
   children,
@@ -13,7 +14,9 @@ export default async function TeamLayout({
   return (
     <>
       <SessionHydrator team={team} />
-      <AppShell team={team}>{children}</AppShell>
+      <SessionGuard team={team}>
+        <AppShell team={team}>{children}</AppShell>
+      </SessionGuard>
     </>
   );
 }

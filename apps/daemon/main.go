@@ -28,6 +28,7 @@ func main() {
 	available := runtime.Registry{
 		"echo":   runtime.Echo{},
 		"claude": runtime.Claude{WorkRoot: cfg.WorkRoot, Model: cfg.ClaudeModel, TimeoutMs: cfg.TaskTimeoutMs},
+		"hermes": runtime.Hermes{WorkRoot: cfg.WorkRoot, Model: os.Getenv("HERMES_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
 	}
 	selected := runtime.Registry{}
 	for _, kind := range cfg.RuntimeKinds {

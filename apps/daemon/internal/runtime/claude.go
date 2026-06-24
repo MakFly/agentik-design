@@ -62,6 +62,11 @@ type claudeEvent struct {
 	} `json:"message"`
 	Result  string `json:"result"`
 	IsError bool   `json:"is_error"`
+	Usage   struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
 func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error) {
@@ -92,7 +97,7 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 	}
 	cmd := exec.CommandContext(runCtx, "claude", args...)
 	cmd.Dir = dir
-	cmd.Env = allowlistEnv()
+	cmd.Env = withTaskEnv(allowlistEnv(), task.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // own process group
 	// Kill the whole group (CLI + any children it spawned), not just the leader.
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
@@ -143,7 +148,14 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 				}
 			}
 		case "result":
-			result = map[string]any{"result": ev.Result, "is_error": ev.IsError}
+			// Surface real token usage + cost so the engine reports true cost
+			// (not a hardcoded zero). Echo and other runtimes omit these → cost 0.
+			result = map[string]any{
+				"result":   ev.Result,
+				"is_error": ev.IsError,
+				"usage":    map[string]any{"input_tokens": ev.Usage.InputTokens, "output_tokens": ev.Usage.OutputTokens},
+				"cost_usd": ev.TotalCostUSD,
+			}
 			if ev.IsError && ev.Result != "" {
 				emit(protocol.TaskMessage{Type: "error", Content: ev.Result})
 			}

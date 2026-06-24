@@ -25,19 +25,26 @@ import { buildGoogleAuthUrl, exchangeGoogleCode } from "./oauth";
 import { env } from "./env";
 import { enqueueRun } from "./queue";
 import {
+  agentTaskMessageToEvents,
   cancelAgentTask,
   createAgent,
   createTestTask,
+  getAgentTaskName,
+  getAgentTaskStatus,
   getAgentTaskSnapshot,
   getRunUnified,
   getSystemInfo,
   listAgentRows,
   listRunsUnion,
+  listTaskMessagesAfter,
   publishAgent,
   runAgent,
   workflowDetailToWeb,
+  type LiveRunEvent,
 } from "./agents-repo";
+import type { SSEStreamingApi } from "hono/streaming";
 import { daemon } from "./daemon-routes";
+import { listProviderKeys, setProviderKey, deleteProviderKey, isSupportedProvider } from "./providers-repo";
 import { auth } from "./auth-routes";
 import { withAuth, requirePermission, type AuthVars } from "./auth";
 import { createAgentVersionInput } from "@agentik/workflow-schema";
@@ -328,6 +335,26 @@ api.get("/skills/:id/versions", requirePermission("skill:read"), async (c) => {
   return c.json({ items, total: items.length });
 });
 
+/* ── Runtime provider keys (managed from the web UI, injected into the daemon) ── */
+api.get("/settings/provider-keys", requirePermission("settings:read"), async (c) => {
+  return c.json({ items: await listProviderKeys(c.get("teamId")) });
+});
+
+api.put("/settings/provider-keys/:provider", requirePermission("settings:update"), async (c) => {
+  const provider = c.req.param("provider");
+  if (!isSupportedProvider(provider)) return c.json({ error: "unsupported_provider" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
+  const key = typeof body.key === "string" ? body.key.trim() : "";
+  if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
+  await setProviderKey(c.get("teamId"), provider, key);
+  return c.json({ ok: true });
+});
+
+api.delete("/settings/provider-keys/:provider", requirePermission("settings:delete"), async (c) => {
+  await deleteProviderKey(c.get("teamId"), c.req.param("provider"));
+  return c.json({ ok: true });
+});
+
 /* ───────────────────────────── Runs (union) ──────────────────────────── */
 
 api.get("/runs", async (c) => {
@@ -370,9 +397,57 @@ api.post("/runs/:id/approve", async (c) => {
  * handler, so it bypasses straight to the engine.
  */
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+
+/**
+ * Agent-task live stream: emits typed RunEvents (apps/web/types/events.ts) built
+ * from task_messages, so the web event-reducer drives the timeline exactly like
+ * the REST snapshot. Resumable via `?lastEventId=<seq>`. Each SSE `id` is the
+ * source message seq, so reconnect replays only messages after the last cursor.
+ */
+async function streamAgentTaskLive(stream: SSEStreamingApi, id: string, teamId: string, resumeAfter: number) {
+  let lastSeq = resumeAfter;
+  let lastStatus: WebRunStatusOrNull = null;
+  let envSeq = 0;
+  const name = await getAgentTaskName(teamId, id);
+
+  const emit = async (ev: LiveRunEvent, idSeq: number) => {
+    envSeq += 1;
+    const envelope = { id: String(idSeq), seq: envSeq, ts: new Date().toISOString(), runId: id, event: ev.type, data: ev };
+    await stream.writeSSE({ id: String(idSeq), event: ev.type, data: JSON.stringify(envelope) });
+  };
+
+  for (let i = 0; i < 1500; i++) {
+    const status = await getAgentTaskStatus(teamId, id);
+    if (!status) {
+      await emit({ type: "stream.error", kind: "unknown", message: "not_found", fatal: true }, lastSeq);
+      return;
+    }
+    if (status !== lastStatus) {
+      lastStatus = status;
+      await emit({ type: "run.status.changed", status }, lastSeq);
+    }
+    const msgs = await listTaskMessagesAfter(id, lastSeq);
+    for (const m of msgs) {
+      for (const ev of agentTaskMessageToEvents(m, name)) await emit(ev, m.seq);
+      lastSeq = m.seq;
+    }
+    if (TERMINAL.has(status)) return;
+    await stream.sleep(300);
+  }
+}
+
+type WebRunStatusOrNull = Awaited<ReturnType<typeof getAgentTaskStatus>>;
+
 api.get("/runs/:id/live", (c) => {
   const id = c.req.param("id");
   const teamId = c.get("teamId");
+  if (id.startsWith("atask_")) {
+    // -1 = "nothing seen yet" so the first message (seq 0) is included; a real
+    // lastEventId resumes strictly after the last seq the client acknowledged.
+    const lastId = c.req.query("lastEventId");
+    const resumeAfter = lastId && Number.isFinite(Number(lastId)) ? Number(lastId) : -1;
+    return streamSSE(c, (stream) => streamAgentTaskLive(stream, id, teamId, resumeAfter));
+  }
   return streamSSE(c, async (stream) => {
     for (let i = 0; i < 1500; i++) {
       const run = await getRun(id, teamId);

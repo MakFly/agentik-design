@@ -18,18 +18,27 @@ type Me = {
  */
 export function SessionHydrator({ team }: { team: string }) {
   const setSession = useSessionStore((s) => s.setSession);
+  const clearSession = useSessionStore((s) => s.clearSession);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch("/api/v1/auth/me");
-        if (!res.ok || cancelled) return;
+        if (cancelled) return;
+        if (!res.ok) {
+          clearSession();
+          return;
+        }
         const me = (await res.json()) as Me;
         const active =
           me.orgs.find((o) => o.slug === team) ??
           me.orgs.find((o) => o.teamId === me.activeOrgId) ??
           me.orgs[0];
-        if (!active || cancelled) return;
+        if (cancelled) return;
+        if (!active) {
+          clearSession();
+          return;
+        }
         const role = active.role as Role;
         const perms = ROLE_PERMISSIONS[role];
         const session: Session = {
@@ -41,12 +50,12 @@ export function SessionHydrator({ team }: { team: string }) {
         };
         setSession(session);
       } catch {
-        /* keep the seeded mock */
+        if (!cancelled) clearSession();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [team, setSession]);
+  }, [team, setSession, clearSession]);
   return null;
 }

@@ -3,7 +3,8 @@ import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { resolveTeam } from "./repo";
 import { hub } from "./hub";
-import { buildInjectionPreamble, resolveInjectionContext, type InjectionContext } from "./learning-repo";
+import { buildInjectionPreamble, ensureRunReview, resolveInjectionContext, type InjectionContext } from "./learning-repo";
+import { resolveProviderEnv } from "./providers-repo";
 import type { TaskMessageType } from "./db/schema";
 
 const { daemons, runtimes, agentTasks, taskMessages } = schema;
@@ -74,6 +75,8 @@ export interface ClaimedTask {
   workDir: string;
   /** Bounded learned context the engine injected for this run (also folded into input.prompt). */
   context?: InjectionContext;
+  /** Org provider keys as { ENV_VAR: value } — the daemon merges these into the runtime env. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -117,6 +120,9 @@ export async function claimTask(runtimeId: string): Promise<ClaimedTask | null> 
       task.input = { ...input, prompt: preamble + prompt };
     }
     task.context = ctx;
+    // Inject the org's runtime provider keys so the runtime (hermes/claude…)
+    // authenticates from credentials managed entirely in the web UI.
+    task.env = await resolveProviderEnv(task.teamId);
     hub.publish(task.teamId, { kind: "run", action: "dispatched", runId: task.id });
   }
   return task;
@@ -179,6 +185,9 @@ export async function completeTask(taskId: string, result: unknown): Promise<boo
     .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
   if (!updated[0]) return false;
   hub.publish(updated[0].teamId, { kind: "run", action: "succeeded", runId: taskId });
+  // Moat: kick off the propose-only review as soon as the run finishes (best-effort;
+  // never let a review hiccup fail task completion). Idempotent per run.
+  await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
   return true;
 }
 
@@ -195,5 +204,7 @@ export async function failTask(taskId: string, error: string): Promise<boolean> 
     .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
   if (!updated[0]) return false;
   hub.publish(updated[0].teamId, { kind: "run", action: "failed", runId: taskId });
+  // A failed run is exactly when the reviewer proposes a lesson — trigger it too.
+  await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
   return true;
 }

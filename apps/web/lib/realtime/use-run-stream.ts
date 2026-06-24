@@ -63,7 +63,7 @@ export function useRunStream(runId: string, { enabled }: UseRunStreamOpts) {
 
     function connect() {
       const last = useRunStreamStore.getState().byRun[runId]?.lastEventId;
-      const url = `/api/v1/runs/${runId}/stream${last ? `?lastEventId=${encodeURIComponent(last)}` : ""}`;
+      const url = `/api/v1/runs/${runId}/live${last ? `?lastEventId=${encodeURIComponent(last)}` : ""}`;
       setConnection(runId, attempts.current === 0 ? "connecting" : "reconnecting");
 
       const es = new EventSource(url);

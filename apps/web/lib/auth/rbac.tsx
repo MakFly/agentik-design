@@ -12,11 +12,12 @@ export interface Rbac {
 export function useRbac(): Rbac {
   const session = useSessionStore((s) => s.session);
   const can = (permission: Permission): boolean => {
+    if (!session) return false;
     if (session.permissions === "*") return true;
     if (session.permissions.includes(permission)) return true;
     return roleCan(session.role, permission);
   };
-  return { can, role: session.role };
+  return { can, role: session?.role ?? "viewer" };
 }
 
 export interface RbacGateProps {

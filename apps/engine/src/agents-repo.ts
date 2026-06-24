@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { hub } from "./hub";
@@ -20,7 +20,26 @@ const ZERO_COST = {
   money: { amountCents: 0, currency: "USD" as const },
 };
 
-type WebRunStatus =
+/**
+ * Real run cost from the runtime's completion result (claude reports usage +
+ * total_cost_usd in its stream-json `result`). Runtimes that report nothing
+ * (echo) yield a genuine zero — not a fabricated constant.
+ */
+function costFromTaskResult(result: unknown): typeof ZERO_COST {
+  if (!result || typeof result !== "object") return ZERO_COST;
+  const r = result as Record<string, unknown>;
+  const usage = (r.usage && typeof r.usage === "object" ? r.usage : {}) as Record<string, unknown>;
+  const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+  const output = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+  const costUsd = typeof r.cost_usd === "number" ? r.cost_usd : 0;
+  if (input === 0 && output === 0 && costUsd === 0) return ZERO_COST;
+  return {
+    tokens: { input, output, total: input + output },
+    money: { amountCents: Math.round(costUsd * 100), currency: "USD" as const },
+  };
+}
+
+export type WebRunStatus =
   | "queued"
   | "running"
   | "paused"
@@ -53,7 +72,7 @@ export function agentTaskToRun(task: TaskRowDb, agentName?: string) {
     startedAt: task.startedAt ?? task.createdAt,
     endedAt: task.endedAt,
     durationMs: task.durationMs,
-    cost: ZERO_COST,
+    cost: costFromTaskResult(task.result),
     traceId: task.id,
     error: task.error ? { kind: "unknown" as const, message: task.error, traceId: task.id } : undefined,
     stepCount: task.stepCount,
@@ -157,6 +176,94 @@ function workflowStepToWebStep(s: RunStepRowDb) {
 export function workflowDetailToWeb(detail: RunRowDb & { steps: RunStepRowDb[] }, wfName?: string) {
   const { steps, ...run } = detail;
   return { run: workflowRunToRun(run, wfName), steps: steps.map(workflowStepToWebStep) };
+}
+
+/* ── Agent-task live SSE source (real EventEnvelope stream) ──────────────
+ * Replaces the web's mock `/runs/:id/stream` route. Each task_message becomes
+ * one step (id = msg.id, index = msg.seq), mirroring taskMessageToStep so the
+ * live timeline and the REST snapshot stay structurally identical. The events
+ * match apps/web/types/events.ts (RunEvent) and drive its event-reducer 1:1. */
+
+type LiveStepActor =
+  | { kind: "agent"; agentId: string; name: string }
+  | { kind: "tool"; toolId: string; name: string };
+
+/** Subset of apps/web RunEvent that the agent-task stream emits. */
+export type LiveRunEvent =
+  | { type: "run.status.changed"; status: WebRunStatus }
+  | { type: "step.started"; step: { id: string; index: number; actor: LiveStepActor; summary: string } }
+  | { type: "step.completed"; stepId: string; status: "succeeded" | "skipped"; durationMs: number; cost: typeof ZERO_COST; summary: string }
+  | { type: "step.failed"; stepId: string; error: { kind: "unknown"; code: string; message: string; retryable: boolean } }
+  | { type: "reasoning.delta"; stepId: string; textDelta: string }
+  | { type: "tool_call.started"; stepId: string; call: { id: string; toolId: string; action: string; request: unknown } }
+  | { type: "tool_call.completed"; stepId: string; callId: string; status: "succeeded" | "failed"; response?: unknown; latencyMs: number }
+  | { type: "stream.error"; kind: "unknown"; message: string; fatal: boolean };
+
+/** Map one persisted task_message to its live event sequence (mirrors taskMessageToStep). */
+export function agentTaskMessageToEvents(msg: MsgRowDb, agentName?: string): LiveRunEvent[] {
+  const stepId = msg.id;
+  const index = msg.seq;
+  const agentActor: LiveStepActor = { kind: "agent", agentId: "agt", name: agentName ?? "Agent" };
+
+  if (msg.type === "tool_use") {
+    const tool = msg.tool ?? "tool";
+    return [
+      { type: "step.started", step: { id: stepId, index, actor: { kind: "tool", toolId: tool, name: tool }, summary: `Calling ${tool}` } },
+      { type: "tool_call.started", stepId, call: { id: stepId, toolId: tool, action: tool, request: msg.input ?? {} } },
+    ];
+  }
+  if (msg.type === "tool_result") {
+    const tool = msg.tool ?? "tool";
+    return [
+      { type: "step.started", step: { id: stepId, index, actor: { kind: "tool", toolId: tool, name: tool }, summary: `${tool} → result` } },
+      { type: "tool_call.started", stepId, call: { id: stepId, toolId: tool, action: tool, request: {} } },
+      { type: "tool_call.completed", stepId, callId: stepId, status: "succeeded", response: msg.output ?? undefined, latencyMs: 0 },
+      { type: "step.completed", stepId, status: "succeeded", durationMs: 0, cost: ZERO_COST, summary: `${tool} → result` },
+    ];
+  }
+  if (msg.type === "error") {
+    return [
+      { type: "step.started", step: { id: stepId, index, actor: agentActor, summary: msg.content ?? "error" } },
+      { type: "step.failed", stepId, error: { kind: "unknown", code: "error", message: msg.content ?? "error", retryable: false } },
+    ];
+  }
+  // text | thinking
+  const summary = msg.content ?? (msg.type === "thinking" ? "Thinking" : msg.type);
+  const events: LiveRunEvent[] = [{ type: "step.started", step: { id: stepId, index, actor: agentActor, summary } }];
+  if (msg.type === "thinking" && msg.content) events.push({ type: "reasoning.delta", stepId, textDelta: msg.content });
+  events.push({ type: "step.completed", stepId, status: "succeeded", durationMs: 0, cost: ZERO_COST, summary });
+  return events;
+}
+
+/** Live status for an agent task, tenancy-scoped. null = not found. */
+export async function getAgentTaskStatus(teamId: string, id: string): Promise<WebRunStatus | null> {
+  const [t] = await db
+    .select({ status: agentTasks.status })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.id, id), eq(agentTasks.teamId, teamId)))
+    .limit(1);
+  return t ? TASK_TO_RUN_STATUS[t.status] : null;
+}
+
+/** Display name of the agent behind a task, for live step actors. */
+export async function getAgentTaskName(teamId: string, id: string): Promise<string | undefined> {
+  const [t] = await db
+    .select({ agentId: agentTasks.agentId })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.id, id), eq(agentTasks.teamId, teamId)))
+    .limit(1);
+  if (!t) return undefined;
+  const [a] = await db.select({ name: agents.name }).from(agents).where(and(eq(agents.id, t.agentId), eq(agents.teamId, teamId))).limit(1);
+  return a?.name ?? undefined;
+}
+
+/** New task_messages with seq > afterSeq, ordered — the live tail since the last cursor. */
+export async function listTaskMessagesAfter(taskId: string, afterSeq: number): Promise<MsgRowDb[]> {
+  return db
+    .select()
+    .from(taskMessages)
+    .where(and(eq(taskMessages.taskId, taskId), gt(taskMessages.seq, afterSeq)))
+    .orderBy(taskMessages.seq);
 }
 
 /* ── Dev seed (idempotent) ───────────────────────────────────────────── */

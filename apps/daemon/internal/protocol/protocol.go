@@ -39,12 +39,13 @@ type HeartbeatRequest struct {
 
 // ClaimedTask is returned by the claim endpoint (204 → no task available).
 type ClaimedTask struct {
-	ID      string          `json:"id"`
-	TeamID  string          `json:"teamId"`
-	AgentID string          `json:"agentId"`
-	Kind    string          `json:"kind"`
-	Input   json.RawMessage `json:"input"`
-	WorkDir string          `json:"workDir"`
+	ID      string            `json:"id"`
+	TeamID  string            `json:"teamId"`
+	AgentID string            `json:"agentId"`
+	Kind    string            `json:"kind"`
+	Input   json.RawMessage   `json:"input"`
+	WorkDir string            `json:"workDir"`
+	Env     map[string]string `json:"env,omitempty"` // org provider keys, merged into the runtime env
 }
 
 // TaskInput is the shape stored in agent_tasks.input by /agents/test.

@@ -50,6 +50,13 @@
       "when": 1782161059312,
       "tag": "0006_funny_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782245052683,
+      "tag": "0007_messy_the_fury",
+      "breakpoints": true
     }
   ]
 }

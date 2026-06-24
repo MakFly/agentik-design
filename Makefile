@@ -32,11 +32,24 @@ help: ## Show available commands
 
 # ── Install ──────────────────────────────────────────────────────────────────
 
-.PHONY: install
-install: ## Install all workspace dependencies (bun)
+.PHONY: install env
+install: ## One-shot dev setup: deps + env files + database + migrations
 	@printf "$(C)→ Installing workspace dependencies...$(N)\n"
 	@bun install
-	@printf "$(G)✓ All dependencies installed$(N)\n"
+	@$(MAKE) env
+	@$(MAKE) db/create
+	@$(MAKE) db/migrate
+	@printf "\n$(B)$(G)✓ Ready!$(N) Run $(C)make dev$(N) to start web + engine + worker.\n\n"
+
+env: ## Seed local env files from examples (never overwrites an existing one)
+	@if [ ! -f $(ENGINE)/.env ]; then \
+		cp $(ENGINE)/.env.example $(ENGINE)/.env; \
+		printf "$(G)✓ created $(ENGINE)/.env$(N) (from .env.example)\n"; \
+	else printf "$(Y)• $(ENGINE)/.env exists, skipped$(N)\n"; fi
+	@if [ ! -f $(WEB)/.env.local ]; then \
+		cp $(WEB)/.env.example $(WEB)/.env.local; \
+		printf "$(G)✓ created $(WEB)/.env.local$(N) (from .env.example)\n"; \
+	else printf "$(Y)• $(WEB)/.env.local exists, skipped$(N)\n"; fi
 
 # ── Development ──────────────────────────────────────────────────────────────
 
@@ -188,6 +201,4 @@ clean: ## Remove build artifacts and dependencies
 	@rm -rf $(WEB)/node_modules $(WEB)/.next node_modules
 	@printf "$(G)✓ Clean$(N)\n"
 
-setup: install db/create db/migrate ## First-time project setup
-	@printf "\n$(B)$(G)✓ Project ready!$(N)\n"
-	@printf "  Run $(C)make dev$(N) to start web + engine + worker.\n\n"
+setup: install ## Alias for `make install` (first-time project setup)

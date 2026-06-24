@@ -1,34 +1,24 @@
 import { create } from "zustand";
-import type { Session, TeamId, UserId } from "@/types/domain";
+import type { Session } from "@/types/domain";
 
 /**
- * Holds the resolved session for the active team. Hydrated by the [team] layout
- * from `/session/me` (MSW for now). A sensible mock keeps the UI rendering before
- * the query resolves; switch the role here to exercise RBAC during development.
+ * Holds the resolved session for the active team, hydrated by the [team] layout
+ * from the real engine (`/api/v1/auth/me`). There is no mock fallback: until the
+ * engine answers, `session` is null and `hydrated` is false. The SessionGuard
+ * renders a loader while unhydrated and redirects to /login when there is no
+ * session. Engine RBAC remains the source of truth regardless.
  */
-const MOCK_SESSION: Session = {
-  user: {
-    id: "usr_alice" as UserId,
-    name: "Alice Martin",
-    email: "alice@acme.dev",
-  },
-  team: { id: "team_acme" as TeamId, slug: "acme", name: "Acme" },
-  role: "owner",
-  permissions: "*",
-  teams: [
-    { id: "team_acme" as TeamId, slug: "acme", name: "Acme" },
-    { id: "team_labs" as TeamId, slug: "labs", name: "Acme Labs" },
-  ],
-};
-
 interface SessionState {
-  session: Session;
+  session: Session | null;
   hydrated: boolean;
   setSession: (s: Session) => void;
+  /** mark hydration complete with no authenticated session (→ guard redirects to /login) */
+  clearSession: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
-  session: MOCK_SESSION,
+  session: null,
   hydrated: false,
   setSession: (session) => set({ session, hydrated: true }),
+  clearSession: () => set({ session: null, hydrated: true }),
 }));

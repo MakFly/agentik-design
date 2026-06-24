@@ -10,11 +10,12 @@ import { z } from "zod";
 export const runtimeKindSchema = z.enum([
   "echo",
   "claude",
+  "hermes",
   "codex",
   "openai",
   "anthropic",
   "custom",
-]); // "hermes" dropped from MVP; enum stays extensible
+]); // enum stays extensible — "hermes" wraps the Nous Research CLI as a daemon runtime
 export type RuntimeKind = z.infer<typeof runtimeKindSchema>;
 
 /** Stream event emitted by a runtime — maps 1:1 to task_messages.type (+ done). */

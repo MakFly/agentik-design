@@ -19,7 +19,7 @@ type Tool struct {
 }
 
 // Known agent CLIs the daemon can potentially drive. Extend as runtimes are added.
-var knownCLIs = []string{"claude", "codex", "aider", "goose", "gemini"}
+var knownCLIs = []string{"claude", "hermes", "codex", "aider", "goose", "gemini"}
 
 // Tools probes each known CLI via LookPath + `--version`.
 func Tools() []Tool {

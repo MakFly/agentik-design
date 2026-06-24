@@ -42,6 +42,10 @@ export function Topbar({ team, onMenu }: { team: string; onMenu?: () => void }) 
   const session = useSessionStore((s) => s.session);
   const indicators = useIndicators();
 
+  // The SessionGuard guarantees a session before the shell renders; this keeps
+  // the type honest and avoids any flash if the store clears mid-render.
+  if (!session) return null;
+
   function switchTeam(slug: string) {
     if (slug !== team) router.push(`/${slug}/dashboard`);
   }

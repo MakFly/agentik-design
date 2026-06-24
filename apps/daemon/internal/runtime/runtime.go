@@ -19,6 +19,15 @@ type Runtime interface {
 	Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error)
 }
 
+// withTaskEnv appends the engine-supplied per-task env (org provider keys) onto a
+// base allowlist env. Later entries win, so a managed key overrides any inherited one.
+func withTaskEnv(base []string, extra map[string]string) []string {
+	for k, v := range extra {
+		base = append(base, k+"="+v)
+	}
+	return base
+}
+
 // Registry maps a runtime kind to its adapter.
 type Registry map[string]Runtime
 

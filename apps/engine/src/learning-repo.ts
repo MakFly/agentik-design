@@ -267,6 +267,17 @@ export async function generateRunReview(teamId: string, taskId: string) {
   return getRunReview(teamId, id);
 }
 
+/**
+ * Auto-generate the pending review for a finished run exactly once. Called on task
+ * completion/failure so the moat loop starts without a manual API call; idempotent
+ * (skips if a review already exists for the run). Returns the existing or new review.
+ */
+export async function ensureRunReview(teamId: string, taskId: string) {
+  const existing = await getRunReviewByRunId(teamId, taskId);
+  if (existing) return existing;
+  return generateRunReview(teamId, taskId);
+}
+
 /** List reviews for the org, newest first, optionally filtered by status (for the Review Inbox). */
 export async function listRunReviews(teamId: string, status?: RunReviewStatus) {
   const wheres = [eq(runReviews.teamId, teamId)];

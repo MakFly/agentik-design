@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api/client";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ProviderKeysSection } from "./provider-keys-section";
 
 interface DetectedTool {
   name: string;
@@ -80,10 +81,13 @@ export function RuntimesTab({ team }: { team: string }) {
           <Chip ok={!!data?.providers.google} label="Google key" />
         </div>
         <p className="text-xs text-muted-foreground">
-          Provider keys show presence only — values are never exposed. Agent CLIs (e.g. Claude Code) may authenticate via
-          their own session instead of a key.
+          Pills above reflect keys in the engine&apos;s own env. Manage per-org runtime keys below — Agent CLIs (e.g.
+          Claude Code) may also authenticate via their own session instead of a key.
         </p>
       </section>
+
+      {/* Managed runtime provider keys (encrypted, injected into the daemon) */}
+      <ProviderKeysSection team={team} />
 
       {/* Daemons + detected CLIs */}
       <section className="flex flex-col gap-3">

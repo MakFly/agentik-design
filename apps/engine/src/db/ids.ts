@@ -22,7 +22,9 @@ export type IdPrefix =
   | "usr"
   | "sess"
   | "mbr"
-  | "inv";
+  | "inv"
+  // runtime provider keys (managed from the web UI, injected into the daemon)
+  | "pkey";
 
 export function genId(prefix: IdPrefix): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;
