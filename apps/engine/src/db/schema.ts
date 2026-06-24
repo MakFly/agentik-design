@@ -40,6 +40,13 @@ export type AgentTaskStatus =
   | "failed"
   | "cancelled";
 export type TaskMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
+/**
+ * Why a task ended in `failed`. Drives retry policy: `timeout`/`runtime_offline`/
+ * `runtime_recovery` are retryable; `agent_error` is terminal. v1 only produces
+ * `timeout` (scanner) and `agent_error` (daemon-reported); the others are reserved.
+ */
+export type TaskErrorReason = "timeout" | "runtime_offline" | "runtime_recovery" | "agent_error";
+export const RETRYABLE_TASK_ERROR_REASONS: TaskErrorReason[] = ["timeout", "runtime_offline", "runtime_recovery"];
 
 export const teams = pgTable("teams", {
   id: text("id").primaryKey(),
@@ -185,6 +192,10 @@ export const agentTasks = pgTable("agent_tasks", {
   workDir: text("work_dir"),
   result: jsonb("result"),
   error: text("error"),
+  /** Classified failure cause; null unless status = failed. Drives retry policy. */
+  errorReason: text("error_reason").$type<TaskErrorReason>(),
+  /** 1-based attempt counter; bumped on auto-retry of a retryable failure. */
+  attempt: integer("attempt").notNull().default(1),
   stepCount: integer("step_count").notNull().default(0),
   completedSteps: integer("completed_steps").notNull().default(0),
   createdAt: ts("created_at").notNull().defaultNow(),

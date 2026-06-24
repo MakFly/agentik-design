@@ -550,3 +550,31 @@ export async function cancelAgentTask(teamId: string, id: string): Promise<boole
   hub.publish(updated[0].teamId, { kind: "run", action: "cancelled", runId: id });
   return true;
 }
+
+/**
+ * Manually re-run a finished task: enqueues a FRESH task (new id, attempt=1) copying
+ * the original agent/kind/input, so the user gets a clean run with its own transcript.
+ * Unlike auto-retry (which reuses the row), this never inherits a session and has no
+ * attempt ceiling. Tenancy-scoped. Returns the new run id, or null if not found.
+ */
+export async function retryAgentTask(teamId: string, id: string): Promise<{ runId: string } | null> {
+  if (!id.startsWith("atask_")) return null;
+  const [orig] = await db
+    .select({ agentId: agentTasks.agentId, kind: agentTasks.kind, priority: agentTasks.priority, input: agentTasks.input })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.id, id), eq(agentTasks.teamId, teamId)))
+    .limit(1);
+  if (!orig) return null;
+  const newId = genId("atask");
+  await db.insert(agentTasks).values({
+    id: newId,
+    teamId,
+    agentId: orig.agentId,
+    status: "queued",
+    kind: orig.kind,
+    priority: orig.priority,
+    input: orig.input as Record<string, unknown> | null,
+  });
+  hub.publish(teamId, { kind: "run", action: "created", runId: newId });
+  return { runId: newId };
+}

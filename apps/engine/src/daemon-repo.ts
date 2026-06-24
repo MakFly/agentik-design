@@ -5,7 +5,7 @@ import { resolveTeam } from "./repo";
 import { hub } from "./hub";
 import { buildInjectionPreamble, ensureRunReview, resolveInjectionContext, type InjectionContext } from "./learning-repo";
 import { resolveProviderEnv } from "./providers-repo";
-import type { TaskMessageType } from "./db/schema";
+import type { TaskErrorReason, TaskMessageType } from "./db/schema";
 
 const { daemons, runtimes, agentTasks, taskMessages } = schema;
 
@@ -191,12 +191,18 @@ export async function completeTask(taskId: string, result: unknown): Promise<boo
   return true;
 }
 
-export async function failTask(taskId: string, error: string): Promise<boolean> {
+/**
+ * Mark a task failed with a classified reason. Daemon-reported failures default to
+ * `agent_error` (terminal); the timeout scanner passes `timeout` (retryable). Auto-retry
+ * is NOT decided here — the scanner owns it so a single component drives retry policy.
+ */
+export async function failTask(taskId: string, error: string, reason: TaskErrorReason = "agent_error"): Promise<boolean> {
   const updated = await db
     .update(agentTasks)
     .set({
       status: "failed",
       error,
+      errorReason: reason,
       endedAt: sql`now()`,
       durationMs: sql`(extract(epoch from (now() - coalesce(started_at, created_at))) * 1000)::int`,
     })
@@ -206,5 +212,35 @@ export async function failTask(taskId: string, error: string): Promise<boolean> 
   hub.publish(updated[0].teamId, { kind: "run", action: "failed", runId: taskId });
   // A failed run is exactly when the reviewer proposes a lesson — trigger it too.
   await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
+  return true;
+}
+
+/**
+ * Re-queue a failed task in place (auto-retry of a transient/retryable failure):
+ * resets the SAME row to `queued` so the web UI keeps one run identity across the
+ * retry, bumps `attempt`, and clears the failure + dispatch/runtime fields. The
+ * streamed transcript is intentionally preserved as history. Idempotent: only flips
+ * a row that is still `failed` with the expected attempt, so concurrent scanner ticks
+ * can't double-bump. Returns true when this call performed the retry.
+ */
+export async function autoRetryTask(taskId: string, fromAttempt: number): Promise<boolean> {
+  const updated = await db
+    .update(agentTasks)
+    .set({
+      status: "queued",
+      attempt: fromAttempt + 1,
+      error: null,
+      errorReason: null,
+      runtimeId: null,
+      daemonId: null,
+      dispatchedAt: null,
+      startedAt: null,
+      endedAt: null,
+      durationMs: null,
+    })
+    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.status, "failed"), eq(agentTasks.attempt, fromAttempt)))
+    .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
+  if (!updated[0]) return false;
+  hub.publish(updated[0].teamId, { kind: "run", action: "created", runId: taskId });
   return true;
 }

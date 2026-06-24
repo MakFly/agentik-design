@@ -3,6 +3,7 @@ import app from "./server";
 import { hub, type WsData } from "./hub";
 import { handleControl } from "./control";
 import { resolveTeam } from "./repo";
+import { startTaskScanner } from "./task-scanner";
 
 const server = Bun.serve<WsData>({
   port: env.PORT,
@@ -31,3 +32,7 @@ const server = Bun.serve<WsData>({
 });
 
 console.log(`[engine] API + realtime listening on http://localhost:${server.port}`);
+
+// Lifecycle scanner: times out stuck tasks and auto-retries the retryable ones.
+// Single-owner across instances via a Postgres advisory lock (see task-scanner.ts).
+startTaskScanner();

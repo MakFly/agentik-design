@@ -27,6 +27,7 @@ import { enqueueRun } from "./queue";
 import {
   agentTaskMessageToEvents,
   cancelAgentTask,
+  retryAgentTask,
   createAgent,
   createTestTask,
   getAgentTaskName,
@@ -379,9 +380,17 @@ api.get("/runs/:id", async (c) => {
   return c.json(workflowDetailToWeb(detail as never));
 });
 
-api.post("/runs/:id/cancel", async (c) => {
+api.post("/runs/:id/cancel", requirePermission("run:control"), async (c) => {
   const ok = await cancelAgentTask(c.get("teamId"), c.req.param("id"));
   return c.json({ ok }, ok ? 200 : 404);
+});
+
+// Manual re-run: enqueues a fresh task (attempt=1) cloning the original. Distinct from
+// the scanner's auto-retry (which reuses the row for transient failures). agent-tasks only.
+api.post("/runs/:id/retry", requirePermission("run:run"), async (c) => {
+  const res = await retryAgentTask(c.get("teamId"), c.req.param("id"));
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res, 202);
 });
 
 api.post("/runs/:id/approve", async (c) => {

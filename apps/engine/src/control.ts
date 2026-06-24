@@ -20,6 +20,9 @@ export async function handleControl(ws: AppWebSocket, raw: string | Buffer): Pro
 
   let accepted = true;
   if (type === "run.cancel") {
+    // NOTE: the HTTP cancel route is gated on `run:control`, but this WS channel is only
+    // team-scoped (no user/role is carried through the /realtime upgrade). Gating it on
+    // `run:control` requires plumbing identity into WsData — deferred (out of Phase 1 scope).
     accepted = await cancelAgentTask(ws.data.teamId, runId);
   }
 
