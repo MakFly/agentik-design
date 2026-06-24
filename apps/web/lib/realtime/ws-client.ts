@@ -10,6 +10,7 @@
 export type RealtimeEvent =
   | { kind: "run"; action: string; runId: string }
   | { kind: "run.progress"; runId: string; completedSteps: number; stepCount: number }
+  | { kind: "chat.message"; sessionId: string; runId: string; role: string }
   | { kind: "presence" }
   | { kind: "control.ack"; runId: string; action: string; accepted: boolean; error?: string };
 

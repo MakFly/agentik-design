@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Play,
+  MessageSquare,
   Activity,
   Bot,
   Workflow,
@@ -34,6 +35,7 @@ export const NAV_ITEMS: NavItem[] = [
   // OBSERVE
   { key: "dashboard", label: "Hermes Lite", segment: "thechat", icon: LayoutDashboard, group: "observe", hotkey: "d" },
   { key: "runs", label: "Executions", segment: "runs", icon: Play, group: "observe", hotkey: "r", permission: "run:read", badge: "activeRuns" },
+  { key: "chat", label: "Chat", segment: "chat", icon: MessageSquare, group: "observe", hotkey: "c", permission: "run:read" },
   { key: "observability", label: "Observability", segment: "observability", icon: Activity, group: "observe", hotkey: "o" },
   // AUTHOR
   { key: "agents", label: "Agents", segment: "agents", icon: Bot, group: "author", hotkey: "a", permission: "agent:read" },
