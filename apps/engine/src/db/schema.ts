@@ -40,6 +40,8 @@ export type AgentTaskStatus =
   | "failed"
   | "cancelled";
 export type TaskMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
+export type ChatSessionStatus = "active" | "archived";
+export type ChatMessageRole = "user" | "assistant";
 /**
  * Why a task ended in `failed`. Drives retry policy: `timeout`/`runtime_offline`/
  * `runtime_recovery` are retryable; `agent_error` is terminal. v1 only produces
@@ -196,6 +198,8 @@ export const agentTasks = pgTable("agent_tasks", {
   errorReason: text("error_reason").$type<TaskErrorReason>(),
   /** 1-based attempt counter; bumped on auto-retry of a retryable failure. */
   attempt: integer("attempt").notNull().default(1),
+  /** Set when this task backs a chat turn; its result is written back as an assistant message. */
+  chatSessionId: text("chat_session_id"),
   stepCount: integer("step_count").notNull().default(0),
   completedSteps: integer("completed_steps").notNull().default(0),
   createdAt: ts("created_at").notNull().defaultNow(),
@@ -223,6 +227,32 @@ export const taskMessages = pgTable(
   },
   (t) => [unique("task_messages_task_seq_unique").on(t.taskId, t.seq)],
 );
+
+/** A chat conversation with an agent. Each user turn spawns a `kind='chat'` agent task. */
+export const chatSessions = pgTable("chat_sessions", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  agentId: text("agent_id").notNull(),
+  /** User who started the session (soft ref; may be empty in dev). */
+  creatorId: text("creator_id").notNull().default(""),
+  title: text("title").notNull().default(""),
+  status: text("status").$type<ChatSessionStatus>().notNull().default("active"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** A single turn in a chat session. The assistant turn is written on task completion. */
+export const chatMessages = pgTable("chat_messages", {
+  id: text("id").primaryKey(),
+  chatSessionId: text("chat_session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  role: text("role").$type<ChatMessageRole>().notNull(),
+  content: text("content").notNull().default(""),
+  /** The agent task that produced this message (assistant turns); null for user turns. */
+  taskId: text("task_id"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
 
 /* ── Learning loop (the moat) ────────────────────────────────────────── */
 

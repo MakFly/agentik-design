@@ -10,6 +10,8 @@ export type IdPrefix =
   | "agt"
   | "atask"
   | "amsg"
+  | "chat"
+  | "cmsg"
   | "daemon"
   | "runtime"
   // learning loop

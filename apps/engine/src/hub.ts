@@ -10,6 +10,7 @@ export type AppWebSocket = ServerWebSocket<WsData>;
 export type HubEvent =
   | { kind: "run"; action: "created" | "dispatched" | "running" | "succeeded" | "failed" | "cancelled"; runId: string }
   | { kind: "run.progress"; runId: string; completedSteps: number; stepCount: number }
+  | { kind: "chat.message"; sessionId: string; runId: string; role: "assistant" }
   | { kind: "presence" }
   | { kind: "control.ack"; runId: string; action: string; accepted: boolean; error?: string };
 

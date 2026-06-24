@@ -4,6 +4,7 @@ import { genId } from "./db/ids";
 import { resolveTeam } from "./repo";
 import { hub } from "./hub";
 import { buildInjectionPreamble, ensureRunReview, resolveInjectionContext, type InjectionContext } from "./learning-repo";
+import { appendAssistantTurn } from "./chat-repo";
 import { resolveProviderEnv } from "./providers-repo";
 import type { TaskErrorReason, TaskMessageType } from "./db/schema";
 
@@ -182,13 +183,27 @@ export async function completeTask(taskId: string, result: unknown): Promise<boo
       completedSteps: sql`${agentTasks.stepCount}`,
     })
     .where(and(eq(agentTasks.id, taskId), inArray(agentTasks.status, ["dispatched", "running"])))
-    .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
+    .returning({ id: agentTasks.id, teamId: agentTasks.teamId, chatSessionId: agentTasks.chatSessionId });
   if (!updated[0]) return false;
   hub.publish(updated[0].teamId, { kind: "run", action: "succeeded", runId: taskId });
+  // Chat-spawns-task: write the result back as the assistant turn (best-effort).
+  if (updated[0].chatSessionId) {
+    await appendAssistantTurn(updated[0].teamId, updated[0].chatSessionId, taskId, resultText(result)).catch(() => undefined);
+  }
   // Moat: kick off the propose-only review as soon as the run finishes (best-effort;
   // never let a review hiccup fail task completion). Idempotent per run.
   await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
   return true;
+}
+
+/** Best-effort extraction of an agent task's final text from its result payload. */
+function resultText(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object") {
+    const r = (result as Record<string, unknown>).result;
+    if (typeof r === "string") return r;
+  }
+  return result == null ? "" : JSON.stringify(result);
 }
 
 /**

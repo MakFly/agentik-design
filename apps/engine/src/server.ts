@@ -24,6 +24,7 @@ import { encryptJson, decryptJson } from "./crypto";
 import { buildGoogleAuthUrl, exchangeGoogleCode } from "./oauth";
 import { env } from "./env";
 import { enqueueRun } from "./queue";
+import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./chat-repo";
 import {
   agentTaskMessageToEvents,
   cancelAgentTask,
@@ -389,6 +390,35 @@ api.post("/runs/:id/cancel", requirePermission("run:control"), async (c) => {
 // the scanner's auto-retry (which reuses the row for transient failures). agent-tasks only.
 api.post("/runs/:id/retry", requirePermission("run:run"), async (c) => {
   const res = await retryAgentTask(c.get("teamId"), c.req.param("id"));
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res, 202);
+});
+
+/* ── Chat-spawns-task ─────────────────────────────────────────────────── */
+
+api.get("/chat/sessions", requirePermission("run:read"), async (c) => {
+  return c.json({ items: await listChatSessions(c.get("teamId")) });
+});
+
+api.post("/chat/sessions", requirePermission("run:run"), async (c) => {
+  const body = await c.req.json<{ agentId?: string; title?: string }>().catch(() => ({}) as { agentId?: string; title?: string });
+  if (!body.agentId) return c.json({ error: "agentId_required" }, 400);
+  const session = await createChatSession(c.get("teamId"), { agentId: body.agentId, title: body.title }, c.get("auth").userId);
+  if (!session) return c.json({ error: "agent_not_found" }, 404);
+  return c.json(session, 201);
+});
+
+api.get("/chat/sessions/:id", requirePermission("run:read"), async (c) => {
+  const res = await getChatSession(c.get("teamId"), c.req.param("id"));
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res);
+});
+
+api.post("/chat/sessions/:id/messages", requirePermission("run:run"), async (c) => {
+  const body = await c.req.json<{ content?: string }>().catch(() => ({}) as { content?: string });
+  const content = (body.content ?? "").trim();
+  if (!content) return c.json({ error: "content_required" }, 400);
+  const res = await sendChatMessage(c.get("teamId"), c.req.param("id"), content);
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res, 202);
 });
