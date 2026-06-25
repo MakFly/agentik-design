@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"agentik/daemon/internal/bundle"
 )
 
 type Tool struct {
@@ -23,10 +25,16 @@ type Tool struct {
 	Authenticated bool `json:"authenticated"`
 	// AuthSource explains how: "session" (saved login on disk) or "key" (env var).
 	AuthSource string `json:"authSource,omitempty"`
+	// LatestVersion is the newest release reported by the registry or native updater check.
+	LatestVersion string `json:"latestVersion,omitempty"`
+	// UpdateAvailable is meaningful only when UpdateChecked is true.
+	UpdateAvailable bool `json:"updateAvailable"`
+	// UpdateChecked is true when we successfully compared installed vs latest.
+	UpdateChecked bool `json:"updateChecked"`
 }
 
 // Known agent CLIs the daemon can potentially drive. Extend as runtimes are added.
-var knownCLIs = []string{"claude", "hermes", "codex", "aider", "goose", "gemini"}
+var knownCLIs = []string{"claude", "hermes", "codex", "gemini"}
 
 // authSpec describes how to tell whether a CLI is already authenticated on this host:
 // any of `files` (relative to $HOME) existing, or any of `env` vars being set.
@@ -40,7 +48,6 @@ var authSpecs = map[string]authSpec{
 	"codex":  {files: []string{".codex/auth.json"}, env: []string{"OPENAI_API_KEY"}},
 	"hermes": {files: []string{".hermes/auth.json", ".hermes/config.yaml", ".config/hermes/config.yaml"}, env: []string{"NOUS_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}},
 	"gemini": {files: []string{".gemini/oauth_creds.json", ".config/gemini/oauth_creds.json"}, env: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}},
-	"aider":  {env: []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}},
 }
 
 // Tools probes each known CLI via LookPath + `--version`, and (when present) whether
@@ -54,6 +61,11 @@ func Tools() []Tool {
 			t.Path = p
 			t.Version = version(name)
 			t.Authenticated, t.AuthSource = authStatus(name)
+			if ui := bundle.UpgradeInfoFor(name, t.Version); ui.Checked {
+				t.UpdateChecked = true
+				t.UpdateAvailable = ui.UpdateAvailable
+				t.LatestVersion = ui.LatestVersion
+			}
 		}
 		out = append(out, t)
 	}

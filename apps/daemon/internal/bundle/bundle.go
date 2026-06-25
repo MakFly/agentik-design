@@ -1,12 +1,12 @@
 // Package bundle installs/upgrades/uninstalls agent CLIs on the daemon host.
 //
 // SECURITY: the engine never sends a command. It sends a validated {kind, action};
-// this package maps that to a COMPILE-TIME sequence of installer arg-vectors from
-// `registry` and execs them directly (no shell, no interpolation — even the Hermes
-// curl|bash installer is split into a fixed `curl -o` + `bash` against a hardcoded
-// official URL). A kind absent from the registry cannot be installed. Execution is
-// hardened like the runtimes: isolated workdir, env allowlist, hard timeout,
-// process-group kill.
+// this package maps that to a COMPILE-TIME sequence of installer arg-vectors and
+// execs them directly (no shell, no interpolation). Package names and self-update
+// commands are constants; only the npm --prefix is derived from the resolved binary
+// path on this host. A kind absent from the allowlist cannot be installed.
+// Execution is hardened like the runtimes: isolated workdir, env allowlist, hard
+// timeout, process-group kill.
 package bundle
 
 import (
@@ -15,94 +15,247 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// spec holds the fixed install steps for one CLI kind. Each action is a SEQUENCE of
-// arg-vectors run in order in the same workdir (stop on first error). No field is
-// ever derived from engine input — they are constants selected by a validated kind.
-type spec struct {
-	install   [][]string
-	upgrade   [][]string
-	uninstall [][]string
-	probe     []string // reads the installed version after the op (best-effort)
+type installMethod int
+
+const (
+	methodDefault installMethod = iota
+	methodBun
+	methodNpmPrefix
+	methodClaudeSelfUpdate
+	methodPip
+	methodHermesSelfUpdate
+)
+
+// cliSpec describes one installable CLI kind. Package names are compile-time constants.
+type cliSpec struct {
+	bin            string
+	npmPkg         string
+	pipPkg         string
+	defaultInstall [][]string
+	uninstall      [][]string
 }
 
-// hermesInstall is the official Nous installer, split to avoid a shell pipe:
-// download the script to the isolated workdir, then run it. URL is a constant.
 var hermesInstall = [][]string{
 	{"curl", "-fsSL", "-o", "install.sh", "https://hermes-agent.nousresearch.com/install.sh"},
-	{"bash", "install.sh"},
+	{"bash", "install.sh", "--skip-setup"},
 }
 
-// registry IS the allowlist. Only these kinds are installable.
-var registry = map[string]spec{
+// clis IS the allowlist. Only these kinds are installable.
+var clis = map[string]cliSpec{
 	"claude": {
-		install:   [][]string{{"npm", "install", "-g", "@anthropic-ai/claude-code@latest"}},
-		upgrade:   [][]string{{"npm", "install", "-g", "@anthropic-ai/claude-code@latest"}},
-		uninstall: [][]string{{"npm", "uninstall", "-g", "@anthropic-ai/claude-code"}},
-		probe:     []string{"claude", "--version"},
+		bin:            "claude",
+		npmPkg:         "@anthropic-ai/claude-code",
+		defaultInstall: [][]string{{"bun", "add", "--global", "@anthropic-ai/claude-code@latest"}},
+		uninstall:      [][]string{{"bun", "remove", "--global", "@anthropic-ai/claude-code"}},
 	},
 	"codex": {
-		install:   [][]string{{"npm", "install", "-g", "@openai/codex@latest"}},
-		upgrade:   [][]string{{"npm", "install", "-g", "@openai/codex@latest"}},
-		uninstall: [][]string{{"npm", "uninstall", "-g", "@openai/codex"}},
-		probe:     []string{"codex", "--version"},
+		bin:            "codex",
+		npmPkg:         "@openai/codex",
+		defaultInstall: [][]string{{"bun", "add", "--global", "@openai/codex@latest"}},
+		uninstall:      [][]string{{"bun", "remove", "--global", "@openai/codex"}},
 	},
 	"hermes": {
-		// The official installer is idempotent, so upgrade == install (re-run it).
-		install: hermesInstall,
-		upgrade: hermesInstall,
-		// No supported uninstall path — left empty → reported as unavailable.
-		probe: []string{"hermes", "--version"},
+		bin:            "hermes",
+		defaultInstall: hermesInstall,
+		uninstall:      [][]string{{"hermes", "uninstall", "--yes"}},
 	},
 	"gemini": {
-		install:   [][]string{{"npm", "install", "-g", "@google/gemini-cli@latest"}},
-		upgrade:   [][]string{{"npm", "install", "-g", "@google/gemini-cli@latest"}},
-		uninstall: [][]string{{"npm", "uninstall", "-g", "@google/gemini-cli"}},
-		probe:     []string{"gemini", "--version"},
-	},
-	"aider": {
-		install:   [][]string{{"python3", "-m", "pip", "install", "--user", "--upgrade", "aider-chat"}},
-		upgrade:   [][]string{{"python3", "-m", "pip", "install", "--user", "--upgrade", "aider-chat"}},
-		uninstall: [][]string{{"python3", "-m", "pip", "uninstall", "-y", "aider-chat"}},
-		probe:     []string{"aider", "--version"},
+		bin:            "gemini",
+		npmPkg:         "@google/gemini-cli",
+		defaultInstall: [][]string{{"bun", "add", "--global", "@google/gemini-cli@latest"}},
+		uninstall:      [][]string{{"bun", "remove", "--global", "@google/gemini-cli"}},
 	},
 }
 
 // Installable lists the kinds this daemon knows how to install, for diagnostics.
 func Installable() []string {
-	out := make([]string, 0, len(registry))
-	for k := range registry {
+	out := make([]string, 0, len(clis))
+	for k := range clis {
 		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out
 }
 
+// resolveBin finds bin on PATH and returns its fully-resolved path.
+func resolveBin(bin string) (real string, found bool) {
+	p, err := exec.LookPath(bin)
+	if err != nil {
+		return "", false
+	}
+	real, err = filepath.EvalSymlinks(p)
+	if err != nil {
+		real = p
+	}
+	return real, true
+}
+
+// classify determines how the CLI at real was installed. Pure — no I/O.
+func classify(real, kind string) (installMethod, string) {
+	if real == "" {
+		return methodDefault, ""
+	}
+	if kind == "hermes" {
+		return methodHermesSelfUpdate, ""
+	}
+	if strings.Contains(real, "site-packages") {
+		return methodPip, ""
+	}
+	if kind == "claude" && strings.Contains(real, "/share/claude/") {
+		return methodClaudeSelfUpdate, ""
+	}
+	if strings.Contains(real, "/.bun/") {
+		return methodBun, ""
+	}
+	if idx := strings.Index(real, "/lib/node_modules/"); idx != -1 {
+		return methodNpmPrefix, real[:idx]
+	}
+	if idx := strings.Index(real, "/node_modules/"); idx != -1 {
+		return methodNpmPrefix, real[:idx]
+	}
+	if kind == "claude" {
+		return methodClaudeSelfUpdate, ""
+	}
+	return methodDefault, ""
+}
+
+func npmPrefixFromPath(real string) string {
+	if idx := strings.Index(real, "/lib/node_modules/"); idx != -1 {
+		return real[:idx]
+	}
+	if idx := strings.Index(real, "/node_modules/"); idx != -1 {
+		return real[:idx]
+	}
+	return ""
+}
+
+func assertPrefixWritable(prefix string) error {
+	if prefix == "" {
+		return fmt.Errorf("could not derive npm prefix from resolved binary")
+	}
+	for _, blocked := range []string{"/usr", "/opt", "/sbin", "/bin"} {
+		if prefix == blocked || strings.HasPrefix(prefix, blocked+"/") {
+			return fmt.Errorf("npm prefix %q needs elevated permissions", prefix)
+		}
+	}
+	fi, err := os.Stat(prefix)
+	if err != nil {
+		return fmt.Errorf("npm prefix %q: %w", prefix, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("npm prefix %q is not a directory", prefix)
+	}
+	// Verify we can write under prefix/lib (where npm global packages land).
+	lib := filepath.Join(prefix, "lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		return fmt.Errorf("npm prefix %q is not writable: %w", prefix, err)
+	}
+	return nil
+}
+
+func requireOnPath(name string) error {
+	if _, err := exec.LookPath(name); err != nil {
+		return fmt.Errorf("%s not found on PATH; needed for this install method", name)
+	}
+	return nil
+}
+
+func upgradeResolved(kind string, sp cliSpec, real string) ([][]string, error) {
+	method, prefix := classify(real, kind)
+	switch method {
+	case methodBun:
+		if sp.npmPkg == "" {
+			return nil, fmt.Errorf("no bun package registered for %q", kind)
+		}
+		if err := requireOnPath("bun"); err != nil {
+			return nil, err
+		}
+		return [][]string{{"bun", "add", "--global", sp.npmPkg + "@latest"}}, nil
+
+	case methodNpmPrefix:
+		if sp.npmPkg == "" {
+			return nil, fmt.Errorf("no npm package registered for %q", kind)
+		}
+		if prefix == "" {
+			prefix = npmPrefixFromPath(real)
+		}
+		if err := assertPrefixWritable(prefix); err != nil {
+			return nil, err
+		}
+		if err := requireOnPath("npm"); err != nil {
+			return nil, err
+		}
+		return [][]string{{"npm", "install", "-g", "--prefix", prefix, sp.npmPkg + "@latest"}}, nil
+
+	case methodClaudeSelfUpdate:
+		return [][]string{{"claude", "update"}}, nil
+
+	case methodPip:
+		if sp.pipPkg == "" {
+			return nil, fmt.Errorf("no pip package registered for %q", kind)
+		}
+		if err := requireOnPath("python3"); err != nil {
+			return nil, err
+		}
+		return [][]string{{"python3", "-m", "pip", "install", "--user", "--upgrade", sp.pipPkg}}, nil
+
+	case methodHermesSelfUpdate:
+		return [][]string{{"hermes", "update", "--yes", "--backup"}}, nil
+
+	default:
+		return sp.defaultInstall, nil
+	}
+}
+
+// buildSteps returns install/upgrade/uninstall arg-vectors and the post-op probe command.
+func buildSteps(kind, action string) (steps [][]string, probe []string, err error) {
+	sp, ok := clis[kind]
+	if !ok {
+		return nil, nil, fmt.Errorf("no installer registered for %q (installable: %v)", kind, Installable())
+	}
+	probe = []string{sp.bin, "--version"}
+
+	switch action {
+	case "install", "upgrade":
+		real, found := resolveBin(sp.bin)
+		if found {
+			steps, err = upgradeResolved(kind, sp, real)
+			return steps, probe, err
+		}
+		// CLI absent — fresh install via the kind's default method.
+		if len(sp.defaultInstall) == 0 {
+			return nil, probe, fmt.Errorf("action %q unavailable for %q", action, kind)
+		}
+		return sp.defaultInstall, probe, nil
+
+	case "uninstall":
+		if len(sp.uninstall) == 0 {
+			return nil, probe, fmt.Errorf("action %q unavailable for %q", action, kind)
+		}
+		if _, found := resolveBin(sp.bin); !found {
+			// Already absent on PATH — idempotent no-op.
+			return nil, probe, nil
+		}
+		return sp.uninstall, probe, nil
+
+	default:
+		return nil, nil, fmt.Errorf("unknown action %q", action)
+	}
+}
+
 // Execute runs the requested action for kind and returns a short result summary
 // (the post-op version when available) or an error.
 func Execute(ctx context.Context, kind, action, workRoot string, timeout time.Duration) (string, error) {
-	sp, ok := registry[kind]
-	if !ok {
-		return "", fmt.Errorf("no installer registered for %q (installable: %v)", kind, Installable())
-	}
-	var steps [][]string
-	switch action {
-	case "install":
-		steps = sp.install
-	case "upgrade":
-		steps = sp.upgrade
-	case "uninstall":
-		steps = sp.uninstall
-	default:
-		return "", fmt.Errorf("unknown action %q", action)
-	}
-	if len(steps) == 0 {
-		return "", fmt.Errorf("action %q unavailable for %q", action, kind)
+	steps, probe, err := buildSteps(kind, action)
+	if err != nil {
+		return "", err
 	}
 
 	dir, cleanup, err := workdir(workRoot)
@@ -111,6 +264,18 @@ func Execute(ctx context.Context, kind, action, workRoot string, timeout time.Du
 	}
 	defer cleanup()
 
+	before := ""
+	if action == "upgrade" && len(probe) > 0 {
+		if v, e := run(ctx, dir, 10*time.Second, probe); e == nil {
+			before = firstLine(v)
+		}
+		if before != "" {
+			if ui := UpgradeInfoFor(kind, before); ui.Checked && !ui.UpdateAvailable {
+				return "already latest: " + before, nil
+			}
+		}
+	}
+
 	out := ""
 	for _, argv := range steps {
 		out, err = run(ctx, dir, timeout, argv)
@@ -118,21 +283,31 @@ func Execute(ctx context.Context, kind, action, workRoot string, timeout time.Du
 			return "", err
 		}
 	}
-	// Best-effort: report the resulting version so the UI can confirm the op landed.
-	if action != "uninstall" && len(sp.probe) > 0 {
-		if v, e := run(ctx, dir, 10*time.Second, sp.probe); e == nil {
-			if line := firstLine(v); line != "" {
-				return line, nil
+
+	after := ""
+	if action != "uninstall" && len(probe) > 0 {
+		if v, e := run(ctx, dir, 10*time.Second, probe); e == nil {
+			after = firstLine(v)
+			if after != "" {
+				if action == "upgrade" && before != "" && extractSemver(before) == extractSemver(after) {
+					InvalidateUpgradeCache(kind)
+					return "already latest: " + after, nil
+				}
+				InvalidateUpgradeCache(kind)
+				return after, nil
 			}
 		}
 	}
 	if action == "uninstall" {
+		InvalidateUpgradeCache(kind)
 		return "uninstalled", nil
+	}
+	if action == "install" || action == "upgrade" {
+		InvalidateUpgradeCache(kind)
 	}
 	return firstLine(out), nil
 }
 
-// workdir makes an isolated temp dir under workRoot and returns a cleanup func.
 func workdir(workRoot string) (string, func(), error) {
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return "", func() {}, fmt.Errorf("workroot: %w", err)
@@ -151,6 +326,10 @@ func run(ctx context.Context, dir string, timeout time.Duration, argv []string) 
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = allowlistEnv()
+	if devNull, err := os.Open(os.DevNull); err == nil {
+		cmd.Stdin = devNull
+		defer devNull.Close()
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
@@ -172,14 +351,22 @@ func run(ctx context.Context, dir string, timeout time.Duration, argv []string) 
 	return stdout.String(), nil
 }
 
-// allowlistEnv passes only what a package manager / installer needs — no inherited
-// secrets. HOME/PATH let installers write to ~/.local and find tools.
 func allowlistEnv() []string {
 	var env []string
-	for _, k := range []string{"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "NPM_CONFIG_PREFIX"} {
+	for _, k := range []string{
+		"PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "NPM_CONFIG_PREFIX",
+		"CI", "DEBIAN_FRONTEND", "HERMES_HOME", "BUN_INSTALL",
+	} {
 		if v := os.Getenv(k); v != "" {
 			env = append(env, k+"="+v)
 		}
+	}
+	// Non-interactive defaults for unattended bundle installs.
+	if os.Getenv("CI") == "" {
+		env = append(env, "CI=1")
+	}
+	if os.Getenv("DEBIAN_FRONTEND") == "" {
+		env = append(env, "DEBIAN_FRONTEND=noninteractive")
 	}
 	return env
 }

@@ -26,6 +26,37 @@ bun install
 docker compose up -d
 ```
 
+## Installation cible
+
+Le serveur Agentik et le runtime agent ne se déploient pas au même endroit.
+
+### Control plane
+
+```bash
+docker compose -f docker-compose.selfhost.yml up -d
+```
+
+Ce stack lance le web, l'engine, le worker, Postgres et Redis. Il ne lance pas
+de daemon par défaut: les agents doivent tourner sur les machines qui possèdent
+les CLIs locales.
+
+### Daemon local
+
+Depuis Settings > Connections, créer un token puis lancer sur la machine cible:
+
+```bash
+agentik setup --url http://localhost:8787 --token dtkn_... --runtimes echo,claude,hermes --start
+agentik doctor
+```
+
+La tab peut aussi lancer l'installation depuis le bouton "Install and start"
+quand `apps/web` tourne sur la machine cible. Ce bouton appelle une route locale
+Next qui execute le binaire `agentik`, puis affiche `agentik daemon status`.
+
+Le chemin Docker daemon reste disponible pour des runners headless contrôlés,
+mais le chemin principal est le CLI natif afin de détecter `claude`, `hermes`,
+`codex` ou `gemini` depuis le `PATH` et leurs sessions locales.
+
 ## Licence
 
 À définir.

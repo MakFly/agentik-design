@@ -24,7 +24,12 @@ import { encryptJson, decryptJson } from "./crypto";
 import { buildGoogleAuthUrl, exchangeGoogleCode } from "./oauth";
 import { env } from "./env";
 import { enqueueRun } from "./queue";
-import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./chat-repo";
+import {
+  createChatSession,
+  getChatSession,
+  listChatSessions,
+  sendChatMessage,
+} from "./chat-repo";
 import {
   agentTaskMessageToEvents,
   cancelAgentTask,
@@ -46,8 +51,25 @@ import {
 } from "./agents-repo";
 import type { SSEStreamingApi } from "hono/streaming";
 import { daemon } from "./daemon-routes";
-import { listProviderKeys, setProviderKey, deleteProviderKey, isSupportedProvider } from "./providers-repo";
-import { enqueueBundleCommand, getNetworkInstallEnabled, listBundleCommands, setNetworkInstallEnabled } from "./bundle-repo";
+import {
+  listProviderKeys,
+  setProviderKey,
+  deleteProviderKey,
+  isSupportedProvider,
+} from "./providers-repo";
+import {
+  enqueueBundleCommand,
+  getNetworkInstallEnabled,
+  listBundleCommands,
+  setNetworkInstallEnabled,
+} from "./bundle-repo";
+import {
+  getUserDaemonTokenStatus,
+  listUserDaemonOrgs,
+  markUserPersonalDaemonsOffline,
+  revokeUserDaemonToken,
+  rotateUserDaemonToken,
+} from "./auth-repo";
 import type { BundleAction } from "./db/schema";
 import { auth } from "./auth-routes";
 import { withAuth, requirePermission, type AuthVars } from "./auth";
@@ -79,14 +101,22 @@ app.get("/api/v1/health", (c) => c.json({ ok: true, service: "engine" }));
 const api = new Hono<{ Variables: Vars }>();
 
 /** Annotate a run review's proposals with stable changeIds for per-change approval. */
-function withChangeIds(review: {
-  proposedMemories: unknown[];
-  proposedSkillChanges: unknown[];
-} & Record<string, unknown>) {
+function withChangeIds(
+  review: {
+    proposedMemories: unknown[];
+    proposedSkillChanges: unknown[];
+  } & Record<string, unknown>,
+) {
   return {
     ...review,
-    proposedMemories: review.proposedMemories.map((m, i) => ({ changeId: `m${i}`, ...(m as object) })),
-    proposedSkillChanges: review.proposedSkillChanges.map((s, i) => ({ changeId: `s${i}`, ...(s as object) })),
+    proposedMemories: review.proposedMemories.map((m, i) => ({
+      changeId: `m${i}`,
+      ...(m as object),
+    })),
+    proposedSkillChanges: review.proposedSkillChanges.map((s, i) => ({
+      changeId: `s${i}`,
+      ...(s as object),
+    })),
     changeIds: reviewChangeIds(review as never),
   };
 }
@@ -103,8 +133,11 @@ api.get("/workflows", async (c) => {
 });
 
 api.post("/workflows", async (c) => {
-  const parsed = createWorkflowInput.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const parsed = createWorkflowInput.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success)
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   const wf = await createWorkflow(c.get("teamId"), parsed.data);
   return c.json(wf, 201);
 });
@@ -116,19 +149,33 @@ api.get("/workflows/:id", async (c) => {
 });
 
 api.put("/workflows/:id/versions", async (c) => {
-  const parsed = saveVersionInput.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const parsed = saveVersionInput.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success)
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   const wf = await saveVersion(c.get("teamId"), c.req.param("id"), parsed.data);
   if (!wf) return c.json({ error: "not_found" }, 404);
   return c.json(wf);
 });
 
 api.post("/workflows/:id/run", async (c) => {
-  const parsed = runWorkflowInput.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
-  const result = await createRun(c.get("teamId"), c.req.param("id"), "manual", parsed.data.payload);
+  const parsed = runWorkflowInput.safeParse(
+    await c.req.json().catch(() => ({})),
+  );
+  if (!parsed.success)
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const result = await createRun(
+    c.get("teamId"),
+    c.req.param("id"),
+    "manual",
+    parsed.data.payload,
+  );
   if ("error" in result) {
-    return c.json({ error: result.error }, result.error === "not_found" ? 404 : 409);
+    return c.json(
+      { error: result.error },
+      result.error === "not_found" ? 404 : 409,
+    );
   }
   await enqueueRun(result.runId);
   const run = await getRun(result.runId);
@@ -141,8 +188,11 @@ api.get("/credentials", async (c) => {
 });
 
 api.post("/credentials", async (c) => {
-  const parsed = createCredentialInput.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
+  const parsed = createCredentialInput.safeParse(
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success)
+    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   const cred = await createCredential(c.get("teamId"), parsed.data);
   return c.json(cred, 201);
 });
@@ -170,18 +220,25 @@ function oauthResultHtml(ok: boolean, message?: string): string {
 api.get("/credentials/:id/authorize", async (c) => {
   const cred = await getCredentialDecrypted(c.get("teamId"), c.req.param("id"));
   if (!cred) return c.json({ error: "not_found" }, 404);
-  if (cred.row.type !== "googleOAuth2") return c.json({ error: "not_oauth_credential" }, 400);
+  if (cred.row.type !== "googleOAuth2")
+    return c.json({ error: "not_oauth_credential" }, 400);
   const clientId = cred.data.clientId || env.GOOGLE_CLIENT_ID || "";
-  if (!clientId) return c.html(oauthResultHtml(false, "No Google client id (set GOOGLE_CLIENT_ID)."));
+  if (!clientId)
+    return c.html(
+      oauthResultHtml(false, "No Google client id (set GOOGLE_CLIENT_ID)."),
+    );
   const state = encryptJson({ id: cred.row.id });
-  return c.redirect(buildGoogleAuthUrl({ clientId, scope: cred.data.scope ?? "", state }));
+  return c.redirect(
+    buildGoogleAuthUrl({ clientId, scope: cred.data.scope ?? "", state }),
+  );
 });
 
 /** OAuth redirect target — exchange the code and store tokens on the credential. */
 api.get("/oauth/google/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
-  if (!code || !state) return c.html(oauthResultHtml(false, "Missing code or state."));
+  if (!code || !state)
+    return c.html(oauthResultHtml(false, "Missing code or state."));
 
   let id: string;
   try {
@@ -210,7 +267,12 @@ api.get("/oauth/google/callback", async (c) => {
     await setCredentialData(c.get("teamId"), id, data);
     return c.html(oauthResultHtml(true));
   } catch (e) {
-    return c.html(oauthResultHtml(false, e instanceof Error ? e.message : "Token exchange failed."));
+    return c.html(
+      oauthResultHtml(
+        false,
+        e instanceof Error ? e.message : "Token exchange failed.",
+      ),
+    );
   }
 });
 
@@ -239,6 +301,36 @@ api.get("/system", async (c) => {
   });
 });
 
+/** A user's personal daemon token status. The token itself is never returned here. */
+api.get("/me/daemon-token", async (c) => {
+  const [status, orgs] = await Promise.all([
+    getUserDaemonTokenStatus(c.get("auth").userId),
+    listUserDaemonOrgs(c.get("auth").userId),
+  ]);
+  if (!status) return c.json({ error: "not_found" }, 404);
+  return c.json({ ...status, eligibleOrgs: orgs });
+});
+
+/** Rotate and reveal a personal daemon token once, for copy/paste into the daemon. */
+api.post("/me/daemon-token/rotate", async (c) => {
+  const [rotated, orgs] = await Promise.all([
+    rotateUserDaemonToken(c.get("auth").userId),
+    listUserDaemonOrgs(c.get("auth").userId),
+  ]);
+  if (!rotated) return c.json({ error: "not_found" }, 404);
+  return c.json({ ...rotated, eligibleOrgs: orgs }, 201);
+});
+
+api.delete("/me/daemon-token", async (c) => {
+  await revokeUserDaemonToken(c.get("auth").userId);
+  return c.json({ ok: true });
+});
+
+api.post("/me/daemon-token/offline", async (c) => {
+  const count = await markUserPersonalDaemonsOffline(c.get("auth").userId);
+  return c.json({ ok: true, count });
+});
+
 /* ── Bundle manager: install/upgrade agent CLIs on a daemon host (owner-gated) ── */
 
 const BUNDLE_ACTIONS: BundleAction[] = ["install", "upgrade", "uninstall"];
@@ -253,15 +345,27 @@ api.get("/bundles", requirePermission("settings:read"), async (c) => {
 });
 
 api.put("/bundles/policy", requirePermission("settings:update"), async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { networkInstall?: unknown } | null;
-  if (typeof body?.networkInstall !== "boolean") return c.json({ error: "invalid_body" }, 400);
+  const body = (await c.req.json().catch(() => null)) as {
+    networkInstall?: unknown;
+  } | null;
+  if (typeof body?.networkInstall !== "boolean")
+    return c.json({ error: "invalid_body" }, 400);
   await setNetworkInstallEnabled(c.get("teamId"), body.networkInstall);
   return c.json({ networkInstall: body.networkInstall });
 });
 
 api.post("/bundles", requirePermission("settings:update"), async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { daemonId?: string; kind?: string; action?: BundleAction } | null;
-  if (!body?.daemonId || !body.kind || !body.action || !BUNDLE_ACTIONS.includes(body.action)) {
+  const body = (await c.req.json().catch(() => null)) as {
+    daemonId?: string;
+    kind?: string;
+    action?: BundleAction;
+  } | null;
+  if (
+    !body?.daemonId ||
+    !body.kind ||
+    !body.action ||
+    !BUNDLE_ACTIONS.includes(body.action)
+  ) {
     return c.json({ error: "invalid_body" }, 400);
   }
   const res = await enqueueBundleCommand(c.get("teamId"), {
@@ -271,49 +375,99 @@ api.post("/bundles", requirePermission("settings:update"), async (c) => {
     requestedBy: c.get("auth").userId,
   });
   if (!res.ok) {
-    const status = res.error === "daemon_not_found" ? 404 : res.error === "network_install_disabled" ? 403 : 409;
+    const status =
+      res.error === "daemon_not_found"
+        ? 404
+        : res.error === "network_install_disabled"
+          ? 403
+          : 409;
     return c.json({ error: res.error }, status);
   }
   return c.json(res.command, 202);
 });
 
 api.post("/agents", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { name?: string; role?: string; goal?: string; tags?: string[] } | null;
+  const body = (await c.req.json().catch(() => null)) as {
+    name?: string;
+    role?: string;
+    goal?: string;
+    tags?: string[];
+  } | null;
   if (!body?.name) return c.json({ error: "invalid_body" }, 400);
-  const res = await createAgent(c.get("teamId"), { name: body.name, role: body.role, goal: body.goal, tags: body.tags });
+  const res = await createAgent(c.get("teamId"), {
+    name: body.name,
+    role: body.role,
+    goal: body.goal,
+    tags: body.tags,
+  });
   return c.json(res, 201);
 });
 
 api.post("/agents/:id/publish", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { config?: unknown; changelog?: string };
-  const res = await publishAgent(c.get("teamId"), c.req.param("id"), body.config, body.changelog);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    config?: unknown;
+    changelog?: string;
+  };
+  const res = await publishAgent(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.config,
+    body.changelog,
+  );
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res);
 });
 
 api.post("/agents/:id/run", requirePermission("run:run"), async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { input?: string };
-  const res = await runAgent(c.get("teamId"), c.req.param("id"), body.input ?? "");
+  const res = await runAgent(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.input ?? "",
+  );
   if (!res) return c.json({ error: "not_found" }, 404);
   if ("error" in res) return c.json(res, 409);
   return c.json(res, 202);
 });
 
 api.post("/agents/test", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { config?: unknown; input?: string; runtime?: string };
-  const res = await createTestTask(c.get("teamId"), body.config, body.input ?? "", body.runtime ?? "echo");
+  const body = (await c.req.json().catch(() => ({}))) as {
+    config?: unknown;
+    input?: string;
+    runtime?: string;
+  };
+  const res = await createTestTask(
+    c.get("teamId"),
+    body.config,
+    body.input ?? "",
+    body.runtime ?? "echo",
+  );
   return c.json(res, 202);
 });
 
 /* ── Agent versions (formalize publish) ──────────────────────────────── */
 
-api.post("/agents/:id/versions", requirePermission("agent:create"), async (c) => {
-  const parsed = createAgentVersionInput.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
-  const res = await createAgentVersion(c.get("teamId"), c.req.param("id"), parsed.data);
-  if (!res) return c.json({ error: "not_found" }, 404);
-  return c.json(res, 201);
-});
+api.post(
+  "/agents/:id/versions",
+  requirePermission("agent:create"),
+  async (c) => {
+    const parsed = createAgentVersionInput.safeParse(
+      await c.req.json().catch(() => ({})),
+    );
+    if (!parsed.success)
+      return c.json(
+        { error: "invalid_body", detail: parsed.error.issues },
+        400,
+      );
+    const res = await createAgentVersion(
+      c.get("teamId"),
+      c.req.param("id"),
+      parsed.data,
+    );
+    if (!res) return c.json({ error: "not_found" }, 404);
+    return c.json(res, 201);
+  },
+);
 
 api.get("/agents/:id/versions", requirePermission("agent:read"), async (c) => {
   const items = await listAgentVersions(c.get("teamId"), c.req.param("id"));
@@ -323,7 +477,10 @@ api.get("/agents/:id/versions", requirePermission("agent:read"), async (c) => {
 /* ── Run reviews (runId = agent_tasks.id) — the learning loop ─────────── */
 
 api.post("/runs/:id/review", requirePermission("run:run"), async (c) => {
-  const existing = await getRunReviewByRunId(c.get("teamId"), c.req.param("id"));
+  const existing = await getRunReviewByRunId(
+    c.get("teamId"),
+    c.req.param("id"),
+  );
   if (existing) return c.json(withChangeIds(existing));
   const review = await generateRunReview(c.get("teamId"), c.req.param("id"));
   if (!review) return c.json({ error: "not_found" }, 404);
@@ -342,17 +499,35 @@ api.get("/run-reviews", requirePermission("review:read"), async (c) => {
   return c.json({ items: rows.map(withChangeIds), total: rows.length });
 });
 
-api.post("/run-reviews/:id/approve", requirePermission("review:approve"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { changeIds?: string[] };
-  const res = await applyRunReview(c.get("teamId"), c.req.param("id"), body.changeIds);
-  if (!res) return c.json({ error: "not_found" }, 404);
-  return c.json({ status: "applied", ...res });
-});
+api.post(
+  "/run-reviews/:id/approve",
+  requirePermission("review:approve"),
+  async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      changeIds?: string[];
+    };
+    const res = await applyRunReview(
+      c.get("teamId"),
+      c.req.param("id"),
+      body.changeIds,
+    );
+    if (!res) return c.json({ error: "not_found" }, 404);
+    return c.json({ status: "applied", ...res });
+  },
+);
 
-api.post("/run-reviews/:id/reject", requirePermission("review:approve"), async (c) => {
-  const ok = await setRunReviewStatus(c.get("teamId"), c.req.param("id"), "rejected");
-  return c.json({ status: "rejected", ok }, ok ? 200 : 404);
-});
+api.post(
+  "/run-reviews/:id/reject",
+  requirePermission("review:approve"),
+  async (c) => {
+    const ok = await setRunReviewStatus(
+      c.get("teamId"),
+      c.req.param("id"),
+      "rejected",
+    );
+    return c.json({ status: "rejected", ok }, ok ? 200 : 404);
+  },
+);
 
 /* ── Memory & skills (read for UI + injection; writes only via approval) ─ */
 
@@ -378,24 +553,37 @@ api.get("/skills/:id/versions", requirePermission("skill:read"), async (c) => {
 });
 
 /* ── Runtime provider keys (managed from the web UI, injected into the daemon) ── */
-api.get("/settings/provider-keys", requirePermission("settings:read"), async (c) => {
-  return c.json({ items: await listProviderKeys(c.get("teamId")) });
-});
+api.get(
+  "/settings/provider-keys",
+  requirePermission("settings:read"),
+  async (c) => {
+    return c.json({ items: await listProviderKeys(c.get("teamId")) });
+  },
+);
 
-api.put("/settings/provider-keys/:provider", requirePermission("settings:update"), async (c) => {
-  const provider = c.req.param("provider");
-  if (!isSupportedProvider(provider)) return c.json({ error: "unsupported_provider" }, 400);
-  const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
-  const key = typeof body.key === "string" ? body.key.trim() : "";
-  if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
-  await setProviderKey(c.get("teamId"), provider, key);
-  return c.json({ ok: true });
-});
+api.put(
+  "/settings/provider-keys/:provider",
+  requirePermission("settings:update"),
+  async (c) => {
+    const provider = c.req.param("provider");
+    if (!isSupportedProvider(provider))
+      return c.json({ error: "unsupported_provider" }, 400);
+    const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
+    const key = typeof body.key === "string" ? body.key.trim() : "";
+    if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
+    await setProviderKey(c.get("teamId"), provider, key);
+    return c.json({ ok: true });
+  },
+);
 
-api.delete("/settings/provider-keys/:provider", requirePermission("settings:delete"), async (c) => {
-  await deleteProviderKey(c.get("teamId"), c.req.param("provider"));
-  return c.json({ ok: true });
-});
+api.delete(
+  "/settings/provider-keys/:provider",
+  requirePermission("settings:delete"),
+  async (c) => {
+    await deleteProviderKey(c.get("teamId"), c.req.param("provider"));
+    return c.json({ ok: true });
+  },
+);
 
 /* ───────────────────────────── Runs (union) ──────────────────────────── */
 
@@ -441,9 +629,15 @@ api.get("/chat/sessions", requirePermission("run:read"), async (c) => {
 });
 
 api.post("/chat/sessions", requirePermission("run:run"), async (c) => {
-  const body = await c.req.json<{ agentId?: string; title?: string }>().catch(() => ({}) as { agentId?: string; title?: string });
+  const body = await c.req
+    .json<{ agentId?: string; title?: string }>()
+    .catch(() => ({}) as { agentId?: string; title?: string });
   if (!body.agentId) return c.json({ error: "agentId_required" }, 400);
-  const session = await createChatSession(c.get("teamId"), { agentId: body.agentId, title: body.title }, c.get("auth").userId);
+  const session = await createChatSession(
+    c.get("teamId"),
+    { agentId: body.agentId, title: body.title },
+    c.get("auth").userId,
+  );
   if (!session) return c.json({ error: "agent_not_found" }, 404);
   return c.json(session, 201);
 });
@@ -454,14 +648,24 @@ api.get("/chat/sessions/:id", requirePermission("run:read"), async (c) => {
   return c.json(res);
 });
 
-api.post("/chat/sessions/:id/messages", requirePermission("run:run"), async (c) => {
-  const body = await c.req.json<{ content?: string }>().catch(() => ({}) as { content?: string });
-  const content = (body.content ?? "").trim();
-  if (!content) return c.json({ error: "content_required" }, 400);
-  const res = await sendChatMessage(c.get("teamId"), c.req.param("id"), content);
-  if (!res) return c.json({ error: "not_found" }, 404);
-  return c.json(res, 202);
-});
+api.post(
+  "/chat/sessions/:id/messages",
+  requirePermission("run:run"),
+  async (c) => {
+    const body = await c.req
+      .json<{ content?: string }>()
+      .catch(() => ({}) as { content?: string });
+    const content = (body.content ?? "").trim();
+    if (!content) return c.json({ error: "content_required" }, 400);
+    const res = await sendChatMessage(
+      c.get("teamId"),
+      c.req.param("id"),
+      content,
+    );
+    if (!res) return c.json({ error: "not_found" }, 404);
+    return c.json(res, 202);
+  },
+);
 
 api.post("/runs/:id/approve", async (c) => {
   // P1 stub — approval gate wired in Phase 4.
@@ -483,7 +687,12 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
  * the REST snapshot. Resumable via `?lastEventId=<seq>`. Each SSE `id` is the
  * source message seq, so reconnect replays only messages after the last cursor.
  */
-async function streamAgentTaskLive(stream: SSEStreamingApi, id: string, teamId: string, resumeAfter: number) {
+async function streamAgentTaskLive(
+  stream: SSEStreamingApi,
+  id: string,
+  teamId: string,
+  resumeAfter: number,
+) {
   let lastSeq = resumeAfter;
   let lastStatus: WebRunStatusOrNull = null;
   let envSeq = 0;
@@ -491,14 +700,33 @@ async function streamAgentTaskLive(stream: SSEStreamingApi, id: string, teamId: 
 
   const emit = async (ev: LiveRunEvent, idSeq: number) => {
     envSeq += 1;
-    const envelope = { id: String(idSeq), seq: envSeq, ts: new Date().toISOString(), runId: id, event: ev.type, data: ev };
-    await stream.writeSSE({ id: String(idSeq), event: ev.type, data: JSON.stringify(envelope) });
+    const envelope = {
+      id: String(idSeq),
+      seq: envSeq,
+      ts: new Date().toISOString(),
+      runId: id,
+      event: ev.type,
+      data: ev,
+    };
+    await stream.writeSSE({
+      id: String(idSeq),
+      event: ev.type,
+      data: JSON.stringify(envelope),
+    });
   };
 
   for (let i = 0; i < 1500; i++) {
     const status = await getAgentTaskStatus(teamId, id);
     if (!status) {
-      await emit({ type: "stream.error", kind: "unknown", message: "not_found", fatal: true }, lastSeq);
+      await emit(
+        {
+          type: "stream.error",
+          kind: "unknown",
+          message: "not_found",
+          fatal: true,
+        },
+        lastSeq,
+      );
       return;
     }
     if (status !== lastStatus) {
@@ -524,14 +752,20 @@ api.get("/runs/:id/live", (c) => {
     // -1 = "nothing seen yet" so the first message (seq 0) is included; a real
     // lastEventId resumes strictly after the last seq the client acknowledged.
     const lastId = c.req.query("lastEventId");
-    const resumeAfter = lastId && Number.isFinite(Number(lastId)) ? Number(lastId) : -1;
-    return streamSSE(c, (stream) => streamAgentTaskLive(stream, id, teamId, resumeAfter));
+    const resumeAfter =
+      lastId && Number.isFinite(Number(lastId)) ? Number(lastId) : -1;
+    return streamSSE(c, (stream) =>
+      streamAgentTaskLive(stream, id, teamId, resumeAfter),
+    );
   }
   return streamSSE(c, async (stream) => {
     for (let i = 0; i < 1500; i++) {
       const run = await getRun(id, teamId);
       if (!run) {
-        await stream.writeSSE({ event: "error", data: JSON.stringify({ error: "not_found" }) });
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ error: "not_found" }),
+        });
         return;
       }
       await stream.writeSSE({ event: "run", data: JSON.stringify(run) });

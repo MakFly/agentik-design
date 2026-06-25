@@ -23,8 +23,12 @@ export function useRealtimeSync(team: string) {
       timers.set(key, setTimeout(fn, 120));
     };
 
-    const invalidateRuns = () => qc.invalidateQueries({ queryKey: qk.runs.all(team) });
-    const invalidateAgents = () => qc.invalidateQueries({ queryKey: qk.agents.all(team) });
+    const invalidateRuns = () =>
+      qc.invalidateQueries({ queryKey: qk.runs.all(team) });
+    const invalidateAgents = () =>
+      qc.invalidateQueries({ queryKey: qk.agents.all(team) });
+    const invalidateSystem = () =>
+      qc.invalidateQueries({ queryKey: qk.settings.system(team) });
 
     const unsub = realtime.subscribe((event) => {
       switch (event.kind) {
@@ -35,6 +39,7 @@ export function useRealtimeSync(team: string) {
           break;
         case "presence":
           debounce("agents", invalidateAgents);
+          debounce("system", invalidateSystem);
           break;
         default:
           break;

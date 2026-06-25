@@ -1,37 +1,76 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { Server, Cpu, CircleCheck, CircleX, Wifi, WifiOff, Download, ArrowUpCircle, Loader2, ShieldCheck, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryState } from "nuqs";
+import {
+  ArrowUpCircle,
+  CircleCheck,
+  CircleX,
+  CircleStop,
+  Copy,
+  KeyRound,
+  Laptop,
+  Loader2,
+  PlugZap,
+  RotateCcw,
+  Play,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+  Terminal,
+  Trash2,
+  WifiOff,
+} from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api/client";
+import { Badge } from "@/components/ui/badge";
+import { PresenceBadge } from "@/components/shared/presence-badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { qk } from "@/lib/api/queryKeys";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProviderKeysSection } from "./provider-keys-section";
-import { useBundles, useRunBundle, useSetBundlePolicy, type BundleCommand } from "./bundles-api";
+import {
+  useDaemonToken,
+  useRevokeDaemonToken,
+  useRotateDaemonToken,
+} from "./daemon-token-api";
 
 interface DetectedTool {
   name: string;
   path?: string;
   version?: string;
   available: boolean;
-  /** True when the CLI already has usable credentials on the host (saved login or env key). */
   authenticated?: boolean;
-  authSource?: string; // "session" | "key"
+  authSource?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  updateChecked?: boolean;
 }
 
 interface DaemonInfo {
   id: string;
   name: string;
   status: string;
+  mode?: "personal" | "org" | "legacy";
   lastHeartbeatAt: string | null;
   meta: {
     host?: { host?: string; os?: string; arch?: string; go?: string };
     runtimes?: string[];
     tools?: DetectedTool[];
-    /** CLI kinds this daemon knows how to install (from its bundle allowlist). */
     installable?: string[];
   };
 }
@@ -40,285 +79,986 @@ interface SystemInfo {
   daemonEnabled: boolean;
   providers: { anthropic: boolean; openai: boolean; google: boolean };
   daemons: DaemonInfo[];
-  runtimes: Array<{ id: string; daemonId: string; kind: string; status: string }>;
-  /** Runtimes that are wired on an online daemon with the backing CLI present — selectable for new agents. */
+  runtimes: Array<{
+    id: string;
+    daemonId: string;
+    kind: string;
+    status: string;
+  }>;
   availableRuntimes: string[];
+}
+
+const PERSONAL_RUNTIMES = "echo,claude,hermes";
+const DEFAULT_ENGINE_URL =
+  process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:8787";
+
+export function buildAgentikSetupCommand(
+  token: string,
+  engineUrl = DEFAULT_ENGINE_URL,
+): string {
+  return `agentik setup --url ${engineUrl} --token ${token} --runtimes ${PERSONAL_RUNTIMES} --start`;
+}
+
+export function buildDockerDaemonCommand(
+  token: string,
+  engineUrl = DEFAULT_ENGINE_URL,
+): string {
+  return `docker run -d --name agentik-daemon -e ENGINE_URL=${engineUrl} -e DAEMON_USER_TOKEN=${token} -e RUNTIME_KINDS=${PERSONAL_RUNTIMES} agentik-daemon:latest`;
+}
+
+export function buildPersonalDaemonCommand(token: string): string {
+  return buildAgentikSetupCommand(token);
 }
 
 function useSystem(team: string) {
   return useQuery({
-    queryKey: ["team", team, "system"],
+    queryKey: qk.settings.system(team),
     queryFn: ({ signal }) => apiFetch<SystemInfo>("/system", { team, signal }),
-    refetchInterval: 5000, // diagnostics view — keep it live
+    refetchInterval: 5000,
   });
 }
 
-function Chip({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-        ok ? "bg-success/10 text-success" : "bg-surface-2 text-muted-foreground",
-      )}
-    >
-      {ok ? <CircleCheck className="size-3.5" /> : <CircleX className="size-3.5" />}
-      {label}
-    </span>
-  );
+interface LocalDaemonStatus {
+  ok: boolean;
+  installed: boolean;
+  running: boolean;
+  status: string;
 }
 
-const cmdKey = (daemonId: string, kind: string) => `${daemonId}|${kind}`;
+interface LocalDaemonJob {
+  jobId: string;
+}
+
+interface InstallEvent {
+  phase:
+    | "started"
+    | "log"
+    | "status"
+    | "daemon.running"
+    | "completed"
+    | "failed";
+  message: string;
+  at: string;
+  running?: boolean;
+  terminal?: boolean;
+}
+
+function useLocalDaemonStatus() {
+  return useQuery({
+    queryKey: ["local-daemon"],
+    queryFn: ({ signal }) =>
+      apiFetch<LocalDaemonStatus>("/local/daemon", { signal }),
+    refetchInterval: 3000,
+  });
+}
+
+function useCreateLocalDaemonJob(team: string) {
+  return useMutation({
+    mutationFn: (input: { token: string }) =>
+      apiFetch<LocalDaemonJob>("/local/daemon/jobs", {
+        method: "POST",
+        team,
+        body: {
+          token: input.token,
+          engineUrl: DEFAULT_ENGINE_URL,
+          runtimes: PERSONAL_RUNTIMES,
+          team,
+        },
+      }),
+  });
+}
+
+function useControlLocalDaemon(team: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (action: "start" | "stop") =>
+      apiFetch<LocalDaemonStatus>("/local/daemon", {
+        method: "POST",
+        team,
+        body: { action },
+      }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["local-daemon"] });
+      qc.invalidateQueries({ queryKey: qk.settings.system(team) });
+    },
+  });
+}
+
+function useUninstallLocalDaemon(team: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<LocalDaemonStatus>("/local/daemon", {
+        method: "DELETE",
+        team,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["local-daemon"] });
+      qc.invalidateQueries({ queryKey: qk.settings.system(team) });
+    },
+  });
+}
+
+function streamInstallJob(
+  jobId: string,
+  onEvent: (event: InstallEvent) => void,
+): Promise<InstallEvent> {
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`/api/v1/local/daemon/jobs/${jobId}/events`);
+    const finish = (event: InstallEvent) => {
+      es.close();
+      if (event.phase === "failed") {
+        reject(new Error(event.message));
+        return;
+      }
+      resolve(event);
+    };
+    const handle = (raw: MessageEvent) => {
+      const event = JSON.parse(raw.data) as InstallEvent;
+      onEvent(event);
+      if (event.terminal) finish(event);
+    };
+    for (const type of [
+      "started",
+      "log",
+      "status",
+      "daemon.running",
+      "completed",
+      "failed",
+    ]) {
+      es.addEventListener(type, handle);
+    }
+    es.onerror = () => {
+      es.close();
+      reject(
+        new Error(
+          "Install stream unavailable. The local daemon route may not be registered yet.",
+        ),
+      );
+    };
+  });
+}
+
+const modeLabel = (mode: DaemonInfo["mode"]): string => {
+  if (mode === "personal") return "Personal";
+  if (mode === "org") return "Workspace";
+  if (mode === "legacy") return "Legacy";
+  return "Workspace";
+};
+
+const CONNECTION_SECTIONS = [
+  { value: "overview", label: "Overview" },
+  { value: "setup", label: "Daemon" },
+  { value: "providers", label: "Provider keys" },
+] as const;
+
+type ConnectionSection = (typeof CONNECTION_SECTIONS)[number]["value"];
 
 export function RuntimesTab({ team }: { team: string }) {
-  const { data, isLoading, isError } = useSystem(team);
-  const bundles = useBundles(team);
-  const runBundle = useRunBundle(team);
-  const setPolicy = useSetBundlePolicy(team);
+  const system = useSystem(team);
+  const [section, setSection] = useQueryState("section", {
+    defaultValue: "overview",
+  });
+  const active: ConnectionSection = CONNECTION_SECTIONS.some(
+    (s) => s.value === section,
+  )
+    ? (section as ConnectionSection)
+    : section === "computers"
+      ? "setup"
+      : "overview";
 
-  const networkInstall = bundles.data?.policy.networkInstall ?? false;
-
-  // Latest command per (daemon, kind) so a row can show its in-flight / last state.
-  const latestByTarget = new Map<string, BundleCommand>();
-  for (const c of bundles.data?.items ?? []) {
-    if (!latestByTarget.has(cmdKey(c.daemonId, c.kind))) latestByTarget.set(cmdKey(c.daemonId, c.kind), c);
-  }
-
-  function run(daemonId: string, kind: string, action: "install" | "upgrade") {
-    runBundle.mutate(
-      { daemonId, kind, action },
-      {
-        onSuccess: () => toast.success(`${action} ${kind} queued`),
-        onError: (e) => toast.error(e instanceof Error ? e.message : "Bundle command failed"),
-      },
-    );
-  }
-
-  if (isError) {
+  if (system.isError) {
     return (
       <EmptyState
         icon={WifiOff}
         title="Engine unreachable"
-        description="Couldn't load system info. Is the engine running (and is the app in non-mock mode)?"
+        description="Couldn't load runtime system info. Check the engine process and the app API proxy."
       />
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Capabilities summary */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-foreground">Capabilities</h2>
-        <div className="flex flex-wrap gap-2">
-          <Chip ok={!!data?.daemonEnabled} label="Daemon protocol" />
-          <Chip ok={!!data?.providers.anthropic} label="Anthropic key" />
-          <Chip ok={!!data?.providers.openai} label="OpenAI key" />
-          <Chip ok={!!data?.providers.google} label="Google key" />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Pills above reflect keys in the engine&apos;s own env. Manage per-org runtime keys below — Agent CLIs (e.g.
-          Claude Code) may also authenticate via their own session instead of a key.
-        </p>
+    <Tabs value={active} onValueChange={(v) => setSection(v)} className="gap-5">
+      <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <TabsList className="w-fit">
+          {CONNECTION_SECTIONS.map((s) => (
+            <TabsTrigger
+              key={s.value}
+              value={s.value}
+              className="flex-none px-3"
+            >
+              {s.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </div>
 
-        {/* Selectable runtimes — the set the agent builder can target right now */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Selectable runtimes</span>
-          {data && data.availableRuntimes.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {data.availableRuntimes.map((r) => (
-                <span key={r} className="inline-flex items-center gap-1 rounded-full bg-running/10 px-2 py-0.5 text-[11px] font-medium text-running">
-                  <Cpu className="size-3" />
-                  {r}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              None yet — connect a daemon whose host has the agent CLI installed (claude, hermes…) to make it selectable in the agent builder.
-            </p>
-          )}
-        </div>
-      </section>
+      <TabsContent value="overview" className="mt-0 flex flex-col gap-5">
+        <ConnectionsIntro />
+        <RuntimeSummary data={system.data} loading={system.isLoading} />
+      </TabsContent>
 
-      {/* Managed runtime provider keys (encrypted, injected into the daemon) */}
-      <ProviderKeysSection team={team} />
+      <TabsContent value="setup" className="mt-0 flex flex-col gap-5">
+        <ConnectMachine team={team} />
+        <ConnectedComputers data={system.data} loading={system.isLoading} />
+      </TabsContent>
 
-      {/* Daemons + detected CLIs + bundle install */}
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-medium text-foreground">Daemons &amp; runtimes</h2>
+      <TabsContent value="providers" className="mt-0">
+        <ProviderKeysSection team={team} />
+      </TabsContent>
+    </Tabs>
+  );
+}
 
-          {/* Network-install policy — persisted per org (not an env flag). Off by default. */}
-          <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5">
-            <span className="flex flex-col">
-              <span className="text-xs font-medium">Allow CLI installs from the UI</span>
-              <span className="text-[11px] text-muted-foreground">Lets owners install/upgrade agent CLIs on a daemon host. Off by default.</span>
-            </span>
-            <Switch
-              checked={networkInstall}
-              disabled={setPolicy.isPending || bundles.isLoading}
-              onCheckedChange={(v) =>
-                setPolicy.mutate(v, {
-                  onSuccess: () => toast.success(v ? "CLI installs enabled" : "CLI installs disabled"),
-                  onError: (e) => toast.error(e instanceof Error ? e.message : "Need owner rights to change this"),
-                })
-              }
-            />
-          </label>
-        </div>
-
-        {isLoading && !data ? (
-          <div className="h-24 animate-pulse rounded-xl bg-surface-2" />
+function ConnectedComputers({
+  data,
+  loading,
+}: {
+  data?: SystemInfo;
+  loading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Connected computers</CardTitle>
+        <CardDescription>
+          Machines checking in and the agent CLIs detected on each one.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {loading && !data ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Skeleton className="h-56 rounded-lg" />
+            <Skeleton className="h-56 rounded-lg" />
+          </div>
         ) : data && data.daemons.length > 0 ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {data.daemons.map((d) => {
-              const online = d.status === "online";
-              const tools = d.meta.tools ?? [];
-              const installable = d.meta.installable ?? [];
-              const host = d.meta.host;
-              return (
-                <div key={d.id} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Server className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate font-medium">{d.name}</span>
-                    </div>
-                    <span
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
-                        online ? "bg-success/10 text-success" : "bg-surface-2 text-muted-foreground",
-                      )}
-                    >
-                      {online ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
-                      {d.status}
-                    </span>
-                  </div>
-
-                  {host && (
-                    <p className="font-mono text-[11px] text-muted-foreground">
-                      {host.host} · {host.os}/{host.arch} · {host.go}
-                    </p>
-                  )}
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {(d.meta.runtimes ?? []).map((r) => (
-                      <span key={r} className="inline-flex items-center gap-1 rounded-full bg-running/10 px-2 py-0.5 text-[11px] font-medium text-running">
-                        <Cpu className="size-3" />
-                        {r}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Detected CLIs — who/what/how we can actually run, with install/upgrade */}
-                  <div className="flex flex-col gap-1.5 border-t border-border pt-2">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Detected CLIs</span>
-                    {tools.map((t) => {
-                      const canBundle = online && installable.includes(t.name);
-                      const cmd = latestByTarget.get(cmdKey(d.id, t.name));
-                      const inFlight = cmd?.status === "queued" || cmd?.status === "running";
-                      return (
-                        <div key={t.name} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="inline-flex items-center gap-1.5">
-                            {t.available ? (
-                              <CircleCheck className="size-3.5 text-success" />
-                            ) : (
-                              <CircleX className="size-3.5 text-muted-foreground/40" />
-                            )}
-                            <span className={cn("font-mono", !t.available && "text-muted-foreground")}>{t.name}</span>
-                          </span>
-                          <span className="flex items-center gap-2">
-                            <span className="truncate text-[11px] text-muted-foreground" title={t.path}>
-                              {t.available ? (t.version || "available") : "not found"}
-                            </span>
-                            {t.available &&
-                              (t.authenticated ? (
-                                <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success"
-                                  title={`Authenticated via ${t.authSource === "key" ? "an API key" : "a saved session"} — usable now`}
-                                >
-                                  <ShieldCheck className="size-2.5" /> ready
-                                </span>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning"
-                                  title="Installed but not authenticated — log in on the host, or set a matching provider key below"
-                                >
-                                  <ShieldAlert className="size-2.5" /> auth
-                                </span>
-                              ))}
-                            {canBundle &&
-                              (inFlight ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-running">
-                                  <Loader2 className="size-3 animate-spin" />
-                                  {cmd?.action}…
-                                </span>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 gap-1 px-2 text-[11px]"
-                                  disabled={!networkInstall || runBundle.isPending}
-                                  title={networkInstall ? undefined : "Enable “Allow CLI installs from the UI” first"}
-                                  onClick={() => run(d.id, t.name, t.available ? "upgrade" : "install")}
-                                >
-                                  {t.available ? <ArrowUpCircle className="size-3" /> : <Download className="size-3" />}
-                                  {t.available ? "Upgrade" : "Install"}
-                                </Button>
-                              ))}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <p className="text-[11px] text-muted-foreground">
-                    {online && d.lastHeartbeatAt ? `Heartbeat ${formatRelativeTime(d.lastHeartbeatAt)}` : "No recent heartbeat"}
-                  </p>
-                </div>
-              );
-            })}
+          <div className="grid gap-3 lg:grid-cols-2">
+            {data.daemons.map((d) => (
+              <DaemonCard key={d.id} daemon={d} />
+            ))}
           </div>
         ) : (
           <EmptyState
-            icon={Server}
-            title="No daemon connected"
-            description="Start the agent daemon (make dev/daemon) to register runtimes and detect available agent CLIs here."
+            icon={Laptop}
+            title="No computer connected"
+            description="Install the daemon on a target machine and it will appear here."
           />
         )}
+      </CardContent>
+    </Card>
+  );
+}
 
-        {/* Recent bundle commands — feedback on installs/upgrades */}
-        {(bundles.data?.items.length ?? 0) > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Recent install activity</span>
-            <ul className="flex flex-col gap-1">
-              {bundles.data!.items.slice(0, 6).map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px]">
-                  <span className="inline-flex items-center gap-2">
-                    <BundleStatusDot status={c.status} />
-                    <span className="font-mono">
-                      {c.action} {c.kind}
-                    </span>
-                  </span>
-                  <span className="truncate text-muted-foreground" title={c.error ?? c.result ?? undefined}>
-                    {c.error ? c.error : c.result ? c.result : c.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
+function ConnectionsIntro() {
+  return (
+    <section className="rounded-xl border border-border bg-surface p-4 shadow-sm">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)] lg:items-start">
+        <div className="max-w-2xl">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground">
+            <PlugZap className="size-3.5" />
+            Local tools
           </div>
-        )}
-      </section>
+          <h2 className="text-base font-semibold text-foreground">
+            Connect a computer so agents can use its CLIs.
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Agentik does not run Claude, Hermes, or other local CLIs on its own.
+            A small local connector reports which tools are installed on your
+            machine and makes them selectable for runs.
+          </p>
+        </div>
+        <ol className="grid gap-2 text-sm">
+          <SetupStep
+            number="1"
+            title="Create command"
+            description="Generate a private one-time command for your account."
+          />
+          <SetupStep
+            number="2"
+            title="Install locally"
+            description="Run the Agentik CLI on the machine that owns the CLIs."
+          />
+          <SetupStep
+            number="3"
+            title="Keep it online"
+            description="When the connector is running, available tools appear below."
+          />
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+function SetupStep({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <li className="grid grid-cols-[1.75rem_1fr] gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+      <span className="flex size-7 items-center justify-center rounded-full bg-surface text-xs font-semibold text-foreground shadow-xs">
+        {number}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-foreground">
+          {title}
+        </span>
+        <span className="block text-xs leading-5 text-muted-foreground">
+          {description}
+        </span>
+      </span>
+    </li>
+  );
+}
+
+function RuntimeSummary({
+  data,
+  loading,
+}: {
+  data?: SystemInfo;
+  loading: boolean;
+}) {
+  const online = data?.daemons.filter((d) => d.status === "online").length ?? 0;
+  return (
+    <div className="grid gap-3 md:grid-cols-3">
+      <SummaryCard
+        label="Local connector"
+        description="Engine accepts daemon connections for this workspace."
+        value={data?.daemonEnabled ? "Enabled" : "Unavailable"}
+        ok={Boolean(data?.daemonEnabled)}
+        loading={loading}
+      />
+      <SummaryCard
+        label="Connected computers"
+        description="Machines currently available for agent runs."
+        value={`${online}/${data?.daemons.length ?? 0} online`}
+        ok={online > 0}
+        loading={loading}
+      />
+      <Card className="gap-3 py-4">
+        <CardHeader className="px-4">
+          <CardTitle className="text-sm">Tools ready for runs</CardTitle>
+          <CardDescription>Selectable by agents right now.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-1.5 px-4">
+          {loading && !data ? (
+            <Skeleton className="h-6 w-28" />
+          ) : data && data.availableRuntimes.length > 0 ? (
+            data.availableRuntimes.map((r) => (
+              <Badge key={r} variant="secondary">
+                {r}
+              </Badge>
+            ))
+          ) : (
+            <span className="text-xs text-muted-foreground">None</span>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function BundleStatusDot({ status }: { status: BundleCommand["status"] }) {
-  const cls =
-    status === "done"
-      ? "bg-success"
-      : status === "failed"
-        ? "bg-danger"
-        : status === "running"
-          ? "bg-running animate-pulse"
-          : "bg-muted-foreground/40";
-  return <span className={cn("size-2 shrink-0 rounded-full", cls)} />;
+function SummaryCard({
+  label,
+  description,
+  value,
+  ok,
+  loading,
+}: {
+  label: string;
+  description: string;
+  value: string;
+  ok: boolean;
+  loading: boolean;
+}) {
+  return (
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="text-sm">{label}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex items-center gap-2 px-4">
+        {loading ? (
+          <Skeleton className="h-6 w-24" />
+        ) : (
+          <>
+            {ok ? (
+              <CircleCheck className="size-4 text-success" />
+            ) : (
+              <CircleX className="size-4 text-muted-foreground" />
+            )}
+            <span className="text-sm font-medium">{value}</span>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConnectMachine({ team }: { team: string }) {
+  const token = useDaemonToken(team);
+  const rotate = useRotateDaemonToken(team);
+  const revoke = useRevokeDaemonToken(team);
+  const localDaemon = useLocalDaemonStatus();
+  const createInstallJob = useCreateLocalDaemonJob(team);
+  const controlLocal = useControlLocalDaemon(team);
+  const uninstallLocal = useUninstallLocalDaemon(team);
+  const qc = useQueryClient();
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
+  const [installing, setInstalling] = useState(false);
+  const cliCommand = freshToken ? buildAgentikSetupCommand(freshToken) : null;
+  const dockerCommand = freshToken
+    ? buildDockerDaemonCommand(freshToken)
+    : null;
+  const orgCount = token.data?.eligibleOrgs.length ?? 0;
+  const localInstalled = Boolean(localDaemon.data?.installed);
+  const localRunning = Boolean(localDaemon.data?.running);
+  const loadingLocalState = localDaemon.isLoading && !localDaemon.data;
+  const generateCommand = () =>
+    rotate.mutate(undefined, {
+      onSuccess: (res) => {
+        setFreshToken(res.token);
+        toast.success("Connection command created");
+      },
+      onError: (e) =>
+        toast.error(
+          e instanceof Error ? e.message : "Could not create setup command",
+        ),
+    });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Install daemon</CardTitle>
+          <CardDescription>
+            Create a private setup command for the computer that should execute
+            local tools.
+          </CardDescription>
+        </div>
+        <CardAction>
+          {token.data?.hasToken ? (
+            <Badge variant="secondary">
+              <KeyRound /> Token {token.data.prefix}
+            </Badge>
+          ) : (
+            <Badge variant="outline">No command yet</Badge>
+          )}
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+              <span>
+                Works for {orgCount} eligible org{orgCount === 1 ? "" : "s"}
+              </span>
+              {token.data?.issuedAt && (
+                <span>Created {formatRelativeTime(token.data.issuedAt)}</span>
+              )}
+              {freshToken && (
+                <span className="font-medium text-warning">
+                  Copy now. This exact command is shown once.
+                </span>
+              )}
+            </div>
+            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+              Generating a command from the CLI native or Docker runner tab
+              creates a new setup token and invalidates the previous one. Revoke
+              access when this computer should no longer connect.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={
+                (!token.data?.hasToken && !localInstalled) ||
+                revoke.isPending ||
+                uninstallLocal.isPending
+              }
+              onClick={async () => {
+                const local = await uninstallLocal.mutateAsync().then(
+                  () => ({ ok: true as const }),
+                  (reason) => ({ ok: false as const, reason }),
+                );
+                const remote = token.data?.hasToken
+                  ? await revoke.mutateAsync().then(
+                      () => ({ ok: true as const }),
+                      (reason) => ({ ok: false as const, reason }),
+                    )
+                  : { ok: true as const };
+                if (!remote.ok) {
+                  toast.error(
+                    remote.reason instanceof Error
+                      ? remote.reason.message
+                      : "Could not revoke access",
+                  );
+                  return;
+                }
+                setFreshToken(null);
+                setInstallEvents([]);
+                qc.invalidateQueries({ queryKey: ["local-daemon"] });
+                qc.invalidateQueries({ queryKey: qk.settings.system(team) });
+                toast.success(
+                  !local.ok
+                    ? "Access revoked, local uninstall failed"
+                    : "Daemon uninstalled",
+                );
+              }}
+            >
+              <Trash2 className="size-4" />
+              Uninstall daemon
+            </Button>
+          </div>
+        </div>
+
+        <Tabs defaultValue="local" className="gap-3">
+          <TabsList className="w-fit">
+            <TabsTrigger value="local">Local install</TabsTrigger>
+            <TabsTrigger value="cli">CLI native</TabsTrigger>
+            <TabsTrigger value="docker">Docker runner</TabsTrigger>
+          </TabsList>
+          <TabsContent value="local" className="mt-0">
+            <div className="grid gap-3 rounded-lg border border-border bg-surface-2 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center gap-2 text-xs font-medium text-foreground">
+                  <Terminal className="size-3.5 text-muted-foreground" />
+                  Daemon on this computer
+                </div>
+                <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+                  Install the local Agentik daemon, then start or stop it from
+                  this machine.
+                </p>
+                <LocalDaemonLine status={localDaemon.data} />
+              </div>
+              {loadingLocalState ? (
+                <DaemonButtonsSkeleton />
+              ) : !localInstalled ? (
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={
+                    rotate.isPending || createInstallJob.isPending || installing
+                  }
+                  onClick={async () => {
+                    try {
+                      setInstalling(true);
+                      setInstallEvents([]);
+                      const setupToken =
+                        freshToken ?? (await rotate.mutateAsync()).token;
+                      setFreshToken(setupToken);
+                      const job = await createInstallJob.mutateAsync({
+                        token: setupToken,
+                      });
+                      const terminal = await streamInstallJob(
+                        job.jobId,
+                        (event) => {
+                          setInstallEvents((events) => [...events, event]);
+                          if (event.phase === "daemon.running") {
+                            qc.invalidateQueries({
+                              queryKey: ["local-daemon"],
+                            });
+                            qc.invalidateQueries({
+                              queryKey: qk.settings.system(team),
+                            });
+                          }
+                        },
+                      );
+                      toast.success(
+                        terminal.phase === "completed"
+                          ? "Daemon started"
+                          : "Daemon install finished",
+                      );
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error
+                          ? e.message
+                          : "Could not install daemon locally",
+                      );
+                    } finally {
+                      setInstalling(false);
+                    }
+                  }}
+                >
+                  {rotate.isPending ||
+                  createInstallJob.isPending ||
+                  installing ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
+                  Install daemon
+                </Button>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    disabled={localRunning || controlLocal.isPending}
+                    onClick={() =>
+                      controlLocal.mutate("start", {
+                        onSuccess: () => toast.success("Daemon started"),
+                        onError: (e) =>
+                          toast.error(
+                            e instanceof Error
+                              ? e.message
+                              : "Could not start daemon",
+                          ),
+                      })
+                    }
+                  >
+                    {controlLocal.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Play className="size-4" />
+                    )}
+                    Start
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!localRunning || controlLocal.isPending}
+                    onClick={() =>
+                      controlLocal.mutate("stop", {
+                        onSuccess: () => toast.success("Daemon stopped"),
+                        onError: (e) =>
+                          toast.error(
+                            e instanceof Error
+                              ? e.message
+                              : "Could not stop daemon",
+                          ),
+                      })
+                    }
+                  >
+                    {controlLocal.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <CircleStop className="size-4" />
+                    )}
+                    Stop
+                  </Button>
+                </div>
+              )}
+            </div>
+            {installing && <InstallProgress events={installEvents} />}
+            <InstallEventLog events={installEvents} />
+          </TabsContent>
+          <TabsContent value="cli" className="mt-0">
+            {cliCommand ? (
+              <CommandBlock
+                label="Run on the target machine"
+                command={cliCommand}
+              />
+            ) : (
+              <GenerateCommand
+                text="Generate a one-time command to set up the native CLI on the target machine."
+                onGenerate={generateCommand}
+                pending={rotate.isPending}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="docker" className="mt-0">
+            {dockerCommand ? (
+              <CommandBlock
+                label="Run a containerized daemon"
+                command={dockerCommand}
+              />
+            ) : (
+              <GenerateCommand
+                text="Generate a one-time command to run a containerized daemon."
+                onGenerate={generateCommand}
+                pending={rotate.isPending}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DaemonButtonsSkeleton() {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Skeleton className="h-9 w-20 rounded-md" />
+      <Skeleton className="h-9 w-20 rounded-md" />
+    </div>
+  );
+}
+
+function InstallProgress({ events }: { events: InstallEvent[] }) {
+  const latest =
+    [...events].reverse().find((event) => event.phase !== "log") ??
+    events.at(-1);
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2.5">
+      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin text-foreground" />
+        <span className="font-medium text-foreground">Installing daemon</span>
+        {latest?.message && (
+          <span className="min-w-0 truncate">{latest.message}</span>
+        )}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+        <div className="h-full w-1/3 animate-[agentik-progress_1.2s_ease-in-out_infinite] rounded-full bg-foreground" />
+      </div>
+      <style jsx>{`
+        @keyframes agentik-progress {
+          0% {
+            transform: translateX(-120%);
+          }
+          100% {
+            transform: translateX(320%);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function LocalDaemonLine({ status }: { status?: LocalDaemonStatus }) {
+  if (!status) {
+    return (
+      <p className="mt-2 text-xs text-muted-foreground">
+        Checking local daemon status...
+      </p>
+    );
+  }
+  return (
+    <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      {status.running ? (
+        <CircleCheck className="size-3.5 text-success" />
+      ) : (
+        <CircleX className="size-3.5 text-muted-foreground" />
+      )}
+      <span>
+        {status.running
+          ? "Local daemon running"
+          : status.installed
+            ? "Local daemon installed, stopped"
+            : "Local daemon not installed"}
+      </span>
+      {status.status && <span className="font-mono">{status.status}</span>}
+    </p>
+  );
+}
+
+function InstallEventLog({ events }: { events: InstallEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <div className="mt-3 max-h-44 overflow-y-auto rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[11px] leading-5">
+      {events.slice(-12).map((event, index) => (
+        <div
+          key={`${event.at}-${index}`}
+          className={cn(
+            "flex gap-2",
+            event.phase === "failed"
+              ? "text-danger"
+              : event.phase === "completed" || event.phase === "daemon.running"
+                ? "text-success"
+                : "text-muted-foreground",
+          )}
+        >
+          <span className="shrink-0 text-muted-foreground">{event.phase}</span>
+          <span className="min-w-0 break-words">{event.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CommandBlock({ label, command }: { label: string; command: string }) {
+  return (
+    <div className="grid gap-2 rounded-lg border border-border bg-surface-2 p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="min-w-0">
+        <div className="mb-1 flex items-center gap-2 text-xs font-medium text-foreground">
+          <Terminal className="size-3.5 text-muted-foreground" />
+          {label}
+        </div>
+        <code className="block overflow-x-auto whitespace-nowrap rounded-md bg-surface px-2.5 py-2 font-mono text-xs">
+          {command}
+        </code>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          navigator.clipboard?.writeText(command);
+          toast.success("Command copied");
+        }}
+      >
+        <Copy className="size-4" />
+        Copy
+      </Button>
+    </div>
+  );
+}
+
+function GenerateCommand({
+  text,
+  onGenerate,
+  pending,
+}: {
+  text: string;
+  onGenerate: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-start gap-2.5 rounded-lg border border-dashed border-border px-3 py-3">
+      <p className="text-xs leading-5 text-muted-foreground">{text}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={pending}
+        onClick={onGenerate}
+      >
+        {pending ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <RotateCcw className="size-4" />
+        )}
+        Generate command
+      </Button>
+    </div>
+  );
+}
+
+function DaemonCard({ daemon }: { daemon: DaemonInfo }) {
+  const online = daemon.status === "online";
+  const stale = !online;
+  const tools = daemon.meta.tools ?? [];
+  const host = daemon.meta.host;
+  return (
+    <Card className="gap-4 py-4">
+      <CardHeader className="px-4">
+        <div className="min-w-0">
+          <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
+            <Server className="size-4 text-muted-foreground" />
+            <span className="truncate">{daemon.name}</span>
+          </CardTitle>
+          <CardDescription className="truncate">
+            {host
+              ? `${host.host ?? "host"} · ${host.os}/${host.arch}`
+              : "Computer details unavailable"}
+          </CardDescription>
+        </div>
+        <CardAction className="flex gap-2">
+          <PresenceBadge status={daemon.status} />
+          <Badge variant="muted">{modeLabel(daemon.mode)}</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4 px-4">
+        <div className="flex flex-wrap gap-1.5">
+          {(daemon.meta.runtimes ?? []).map((r) => (
+            <Badge key={r} variant="muted" className="font-mono">
+              {r}
+            </Badge>
+          ))}
+          {(daemon.meta.runtimes ?? []).length === 0 && (
+            <span className="text-xs text-muted-foreground">
+              No tools available to runs yet
+            </span>
+          )}
+        </div>
+        <Separator />
+        <div className="flex flex-col gap-2">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Agent CLIs on this computer
+          </span>
+          {tools.length > 0 ? (
+            tools.map((tool) => {
+              const upToDate =
+                tool.available &&
+                tool.updateChecked &&
+                tool.updateAvailable === false;
+              const upgradeReady =
+                tool.available &&
+                tool.updateChecked &&
+                tool.updateAvailable === true;
+              return (
+                <div
+                  key={tool.name}
+                  className="rounded-md border border-border px-2.5 py-2 text-xs"
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {tool.available ? (
+                      stale ? (
+                        <CircleCheck className="size-3.5 text-muted-foreground/60" />
+                      ) : (
+                        <CircleCheck className="size-3.5 text-success" />
+                      )
+                    ) : (
+                      <CircleX className="size-3.5 text-muted-foreground" />
+                    )}
+                    <span
+                      className={cn(
+                        "font-mono",
+                        (!tool.available || stale) && "text-muted-foreground",
+                      )}
+                    >
+                      {tool.name}
+                    </span>
+                    {!stale &&
+                      tool.available &&
+                      (tool.authenticated ? (
+                        <Badge variant="success">
+                          <ShieldCheck /> ready
+                        </Badge>
+                      ) : (
+                        <Badge variant="warning">
+                          <ShieldAlert /> sign in needed
+                        </Badge>
+                      ))}
+                    {stale && tool.available && (
+                      <Badge variant="muted">cached</Badge>
+                    )}
+                    {!stale && upToDate && (
+                      <Badge variant="success">up to date</Badge>
+                    )}
+                    {!stale && upgradeReady && (
+                      <Badge variant="info">
+                        <ArrowUpCircle className="size-3" />
+                        update available
+                      </Badge>
+                    )}
+                  </div>
+                  <p
+                    className="mt-1 truncate text-[11px] text-muted-foreground"
+                    title={tool.path}
+                  >
+                    {tool.available
+                      ? stale
+                        ? tool.version
+                          ? `${tool.version} (last check-in)`
+                          : "cached from last check-in"
+                        : upgradeReady && tool.latestVersion
+                          ? `${tool.version ?? "installed"} → ${tool.latestVersion}`
+                          : tool.version || tool.path || "available"
+                      : "not found"}
+                  </p>
+                </div>
+              );
+            })
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              No CLI check-in yet.
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {daemon.lastHeartbeatAt
+            ? online
+              ? `Last check-in ${formatRelativeTime(daemon.lastHeartbeatAt)}`
+              : `Last seen ${formatRelativeTime(daemon.lastHeartbeatAt)} — offline (CLI list may be stale)`
+            : "No recent check-in"}
+        </p>
+      </CardContent>
+    </Card>
+  );
 }

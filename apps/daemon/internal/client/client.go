@@ -59,6 +59,30 @@ func (c *Client) do(ctx context.Context, path string, body, out any) (int, error
 	return res.StatusCode, nil
 }
 
+// DiscoverOrgs (personal daemon) lists the orgs this user's machine should serve,
+// each with its org-scoped token. Authenticated with the personal DAEMON_USER_TOKEN.
+func (c *Client) DiscoverOrgs(ctx context.Context) ([]protocol.OrgRef, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/daemon/orgs", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	res, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		msg, _ := io.ReadAll(res.Body)
+		return nil, fmt.Errorf("/daemon/orgs → %d: %s", res.StatusCode, string(msg))
+	}
+	var out protocol.OrgsResponse
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Orgs, nil
+}
+
 func (c *Client) Register(ctx context.Context, req protocol.RegisterRequest) (*protocol.RegisterResponse, error) {
 	var out protocol.RegisterResponse
 	if _, err := c.do(ctx, "/daemon/register", req, &out); err != nil {

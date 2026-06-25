@@ -1,15 +1,27 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import type { OrgRole } from "./db/schema";
+import { hub } from "./hub";
 
-const { appUsers, userSessions, orgMembers, orgInvitations, teams } = schema;
+const {
+  appUsers,
+  userSessions,
+  orgMembers,
+  orgInvitations,
+  teams,
+  daemons,
+  runtimes,
+} = schema;
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function token(): string {
-  return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+  return (
+    crypto.randomUUID().replace(/-/g, "") +
+    crypto.randomUUID().replace(/-/g, "")
+  );
 }
 
 export function hashPassword(plain: string): Promise<string> {
@@ -21,9 +33,17 @@ export function verifyPassword(plain: string, hash: string): Promise<boolean> {
 
 /* ── Sign-up / verify / login / session ──────────────────────────────── */
 
-export async function signUp(input: { email: string; password: string; name?: string }) {
+export async function signUp(input: {
+  email: string;
+  password: string;
+  name?: string;
+}) {
   const email = input.email.trim().toLowerCase();
-  const [existing] = await db.select({ id: appUsers.id }).from(appUsers).where(eq(appUsers.email, email)).limit(1);
+  const [existing] = await db
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .where(eq(appUsers.email, email))
+    .limit(1);
   if (existing) return { error: "email_taken" as const };
   const id = genId("usr");
   const verifyToken = token();
@@ -56,7 +76,11 @@ export async function createSession(userId: string) {
 
 export async function login(input: { email: string; password: string }) {
   const email = input.email.trim().toLowerCase();
-  const [user] = await db.select().from(appUsers).where(eq(appUsers.email, email)).limit(1);
+  const [user] = await db
+    .select()
+    .from(appUsers)
+    .where(eq(appUsers.email, email))
+    .limit(1);
   if (!user) return null;
   if (!(await verifyPassword(input.password, user.passwordHash))) return null;
   if (!user.emailVerifiedAt) return { error: "email_unverified" as const };
@@ -67,10 +91,20 @@ export async function login(input: { email: string; password: string }) {
 export async function getSessionUser(sessionToken: string) {
   const nowIso = new Date().toISOString();
   const [row] = await db
-    .select({ userId: appUsers.id, email: appUsers.email, name: appUsers.name, emailVerifiedAt: appUsers.emailVerifiedAt })
+    .select({
+      userId: appUsers.id,
+      email: appUsers.email,
+      name: appUsers.name,
+      emailVerifiedAt: appUsers.emailVerifiedAt,
+    })
     .from(userSessions)
     .innerJoin(appUsers, eq(appUsers.id, userSessions.userId))
-    .where(and(eq(userSessions.token, sessionToken), gt(userSessions.expiresAt, nowIso)))
+    .where(
+      and(
+        eq(userSessions.token, sessionToken),
+        gt(userSessions.expiresAt, nowIso),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }
@@ -81,33 +115,240 @@ export async function logout(sessionToken: string) {
 
 /* ── Orgs & memberships ──────────────────────────────────────────────── */
 
-export async function createOrg(userId: string, input: { name: string; slug: string }) {
+export async function createOrg(
+  userId: string,
+  input: { name: string; slug: string },
+) {
   const slug = input.slug.trim().toLowerCase();
-  const [clash] = await db.select({ id: teams.id }).from(teams).where(eq(teams.slug, slug)).limit(1);
+  const [clash] = await db
+    .select({ id: teams.id })
+    .from(teams)
+    .where(eq(teams.slug, slug))
+    .limit(1);
   if (clash) return { error: "slug_taken" as const };
   const teamId = genId("team");
   const daemonToken = token();
-  await db.insert(teams).values({ id: teamId, slug, name: input.name, daemonToken });
-  await db.insert(orgMembers).values({ id: genId("mbr"), teamId, userId, role: "owner" });
+  await db
+    .insert(teams)
+    .values({ id: teamId, slug, name: input.name, daemonToken });
+  await db
+    .insert(orgMembers)
+    .values({ id: genId("mbr"), teamId, userId, role: "owner" });
   return { teamId, slug, daemonToken };
 }
 
 export async function listUserOrgs(userId: string) {
   return db
-    .select({ teamId: teams.id, slug: teams.slug, name: teams.name, role: orgMembers.role })
+    .select({
+      teamId: teams.id,
+      slug: teams.slug,
+      name: teams.name,
+      role: orgMembers.role,
+    })
     .from(orgMembers)
     .innerJoin(teams, eq(teams.id, orgMembers.teamId))
     .where(eq(orgMembers.userId, userId));
 }
 
 /** Resolve the org (team) that owns a given org-scoped daemon token, or null. */
-export async function resolveTeamByDaemonToken(daemonToken: string): Promise<string | null> {
+export async function resolveTeamByDaemonToken(
+  daemonToken: string,
+): Promise<string | null> {
   if (!daemonToken) return null;
-  const [row] = await db.select({ id: teams.id }).from(teams).where(eq(teams.daemonToken, daemonToken)).limit(1);
+  const [row] = await db
+    .select({ id: teams.id })
+    .from(teams)
+    .where(eq(teams.daemonToken, daemonToken))
+    .limit(1);
   return row?.id ?? null;
 }
 
-export async function getMembership(userId: string, teamId: string): Promise<OrgRole | null> {
+/* ── Personal (user-scoped) daemon: one local daemon serves all the user's orgs ── */
+
+/** Roles allowed to back a runtime host. A personal machine can execute for owners/admins only. */
+const DAEMON_ROLES: OrgRole[] = ["owner", "admin"];
+
+const PERSONAL_DAEMON_PREFIX = "dtkn";
+
+function personalDaemonToken(): string {
+  return `${PERSONAL_DAEMON_PREFIX}_${token()}`;
+}
+
+function daemonTokenPrefix(t: string): string {
+  return t.slice(0, 17);
+}
+
+export type UserDaemonTokenStatus = {
+  hasToken: boolean;
+  prefix: string | null;
+  issuedAt: string | null;
+};
+
+export async function getUserDaemonTokenStatus(
+  userId: string,
+): Promise<UserDaemonTokenStatus | null> {
+  const [user] = await db
+    .select({
+      daemonTokenHash: appUsers.daemonTokenHash,
+      daemonTokenPrefix: appUsers.daemonTokenPrefix,
+      daemonTokenIssuedAt: appUsers.daemonTokenIssuedAt,
+    })
+    .from(appUsers)
+    .where(eq(appUsers.id, userId))
+    .limit(1);
+  if (!user) return null;
+  return {
+    hasToken: Boolean(user.daemonTokenHash),
+    prefix: user.daemonTokenPrefix ?? null,
+    issuedAt: user.daemonTokenIssuedAt ?? null,
+  };
+}
+
+/** Rotate and reveal the personal daemon token exactly once. */
+export async function rotateUserDaemonToken(
+  userId: string,
+): Promise<(UserDaemonTokenStatus & { token: string }) | null> {
+  const [user] = await db
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .where(eq(appUsers.id, userId))
+    .limit(1);
+  if (!user) return null;
+  const t = personalDaemonToken();
+  const issuedAt = new Date().toISOString();
+  const prefix = daemonTokenPrefix(t);
+  await db
+    .update(appUsers)
+    .set({
+      daemonTokenHash: await Bun.password.hash(t),
+      daemonTokenPrefix: prefix,
+      daemonTokenIssuedAt: issuedAt,
+    })
+    .where(eq(appUsers.id, userId));
+  return { hasToken: true, prefix, issuedAt, token: t };
+}
+
+export async function revokeUserDaemonToken(userId: string): Promise<boolean> {
+  const orgs = await listUserDaemonOrgs(userId);
+  const updated = await db
+    .update(appUsers)
+    .set({
+      daemonTokenHash: null,
+      daemonTokenPrefix: null,
+      daemonTokenIssuedAt: null,
+    })
+    .where(eq(appUsers.id, userId))
+    .returning({ id: appUsers.id });
+  if (updated[0] && orgs.length > 0) {
+    const deleted = await db
+      .delete(daemons)
+      .where(
+        and(
+          inArray(
+            daemons.teamId,
+            orgs.map((o) => o.teamId),
+          ),
+          sql`${daemons.meta}->>'mode' = 'personal'`,
+          sql`${daemons.meta}->>'userId' = ${userId}`,
+        ),
+      )
+      .returning({ teamId: daemons.teamId });
+    for (const teamId of new Set(deleted.map((d) => d.teamId))) {
+      hub.publish(teamId, { kind: "presence" });
+    }
+  }
+  return Boolean(updated[0]);
+}
+
+export async function markUserPersonalDaemonsOffline(
+  userId: string,
+): Promise<number> {
+  const orgs = await listUserDaemonOrgs(userId);
+  if (orgs.length === 0) return 0;
+  const updated = await db
+    .update(daemons)
+    .set({ status: "offline", lastHeartbeatAt: null })
+    .where(
+      and(
+        inArray(
+          daemons.teamId,
+          orgs.map((o) => o.teamId),
+        ),
+        sql`${daemons.meta}->>'mode' = 'personal'`,
+        sql`${daemons.meta}->>'userId' = ${userId}`,
+      ),
+    )
+    .returning({ id: daemons.id, teamId: daemons.teamId });
+  if (updated.length === 0) return 0;
+  await db
+    .update(runtimes)
+    .set({ status: "offline" })
+    .where(
+      inArray(
+        runtimes.daemonId,
+        updated.map((d) => d.id),
+      ),
+    );
+  for (const teamId of new Set(updated.map((d) => d.teamId))) {
+    hub.publish(teamId, { kind: "presence" });
+  }
+  return updated.length;
+}
+
+/** Resolve the user that owns a personal daemon token, or null. */
+export async function resolveUserByDaemonToken(
+  daemonToken: string,
+): Promise<string | null> {
+  if (!daemonToken) return null;
+  const prefix = daemonTokenPrefix(daemonToken);
+  const [row] = await db
+    .select({ id: appUsers.id, daemonTokenHash: appUsers.daemonTokenHash })
+    .from(appUsers)
+    .where(eq(appUsers.daemonTokenPrefix, prefix))
+    .limit(1);
+  if (!row?.daemonTokenHash) return null;
+  return (await Bun.password.verify(daemonToken, row.daemonTokenHash))
+    ? row.id
+    : null;
+}
+
+/** Orgs a user's personal daemon may serve. Never returns org-scoped daemon tokens. */
+export async function listUserDaemonOrgs(userId: string) {
+  const rows = await db
+    .select({
+      teamId: teams.id,
+      slug: teams.slug,
+      name: teams.name,
+      role: orgMembers.role,
+    })
+    .from(orgMembers)
+    .innerJoin(teams, eq(teams.id, orgMembers.teamId))
+    .where(eq(orgMembers.userId, userId));
+  return rows
+    .filter((r) => DAEMON_ROLES.includes(r.role))
+    .map((r) => ({ teamId: r.teamId, slug: r.slug, name: r.name }));
+}
+
+export async function userCanRunDaemonForTeam(
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
+  const role = await getMembership(userId, teamId);
+  return Boolean(role && DAEMON_ROLES.includes(role));
+}
+
+export async function resolveUserDaemonTeamBySlug(
+  userId: string,
+  slug: string,
+): Promise<string | null> {
+  const rows = await listUserDaemonOrgs(userId);
+  return rows.find((r) => r.slug === slug)?.teamId ?? null;
+}
+
+export async function getMembership(
+  userId: string,
+  teamId: string,
+): Promise<OrgRole | null> {
   const [row] = await db
     .select({ role: orgMembers.role })
     .from(orgMembers)
@@ -123,7 +364,11 @@ export const DEV_ACCOUNT_PASSWORD = "agentik-demo";
 
 const DEV_ACCOUNTS = [
   { email: "owner@agentik.dev", name: "Demo Owner", role: "owner" as OrgRole },
-  { email: "member@agentik.dev", name: "Demo Member", role: "engineer" as OrgRole },
+  {
+    email: "member@agentik.dev",
+    name: "Demo Member",
+    role: "engineer" as OrgRole,
+  },
 ];
 
 /**
@@ -136,39 +381,77 @@ export async function ensureDevAccounts() {
   const hash = await hashPassword(DEV_ACCOUNT_PASSWORD);
 
   async function ensureUser(email: string, name: string) {
-    const [existing] = await db.select().from(appUsers).where(eq(appUsers.email, email)).limit(1);
+    const [existing] = await db
+      .select()
+      .from(appUsers)
+      .where(eq(appUsers.email, email))
+      .limit(1);
     if (existing) return existing.id;
     const id = genId("usr");
-    await db.insert(appUsers).values({ id, email, name, passwordHash: hash, emailVerifiedAt: now });
+    await db
+      .insert(appUsers)
+      .values({ id, email, name, passwordHash: hash, emailVerifiedAt: now });
     return id;
   }
 
-  const ownerId = await ensureUser(DEV_ACCOUNTS[0]!.email, DEV_ACCOUNTS[0]!.name);
-  const memberId = await ensureUser(DEV_ACCOUNTS[1]!.email, DEV_ACCOUNTS[1]!.name);
+  const ownerId = await ensureUser(
+    DEV_ACCOUNTS[0]!.email,
+    DEV_ACCOUNTS[0]!.name,
+  );
+  const memberId = await ensureUser(
+    DEV_ACCOUNTS[1]!.email,
+    DEV_ACCOUNTS[1]!.name,
+  );
 
   // Demo org (slug "demo") owned by the owner; member joins as engineer.
-  let [org] = await db.select().from(teams).where(eq(teams.slug, "demo")).limit(1);
+  let [org] = await db
+    .select()
+    .from(teams)
+    .where(eq(teams.slug, "demo"))
+    .limit(1);
   if (!org) {
     const teamId = genId("team");
-    await db.insert(teams).values({ id: teamId, slug: "demo", name: "Demo Org", daemonToken: genId("usr") });
-    org = (await db.select().from(teams).where(eq(teams.id, teamId)).limit(1))[0];
+    await db.insert(teams).values({
+      id: teamId,
+      slug: "demo",
+      name: "Demo Org",
+      daemonToken: genId("usr"),
+    });
+    org = (
+      await db.select().from(teams).where(eq(teams.id, teamId)).limit(1)
+    )[0];
   }
   if (org) {
     await db
       .insert(orgMembers)
       .values([
         { id: genId("mbr"), teamId: org.id, userId: ownerId, role: "owner" },
-        { id: genId("mbr"), teamId: org.id, userId: memberId, role: "engineer" },
+        {
+          id: genId("mbr"),
+          teamId: org.id,
+          userId: memberId,
+          role: "engineer",
+        },
       ])
       .onConflictDoNothing({ target: [orgMembers.teamId, orgMembers.userId] });
   }
 
-  return DEV_ACCOUNTS.map((a) => ({ email: a.email, password: DEV_ACCOUNT_PASSWORD, role: a.role, org: "demo" }));
+  return DEV_ACCOUNTS.map((a) => ({
+    email: a.email,
+    password: DEV_ACCOUNT_PASSWORD,
+    role: a.role,
+    org: "demo",
+  }));
 }
 
 /* ── Invitations ─────────────────────────────────────────────────────── */
 
-export async function createInvitation(teamId: string, email: string, role: OrgRole, invitedBy: string) {
+export async function createInvitation(
+  teamId: string,
+  email: string,
+  role: OrgRole,
+  invitedBy: string,
+) {
   const id = genId("inv");
   const t = token();
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
@@ -189,7 +472,12 @@ export async function acceptInvitation(inviteToken: string, userId: string) {
   const [inv] = await db
     .select()
     .from(orgInvitations)
-    .where(and(eq(orgInvitations.token, inviteToken), gt(orgInvitations.expiresAt, nowIso)))
+    .where(
+      and(
+        eq(orgInvitations.token, inviteToken),
+        gt(orgInvitations.expiresAt, nowIso),
+      ),
+    )
     .limit(1);
   if (!inv || inv.acceptedAt) return { error: "invalid_invite" as const };
   // Idempotent membership (unique team+user).
@@ -197,6 +485,9 @@ export async function acceptInvitation(inviteToken: string, userId: string) {
     .insert(orgMembers)
     .values({ id: genId("mbr"), teamId: inv.teamId, userId, role: inv.role })
     .onConflictDoNothing({ target: [orgMembers.teamId, orgMembers.userId] });
-  await db.update(orgInvitations).set({ acceptedAt: nowIso }).where(eq(orgInvitations.id, inv.id));
+  await db
+    .update(orgInvitations)
+    .set({ acceptedAt: nowIso })
+    .where(eq(orgInvitations.id, inv.id));
   return { teamId: inv.teamId, role: inv.role };
 }

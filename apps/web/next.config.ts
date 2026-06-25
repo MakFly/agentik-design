@@ -8,13 +8,13 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@agentik/workflow-schema"],
   async rewrites() {
     return {
-      afterFiles: [
+      afterFiles: [],
+      fallback: [
         {
           source: "/api/:path*",
           destination: `${API_URL}/api/:path*`,
         },
       ],
-      fallback: [],
     };
   },
 };

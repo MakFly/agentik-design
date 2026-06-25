@@ -61,6 +61,7 @@ export const qk = {
   },
   settings: {
     all: (team: string) => ["team", team, "settings"] as const,
+    system: (team: string) => ["team", team, "system"] as const,
     providers: (team: string) => ["team", team, "settings", "providers"] as const,
   },
   credentials: {

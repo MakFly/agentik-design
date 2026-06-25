@@ -339,6 +339,10 @@ export const appUsers = pgTable("app_users", {
   emailVerifiedAt: ts("email_verified_at"),
   /** One-time email-verification token; cleared once verified. */
   verifyToken: text("verify_token"),
+  /** Personal daemon token metadata. The token itself is revealed once and stored as a hash only. */
+  daemonTokenHash: text("daemon_token_hash"),
+  daemonTokenPrefix: text("daemon_token_prefix").unique(),
+  daemonTokenIssuedAt: ts("daemon_token_issued_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 

@@ -11,19 +11,35 @@ const { bundleCommands, orgSettings, daemons } = schema;
 const NETWORK_INSTALL_KEY = "bundle.network_install";
 
 /** Whether this org allows the daemon to run network installers. Default OFF (RCE-class op). */
-export async function getNetworkInstallEnabled(teamId: string): Promise<boolean> {
+export async function getNetworkInstallEnabled(
+  teamId: string,
+): Promise<boolean> {
   const [row] = await db
     .select({ value: orgSettings.value })
     .from(orgSettings)
-    .where(and(eq(orgSettings.teamId, teamId), eq(orgSettings.key, NETWORK_INSTALL_KEY)))
+    .where(
+      and(
+        eq(orgSettings.teamId, teamId),
+        eq(orgSettings.key, NETWORK_INSTALL_KEY),
+      ),
+    )
     .limit(1);
   return row?.value === true;
 }
 
-export async function setNetworkInstallEnabled(teamId: string, enabled: boolean): Promise<void> {
+export async function setNetworkInstallEnabled(
+  teamId: string,
+  enabled: boolean,
+): Promise<void> {
   await db
     .insert(orgSettings)
-    .values({ id: genId("oset"), teamId, key: NETWORK_INSTALL_KEY, value: enabled, updatedAt: sql`now()` })
+    .values({
+      id: genId("oset"),
+      teamId,
+      key: NETWORK_INSTALL_KEY,
+      value: enabled,
+      updatedAt: sql`now()`,
+    })
     .onConflictDoUpdate({
       target: [orgSettings.teamId, orgSettings.key],
       set: { value: enabled, updatedAt: sql`now()` },
@@ -36,8 +52,22 @@ export async function setNetworkInstallEnabled(teamId: string, enabled: boolean)
 const NETWORK_ACTIONS: BundleAction[] = ["install", "upgrade"];
 
 export type EnqueueResult =
-  | { ok: true; command: { id: string; kind: string; action: BundleAction; status: BundleCommandStatus } }
-  | { ok: false; error: "daemon_not_found" | "network_install_disabled" | "command_in_flight" };
+  | {
+      ok: true;
+      command: {
+        id: string;
+        kind: string;
+        action: BundleAction;
+        status: BundleCommandStatus;
+      };
+    }
+  | {
+      ok: false;
+      error:
+        | "daemon_not_found"
+        | "network_install_disabled"
+        | "command_in_flight";
+    };
 
 /**
  * Enqueue a bundle command for a daemon. install/upgrade require the org's
@@ -46,7 +76,12 @@ export type EnqueueResult =
  */
 export async function enqueueBundleCommand(
   teamId: string,
-  input: { daemonId: string; kind: string; action: BundleAction; requestedBy?: string },
+  input: {
+    daemonId: string;
+    kind: string;
+    action: BundleAction;
+    requestedBy?: string;
+  },
 ): Promise<EnqueueResult> {
   const [d] = await db
     .select({ id: daemons.id })
@@ -55,7 +90,10 @@ export async function enqueueBundleCommand(
     .limit(1);
   if (!d) return { ok: false, error: "daemon_not_found" };
 
-  if (NETWORK_ACTIONS.includes(input.action) && !(await getNetworkInstallEnabled(teamId))) {
+  if (
+    NETWORK_ACTIONS.includes(input.action) &&
+    !(await getNetworkInstallEnabled(teamId))
+  ) {
     return { ok: false, error: "network_install_disabled" };
   }
 
@@ -83,7 +121,10 @@ export async function enqueueBundleCommand(
     requestedBy: input.requestedBy ?? "",
   });
   hub.publish(teamId, { kind: "presence" });
-  return { ok: true, command: { id, kind: input.kind, action: input.action, status: "queued" } };
+  return {
+    ok: true,
+    command: { id, kind: input.kind, action: input.action, status: "queued" },
+  };
 }
 
 export async function listBundleCommands(teamId: string, limit = 50) {
@@ -93,6 +134,17 @@ export async function listBundleCommands(teamId: string, limit = 50) {
     .where(eq(bundleCommands.teamId, teamId))
     .orderBy(desc(bundleCommands.createdAt))
     .limit(limit);
+}
+
+export async function getBundleCommandTeamId(
+  commandId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ teamId: bundleCommands.teamId })
+    .from(bundleCommands)
+    .where(eq(bundleCommands.id, commandId))
+    .limit(1);
+  return row?.teamId ?? null;
 }
 
 /**
@@ -113,7 +165,12 @@ export async function claimNextBundleCommand(daemonId: string) {
     FROM next WHERE b.id = next.id
     RETURNING b.id AS "id", b.team_id AS "teamId", b.kind AS "kind", b.action AS "action";
   `);
-  const rows = result as unknown as Array<{ id: string; teamId: string; kind: string; action: BundleAction }>;
+  const rows = result as unknown as Array<{
+    id: string;
+    teamId: string;
+    kind: string;
+    action: BundleAction;
+  }>;
   const cmd = rows[0] ?? null;
   if (cmd) hub.publish(cmd.teamId, { kind: "presence" });
   return cmd;
@@ -132,7 +189,12 @@ export async function reportBundleStatus(
       error: input.error ?? null,
       endedAt: sql`now()`,
     })
-    .where(and(eq(bundleCommands.id, commandId), eq(bundleCommands.status, "running")))
+    .where(
+      and(
+        eq(bundleCommands.id, commandId),
+        eq(bundleCommands.status, "running"),
+      ),
+    )
     .returning({ id: bundleCommands.id, teamId: bundleCommands.teamId });
   if (!updated[0]) return false;
   hub.publish(updated[0].teamId, { kind: "presence" });

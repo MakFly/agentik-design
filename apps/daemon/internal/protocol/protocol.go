@@ -99,3 +99,14 @@ type MetaRequest struct {
 	DaemonID string         `json:"daemonId"`
 	Meta     map[string]any `json:"meta"`
 }
+
+// OrgRef is one org a personal (user-scoped) daemon may serve.
+type OrgRef struct {
+	TeamID string `json:"teamId"`
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+}
+
+type OrgsResponse struct {
+	Orgs []OrgRef `json:"orgs"`
+}

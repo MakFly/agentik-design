@@ -17,6 +17,7 @@ import (
 
 const (
 	heartbeatEvery = 5 * time.Second
+	metaEvery      = 30 * time.Second
 	flushEvery     = 250 * time.Millisecond
 	idlePoll       = 1 * time.Second
 )
@@ -25,10 +26,11 @@ type Loop struct {
 	cfg      *config.Config
 	client   *client.Client
 	runtimes runtime.Registry
+	slots    chan struct{}
 }
 
-func New(cfg *config.Config, c *client.Client, rt runtime.Registry) *Loop {
-	return &Loop{cfg: cfg, client: c, runtimes: rt}
+func New(cfg *config.Config, c *client.Client, rt runtime.Registry, slots chan struct{}) *Loop {
+	return &Loop{cfg: cfg, client: c, runtimes: rt, slots: slots}
 }
 
 // Run blocks until ctx is cancelled.
@@ -78,11 +80,16 @@ func (l *Loop) Run(ctx context.Context) error {
 // meta is the daemon's self-description (advertised runtimes + probed CLIs + host),
 // sent at register and refreshed after a bundle op changes what's installed.
 func (l *Loop) meta() map[string]any {
+	mode := "org"
+	if l.cfg.UserToken != "" {
+		mode = "personal"
+	}
 	return map[string]any{
 		"runtimes":    l.cfg.RuntimeKinds,
 		"tools":       probe.Tools(),
 		"host":        probe.Host(),
 		"installable": bundle.Installable(),
+		"mode":        mode,
 	}
 }
 
@@ -130,15 +137,21 @@ func (l *Loop) pollBundle(ctx context.Context, daemonID string) bool {
 }
 
 func (l *Loop) heartbeatLoop(ctx context.Context, daemonID string) {
-	t := time.NewTicker(heartbeatEvery)
-	defer t.Stop()
+	hb := time.NewTicker(heartbeatEvery)
+	meta := time.NewTicker(metaEvery)
+	defer hb.Stop()
+	defer meta.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-hb.C:
 			if err := l.client.Heartbeat(ctx, daemonID); err != nil {
 				log.Printf("heartbeat error: %v", err)
+			}
+		case <-meta.C:
+			if err := l.client.UpdateMeta(ctx, daemonID, l.meta()); err != nil {
+				log.Printf("meta refresh error: %v", err)
 			}
 		}
 	}
@@ -196,6 +209,12 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 	}
 	done := make(chan result, 1)
 	go func() {
+		release, ok := l.acquireSlot(runCtx)
+		if !ok {
+			done <- result{nil, context.Canceled}
+			return
+		}
+		defer release()
 		val, err := rt.Run(runCtx, task, emit)
 		done <- result{val, err}
 	}()
@@ -224,5 +243,17 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 			}
 			return
 		}
+	}
+}
+
+func (l *Loop) acquireSlot(ctx context.Context) (func(), bool) {
+	if l.slots == nil {
+		return func() {}, true
+	}
+	select {
+	case l.slots <- struct{}{}:
+		return func() { <-l.slots }, true
+	case <-ctx.Done():
+		return func() {}, false
 	}
 }

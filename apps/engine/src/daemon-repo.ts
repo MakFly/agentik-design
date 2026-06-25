@@ -55,6 +55,21 @@ export async function registerDaemon(input: RegisterInput) {
   return { daemonId, teamId, runtimes: created };
 }
 
+export async function getDaemonTeamId(daemonId: string): Promise<string | null> {
+  const [row] = await db.select({ teamId: daemons.teamId }).from(daemons).where(eq(daemons.id, daemonId)).limit(1);
+  return row?.teamId ?? null;
+}
+
+export async function getRuntimeTeamId(runtimeId: string): Promise<string | null> {
+  const [row] = await db.select({ teamId: runtimes.teamId }).from(runtimes).where(eq(runtimes.id, runtimeId)).limit(1);
+  return row?.teamId ?? null;
+}
+
+export async function getTaskTeamId(taskId: string): Promise<string | null> {
+  const [row] = await db.select({ teamId: agentTasks.teamId }).from(agentTasks).where(eq(agentTasks.id, taskId)).limit(1);
+  return row?.teamId ?? null;
+}
+
 /**
  * Refresh just a daemon's meta (probed CLIs/host) without touching its runtimes —
  * used after a bundle install/uninstall so a newly available CLI shows up immediately,

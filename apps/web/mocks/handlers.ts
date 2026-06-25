@@ -25,13 +25,46 @@ export const handlers = [
             runtimes: ["echo"],
             tools: [
               { name: "claude", available: false },
+              { name: "hermes", available: false },
               { name: "codex", available: false },
             ],
+            installable: ["claude", "codex", "gemini", "hermes"],
+            mode: "personal",
           },
         },
       ],
       runtimes: [],
+      availableRuntimes: [],
     });
+  }),
+
+  http.get(`${API}/me/daemon-token`, async () => {
+    await delay(150);
+    return HttpResponse.json({
+      hasToken: false,
+      prefix: null,
+      issuedAt: null,
+      eligibleOrgs: [{ teamId: "team_mock", slug: "acme", name: "Acme" }],
+    });
+  }),
+
+  http.post(`${API}/me/daemon-token/rotate`, async () => {
+    await delay(250);
+    return HttpResponse.json(
+      {
+        hasToken: true,
+        prefix: "dtkn_mockedtoken",
+        issuedAt: new Date().toISOString(),
+        token: "dtkn_mockedtokenvalue",
+        eligibleOrgs: [{ teamId: "team_mock", slug: "acme", name: "Acme" }],
+      },
+      { status: 201 },
+    );
+  }),
+
+  http.delete(`${API}/me/daemon-token`, async () => {
+    await delay(150);
+    return HttpResponse.json({ ok: true });
   }),
 
   http.get(`${API}/agent-task-snapshot`, async () => {

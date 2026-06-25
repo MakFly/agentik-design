@@ -25,25 +25,33 @@ const LABELS: Record<string, string> = {
 function useProviderKeys(team: string) {
   return useQuery({
     queryKey: ["team", team, "provider-keys"],
-    queryFn: ({ signal }) => apiFetch<{ items: ProviderKey[] }>("/settings/provider-keys", { team, signal }),
+    queryFn: ({ signal }) =>
+      apiFetch<{ items: ProviderKey[] }>("/settings/provider-keys", {
+        team,
+        signal,
+      }),
   });
 }
 
 /**
  * Manage the org's runtime provider keys from the UI. Keys are stored encrypted on
- * the engine and injected into the daemon at claim time, so runtimes (Hermes,
- * claude…) authenticate with zero out-of-band config. Values are write-only — the
- * server returns presence (hasKey) only, never the secret.
+ * the engine and made available to matching runtimes at run time. Values are
+ * write-only: the server returns presence (hasKey) only, never the secret.
  */
 export function ProviderKeysSection({ team }: { team: string }) {
   const { data, isLoading } = useProviderKeys(team);
   const qc = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["team", team, "provider-keys"] });
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["team", team, "provider-keys"] });
 
   const save = useMutation({
     mutationFn: ({ provider, key }: { provider: string; key: string }) =>
-      apiFetch(`/settings/provider-keys/${provider}`, { method: "PUT", team, body: { key } }),
+      apiFetch(`/settings/provider-keys/${provider}`, {
+        method: "PUT",
+        team,
+        body: { key },
+      }),
     onSuccess: (_d, v) => {
       setDrafts((s) => ({ ...s, [v.provider]: "" }));
       invalidate();
@@ -53,7 +61,11 @@ export function ProviderKeysSection({ team }: { team: string }) {
   });
 
   const remove = useMutation({
-    mutationFn: (provider: string) => apiFetch(`/settings/provider-keys/${provider}`, { method: "DELETE", team }),
+    mutationFn: (provider: string) =>
+      apiFetch(`/settings/provider-keys/${provider}`, {
+        method: "DELETE",
+        team,
+      }),
     onSuccess: () => {
       invalidate();
       toast.success("Key removed");
@@ -64,8 +76,8 @@ export function ProviderKeysSection({ team }: { team: string }) {
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-medium text-foreground">Provider keys</h2>
       <p className="text-xs text-muted-foreground">
-        Stored encrypted and injected into the daemon at run time — set a key here and the matching runtime (Hermes,
-        claude…) uses it automatically. Values are write-only and never displayed.
+        Stored encrypted and used automatically by matching runtimes such as
+        Hermes or Claude. Values are write-only and never displayed again.
       </p>
 
       <div className="flex flex-col gap-2">
@@ -73,21 +85,34 @@ export function ProviderKeysSection({ team }: { team: string }) {
           <div className="h-32 animate-pulse rounded-xl bg-surface-2" />
         ) : (
           (data?.items ?? []).map((p) => (
-            <div key={p.provider} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center">
+            <div
+              key={p.provider}
+              className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center"
+            >
               <div className="flex min-w-0 items-center gap-2 sm:w-48">
                 <KeyRound className="size-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{LABELS[p.provider] ?? p.provider}</p>
-                  <p className="truncate font-mono text-[11px] text-muted-foreground">{p.envVar}</p>
+                  <p className="truncate text-sm font-medium">
+                    {LABELS[p.provider] ?? p.provider}
+                  </p>
+                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                    {p.envVar}
+                  </p>
                 </div>
               </div>
 
               <Input
                 type="password"
                 autoComplete="off"
-                placeholder={p.hasKey ? "•••••••••• (configured — type to replace)" : "Paste API key…"}
+                placeholder={
+                  p.hasKey
+                    ? "•••••••••• (configured, type to replace)"
+                    : "Paste API key…"
+                }
                 value={drafts[p.provider] ?? ""}
-                onChange={(e) => setDrafts((s) => ({ ...s, [p.provider]: e.target.value }))}
+                onChange={(e) =>
+                  setDrafts((s) => ({ ...s, [p.provider]: e.target.value }))
+                }
                 className="flex-1"
               />
 
@@ -99,10 +124,22 @@ export function ProviderKeysSection({ team }: { team: string }) {
                 )}
                 <Button
                   size="sm"
-                  disabled={!((drafts[p.provider] ?? "").trim().length >= 8) || save.isPending}
-                  onClick={() => save.mutate({ provider: p.provider, key: (drafts[p.provider] ?? "").trim() })}
+                  disabled={
+                    !((drafts[p.provider] ?? "").trim().length >= 8) ||
+                    save.isPending
+                  }
+                  onClick={() =>
+                    save.mutate({
+                      provider: p.provider,
+                      key: (drafts[p.provider] ?? "").trim(),
+                    })
+                  }
                 >
-                  {save.isPending && save.variables?.provider === p.provider ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+                  {save.isPending && save.variables?.provider === p.provider ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    "Save"
+                  )}
                 </Button>
                 {p.hasKey && (
                   <Button

@@ -1,0 +1,72 @@
+# Agentik self-host control plane. The daemon is intentionally not part of this
+# stack: install `agentik` on each machine that should execute local agent CLIs.
+name: agentik-selfhost
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: agentik
+      POSTGRES_PASSWORD: agentik
+      POSTGRES_DB: agentik
+    volumes:
+      - agentik-postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - agentik-redis:/data
+    ports:
+      - "6379:6379"
+
+  engine:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    command: ["sh", "-lc", "bun run db:migrate && bun run src/main.ts"]
+    environment:
+      PORT: "8787"
+      DATABASE_URL: postgresql://agentik:agentik@postgres:5432/agentik
+      REDIS_URL: redis://redis:6379
+      DAEMON_ENABLED: "true"
+      DAEMON_AUTH_TOKEN: ${DAEMON_AUTH_TOKEN:-dev-daemon-token-change-me-please}
+      AUTH_DEV_HEADERS: ${AUTH_DEV_HEADERS:-false}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-change-me-before-credentials}
+      ENGINE_PUBLIC_URL: ${ENGINE_PUBLIC_URL:-http://localhost:8787}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3333}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8787:8787"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    command: ["bun", "run", "src/worker.ts"]
+    environment:
+      DATABASE_URL: postgresql://agentik:agentik@postgres:5432/agentik
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - engine
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      PORT: "3333"
+      API_URL: ${ENGINE_PUBLIC_URL:-http://localhost:8787}
+      NEXT_PUBLIC_ENGINE_URL: ${ENGINE_PUBLIC_URL:-http://localhost:8787}
+    depends_on:
+      - engine
+    ports:
+      - "3333:3333"
+
+volumes:
+  agentik-postgres:
+  agentik-redis:

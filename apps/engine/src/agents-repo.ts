@@ -402,6 +402,7 @@ export async function getSystemInfo(teamId: string) {
       status: liveStatus(d.lastHeartbeatAt),
       lastHeartbeatAt: d.lastHeartbeatAt,
       meta: d.meta ?? {},
+      mode: ((d.meta as { mode?: string } | null)?.mode ?? "org") as "personal" | "org" | "legacy",
     })),
     runtimes: runtimeRows,
     availableRuntimes,
