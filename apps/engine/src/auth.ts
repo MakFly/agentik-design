@@ -40,19 +40,23 @@ function parseRole(raw: string | undefined): Role {
 }
 
 /**
- * Resolve caller org + role SERVER-SIDE.
- * - Real session cookie present → derive userId, active org (org cookie or first membership),
- *   and role from the membership. orgId is "" when the user has no org yet (→ onboarding).
- * - No session cookie → DEV fallback to x-team/x-role headers (local dev & header-based tests).
+ * Core tenancy resolution — used by both the HTTP middleware (`resolveAuth`) and the
+ * WebSocket upgrade (`resolveAuthFromRequest`), so the two can never drift.
+ * - Valid session token → derive userId, active org (org cookie or first membership), role.
+ *   orgId is "" when the user has no org yet (→ onboarding).
+ * - No valid session → DEV fallback to a caller-supplied slug/role, only when AUTH_DEV_HEADERS.
  */
-export async function resolveAuth(c: Context): Promise<(AuthContext & { teamSlug: string }) | null> {
-  const sessionToken = getCookie(c, SESSION_COOKIE);
-  if (sessionToken) {
-    const user = await getSessionUser(sessionToken);
+async function resolveFromParts(opts: {
+  sessionToken?: string;
+  wantOrg?: string;
+  devSlug: string;
+  devRole?: string;
+}): Promise<(AuthContext & { teamSlug: string }) | null> {
+  if (opts.sessionToken) {
+    const user = await getSessionUser(opts.sessionToken);
     if (user) {
       const orgs = await listUserOrgs(user.userId);
-      const wantOrg = getCookie(c, ORG_COOKIE);
-      const active = orgs.find((o) => o.teamId === wantOrg) ?? orgs[0];
+      const active = orgs.find((o) => o.teamId === opts.wantOrg) ?? orgs[0];
       if (active) {
         return { userId: user.userId, orgId: active.teamId, role: active.role as Role, teamSlug: active.slug };
       }
@@ -60,12 +64,48 @@ export async function resolveAuth(c: Context): Promise<(AuthContext & { teamSlug
       return { userId: user.userId, orgId: "", role: "viewer", teamSlug: "" };
     }
   }
-  // No valid session. Only fall back to client headers when explicitly allowed (dev/tests).
+  // No valid session. Only fall back to client-supplied tenancy when explicitly allowed (dev/tests).
   if (!env.AUTH_DEV_HEADERS) return null;
-  const slug = c.req.header("x-team") ?? "acme";
-  const orgId = await resolveTeam(slug);
-  const role = parseRole(c.req.header("x-role"));
-  return { userId: `usr_dev_${slug}`, orgId, role, teamSlug: slug };
+  const orgId = await resolveTeam(opts.devSlug);
+  return { userId: `usr_dev_${opts.devSlug}`, orgId, role: parseRole(opts.devRole), teamSlug: opts.devSlug };
+}
+
+/** Resolve caller org + role SERVER-SIDE from a Hono request context (HTTP routes). */
+export async function resolveAuth(c: Context): Promise<(AuthContext & { teamSlug: string }) | null> {
+  return resolveFromParts({
+    sessionToken: getCookie(c, SESSION_COOKIE),
+    wantOrg: getCookie(c, ORG_COOKIE),
+    devSlug: c.req.header("x-team") ?? "acme",
+    devRole: c.req.header("x-role"),
+  });
+}
+
+/** Minimal cookie-header parser for the raw-Request (WebSocket upgrade) path. */
+function parseCookies(header: string | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const k = part.slice(0, eq).trim();
+    if (k) out[k] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+/**
+ * Same tenancy resolution as `resolveAuth`, but from a raw `Request` — used by the
+ * WebSocket upgrade, which has no Hono context. The session cookie is authoritative;
+ * a browser WS can't set x-team, so the dev fallback reads the team from `?team=`.
+ */
+export async function resolveAuthFromRequest(req: Request): Promise<(AuthContext & { teamSlug: string }) | null> {
+  const cookies = parseCookies(req.headers.get("cookie"));
+  return resolveFromParts({
+    sessionToken: cookies[SESSION_COOKIE],
+    wantOrg: cookies[ORG_COOKIE],
+    devSlug: new URL(req.url).searchParams.get("team") ?? req.headers.get("x-team") ?? "acme",
+    devRole: req.headers.get("x-role") ?? undefined,
+  });
 }
 
 /** Look up a user's role in an org for direct checks (used by auth-aware routes). */

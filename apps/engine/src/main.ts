@@ -2,7 +2,7 @@ import { env } from "./env";
 import app from "./server";
 import { hub, type WsData } from "./hub";
 import { handleControl } from "./control";
-import { resolveTeam } from "./repo";
+import { resolveAuthFromRequest } from "./auth";
 import { startTaskScanner } from "./task-scanner";
 
 const server = Bun.serve<WsData>({
@@ -11,9 +11,12 @@ const server = Bun.serve<WsData>({
   async fetch(req, srv) {
     const url = new URL(req.url);
     // Team-scoped realtime channel: lifecycle + presence + control.
+    // Tenancy is resolved SERVER-SIDE exactly like HTTP routes — the session cookie is
+    // authoritative; `?team=` is honored only as the dev fallback (AUTH_DEV_HEADERS).
     if (url.pathname === "/realtime") {
-      const teamId = await resolveTeam(url.searchParams.get("team") ?? "acme");
-      if (srv.upgrade(req, { data: { teamId } })) return undefined;
+      const auth = await resolveAuthFromRequest(req);
+      if (!auth || !auth.orgId) return new Response("unauthorized", { status: 401 });
+      if (srv.upgrade(req, { data: { teamId: auth.orgId } })) return undefined;
       return new Response("upgrade failed", { status: 426 });
     }
     return app.fetch(req, srv);
