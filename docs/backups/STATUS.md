@@ -1,5 +1,11 @@
 # Implementation status
 
+> **⚠️ DEPRECATED — historical snapshot of the pre-pivot frontend-only build (MSW mocks, P0–P3).**
+> The project has since pivoted to a real 3-tier harness (web + engine + daemon); the daemon
+> agent-task path replaced the MSW backend, and **P4 "Workflow Canvas" listed below is frozen**
+> per `AGENTIK_MVP_GUIDELINE.md`. Kept for history only. Source of truth: `BUILD_PROGRESS.md`
+> and `AGENTIK_MVP_GUIDELINE.md`. Do not plan work from this file.
+
 > Build state of the Agentik frontend against the roadmap in [06-roadmap.md](./06-roadmap.md).
 > Last verified: **typecheck ✓ (0 errors) · lint ✓ (0 errors) · `next build` ✓ (16 routes) · vitest ✓ (8/8) · 101 source files · 0 stray images.**
 
