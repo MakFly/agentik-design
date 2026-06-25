@@ -33,6 +33,7 @@ export function PublishDialog({
   identity,
   config,
   disabled,
+  onPublished,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -40,6 +41,8 @@ export function PublishDialog({
   identity: DraftIdentity;
   config: AgentConfig;
   disabled: boolean;
+  /** Called after a successful publish — e.g. to clear the saved local draft. */
+  onPublished?: () => void;
 }) {
   const router = useRouter();
   const [changelog, setChangelog] = useState("Initial version");
@@ -53,6 +56,7 @@ export function PublishDialog({
       const created = await createAgent.mutateAsync({ name: identity.name, role: identity.role, goal: identity.goal });
       const result = await publishAgent.mutateAsync({ agentId: created.id as AgentId, config, changelog });
       toast.success(`Published ${identity.name} v${result.version}`);
+      onPublished?.();
       onOpenChange(false);
       router.push(`/${team}/agents/${created.id}`);
     } catch (e) {

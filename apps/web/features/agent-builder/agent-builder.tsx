@@ -13,6 +13,7 @@ import { TestHarness } from "./test-harness";
 import { PublishDialog } from "./publish-dialog";
 import { validateDraft, errorCount } from "./validation";
 import type { DraftIdentity } from "./validation";
+import { draftKey, readDraft, writeDraft, clearDraft } from "./draft-storage";
 import type { AgentConfig } from "@/types/domain";
 
 const AUTOSAVE_MS = 800;
@@ -38,19 +39,26 @@ export function AgentBuilder({
   const rev = useBuilderStore((s) => s.rev);
 
   const [publishOpen, setPublishOpen] = useState(false);
+  const key = draftKey(team, mode === "create" ? "new" : "edit");
 
-  // initialize the draft once on mount
+  // initialize the draft once on mount — prefer a locally-saved draft over the route's
+  // initial config so unpublished work survives reload/navigation (the "Draft saved" promise).
   useEffect(() => {
-    init(initialIdentity, initialConfig);
-  }, [init, initialIdentity, initialConfig]);
+    const saved = readDraft(key);
+    if (saved) init(saved.identity, saved.config);
+    else init(initialIdentity, initialConfig);
+  }, [init, key, initialIdentity, initialConfig]);
 
-  // autosave draft: debounce on rev, flip dirty → saving → saved (mock persistence)
+  // autosave draft: debounce on rev, flip dirty → saving → saved, persisting to localStorage.
   useEffect(() => {
     if (saveState !== "dirty") return;
     setSaveState("saving");
-    const t = setTimeout(() => setSaveState("saved"), AUTOSAVE_MS);
+    const t = setTimeout(() => {
+      writeDraft(key, { identity, config });
+      setSaveState("saved");
+    }, AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [rev, saveState, setSaveState]);
+  }, [rev, saveState, setSaveState, key, identity, config]);
 
   const issues = useMemo(() => validateDraft(identity, config), [identity, config]);
   const blocking = errorCount(issues);
@@ -117,6 +125,7 @@ export function AgentBuilder({
         identity={identity}
         config={config}
         disabled={!canPublish}
+        onPublished={() => clearDraft(key)}
       />
     </div>
   );
