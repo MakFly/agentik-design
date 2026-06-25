@@ -7,13 +7,11 @@ export const metadata: Metadata = { title: "Chat" };
 export default async function ChatThreadPage({ params }: { params: Promise<{ team: string; threadId: string }> }) {
   const { team, threadId } = await params;
   return (
-    <div className="h-[calc(100dvh-var(--navbar-h)-1.5rem)] min-h-[520px]">
-      <AgentChatScreen
-        team={team}
-        threadId={threadId}
-        modelAvailability={getModelAvailabilityMap()}
-        defaultModelId={getDefaultAvailableModelId()}
-      />
-    </div>
+    <AgentChatScreen
+      team={team}
+      threadId={threadId}
+      modelAvailability={getModelAvailabilityMap()}
+      defaultModelId={getDefaultAvailableModelId()}
+    />
   );
 }

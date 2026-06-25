@@ -13,8 +13,9 @@ export function AppShell({ team, children }: { team: string; children: ReactNode
   const pathname = usePathname();
   // The runs kanban is full-bleed (no centered max-width container).
   const fullBleed = pathname?.endsWith("/runs") ?? false;
-  // The chat (/{team}/thechat*) is an immersive surface: no topbar, full height.
-  const isChat = pathname?.split("/")[2] === "thechat";
+  // The chat surfaces (/{team}/chat* and /{team}/thechat*) are immersive: no topbar, full height.
+  const segment = pathname?.split("/")[2];
+  const isChat = segment === "chat" || segment === "thechat";
 
   // The chat has its own threads column, so the app nav starts collapsed there
   // and expanded elsewhere. The effect only fires when crossing the chat

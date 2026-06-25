@@ -7,12 +7,10 @@ export const metadata: Metadata = { title: "Chat" };
 export default async function ChatPage({ params }: { params: Promise<{ team: string }> }) {
   const { team } = await params;
   return (
-    <div className="h-[calc(100dvh-var(--navbar-h)-1.5rem)] min-h-[520px]">
-      <AgentChatScreen
-        team={team}
-        modelAvailability={getModelAvailabilityMap()}
-        defaultModelId={getDefaultAvailableModelId()}
-      />
-    </div>
+    <AgentChatScreen
+      team={team}
+      modelAvailability={getModelAvailabilityMap()}
+      defaultModelId={getDefaultAvailableModelId()}
+    />
   );
 }

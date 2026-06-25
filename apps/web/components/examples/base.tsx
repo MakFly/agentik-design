@@ -114,7 +114,7 @@ import { usePreferencesStore } from "@/lib/stores/preferences.store";
 import { BUILTIN_TOOLS } from "@/lib/tools/catalog";
 import { readCustomTools } from "@/lib/tools/custom-tools";
 
-const Logo: FC = () => {
+const Logo: FC<{ brandName?: string }> = ({ brandName = "assistant-ui" }) => {
   return (
     <div className="flex items-center gap-2 px-2 text-sm font-medium">
       <Image
@@ -122,12 +122,12 @@ const Logo: FC = () => {
         alt="logo"
         className="size-5 dark:hue-rotate-180 dark:invert"
       />
-      <span className="text-foreground/90">assistant-ui</span>
+      <span className="text-foreground/90">{brandName}</span>
     </div>
   );
 };
 
-const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
+const Sidebar: FC<{ collapsed?: boolean; brandName?: string }> = ({ collapsed, brandName = "assistant-ui" }) => {
   const { createNewThread } = useLocalThreadHistory();
 
   return (
@@ -154,7 +154,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
             collapsed && "opacity-0",
           )}
         >
-          assistant-ui
+          {brandName}
         </span>
         {collapsed ? null : (
           <div className="ml-auto flex items-center gap-0.5">
@@ -183,7 +183,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   );
 };
 
-const MobileSidebar: FC = () => {
+const MobileSidebar: FC<{ brandName?: string }> = ({ brandName }) => {
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -198,7 +198,7 @@ const MobileSidebar: FC = () => {
       </SheetTrigger>
       <SheetContent side="left" className="flex w-70 flex-col p-0">
         <div className="flex h-12 shrink-0 items-center px-4">
-          <Logo />
+          <Logo brandName={brandName} />
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
           <LocalThreadList />
@@ -1067,6 +1067,14 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
   );
 };
 
+/** Controls handed to a custom header so it can drive the sidebar like the default one. */
+export interface BaseHeaderControls {
+  onToggleSidebar: () => void;
+  sidebarCollapsed: boolean;
+  /** The mobile sidebar trigger (renders the thread list in a sheet on small screens). */
+  mobileMenu: ReactNode;
+}
+
 export const Base: FC<{
   team: string;
   threadId?: string;
@@ -1075,7 +1083,11 @@ export const Base: FC<{
   /** `{ [modelId]: hasKey }`, computed server-side (zero client fetch). */
   modelAvailability?: Record<string, boolean>;
   defaultModelId?: string;
-}> = ({ team, threadId, showHeader = true, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID }) => {
+  /** Wordmark shown in the thread sidebar. Defaults to the assistant-ui brand. */
+  brandName?: string;
+  /** Replace the default header entirely. Receives sidebar controls so it stays wired. */
+  headerSlot?: (controls: BaseHeaderControls) => ReactNode;
+}> = ({ team, threadId, showHeader = true, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID, brandName, headerSlot }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const models = useMemo(() => buildModelOptions(modelAvailability), [modelAvailability]);
 
@@ -1084,16 +1096,22 @@ export const Base: FC<{
       <LocalThreadHistoryProvider team={team} routeThreadId={threadId}>
         <div className="bg-muted/30 flex h-full w-full">
         <div className="hidden md:block">
-          <Sidebar collapsed={sidebarCollapsed} />
+          <Sidebar collapsed={sidebarCollapsed} brandName={brandName} />
         </div>
         <div className="flex flex-1 flex-col overflow-hidden p-2 md:pl-0">
           <div className="bg-background flex flex-1 flex-col overflow-hidden rounded-lg">
-            {showHeader ? (
-              <Header
-                sidebarCollapsed={sidebarCollapsed}
-                onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-              />
-            ) : null}
+            {headerSlot
+              ? headerSlot({
+                  onToggleSidebar: () => setSidebarCollapsed(!sidebarCollapsed),
+                  sidebarCollapsed,
+                  mobileMenu: <MobileSidebar brandName={brandName} />,
+                })
+              : showHeader ? (
+                <Header
+                  sidebarCollapsed={sidebarCollapsed}
+                  onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+                />
+              ) : null}
             <main className="flex-1 overflow-hidden">
               <Thread />
             </main>
