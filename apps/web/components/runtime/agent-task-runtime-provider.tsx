@@ -1,8 +1,11 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { AssistantChatTransport, useChatRuntime } from "@assistant-ui/react-ai-sdk";
+import {
+  AssistantChatTransport,
+  useChatRuntime,
+} from "@assistant-ui/react-ai-sdk";
 import { useAgents } from "@/features/agent-registry/api";
 
 /**
@@ -12,7 +15,10 @@ import { useAgents } from "@/features/agent-registry/api";
  * the daemon and streams the result back. The selected agent travels in a header.
  */
 
-interface AgentOption { id: string; name: string }
+interface AgentOption {
+  id: string;
+  name: string;
+}
 
 interface AgentChatCtx {
   agents: AgentOption[];
@@ -24,39 +30,55 @@ interface AgentChatCtx {
 const Ctx = createContext<AgentChatCtx | null>(null);
 export function useAgentChat(): AgentChatCtx {
   const v = useContext(Ctx);
-  if (!v) throw new Error("useAgentChat must be used inside AgentTaskRuntimeProvider");
+  if (!v)
+    throw new Error(
+      "useAgentChat must be used inside AgentTaskRuntimeProvider",
+    );
   return v;
 }
 
-export function AgentTaskRuntimeProvider({ team, children }: { team: string; children: React.ReactNode }) {
+export function AgentTaskRuntimeProvider({
+  team,
+  children,
+}: {
+  team: string;
+  children: React.ReactNode;
+}) {
   const agentsQ = useAgents(team);
   const agents: AgentOption[] = useMemo(
     () => (agentsQ.data?.items ?? []).map((a) => ({ id: a.id, name: a.name })),
     [agentsQ.data],
   );
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-
-  // Default to a sensible agent once loaded (prefer hermes, else the first).
-  useEffect(() => {
-    if (selectedAgentId || agents.length === 0) return;
-    const preferred = agents.find((a) => /hermes/i.test(a.name)) ?? agents[0]!;
-    setSelectedAgentId(preferred.id);
-  }, [agents, selectedAgentId]);
-
-  // Read by the transport's header function so switching agents needs no new runtime.
-  const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selectedAgentId;
+  const [selectedAgentOverride, setSelectedAgentId] = useState<string | null>(
+    null,
+  );
+  const preferredAgentId = useMemo(
+    () =>
+      (agents.find((agent) => /hermes/i.test(agent.name)) ?? agents[0])?.id ??
+      null,
+    [agents],
+  );
+  const selectedAgentId = selectedAgentOverride ?? preferredAgentId;
 
   const runtime = useChatRuntime({
     transport: new AssistantChatTransport({
       api: "/api/agent-chat",
-      headers: () => ({ "x-agent-id": selectedRef.current ?? "", "x-team": team }),
+      headers: () => ({ "x-agent-id": selectedAgentId ?? "", "x-team": team }),
     }),
   });
 
   return (
-    <Ctx.Provider value={{ agents, agentsLoading: agentsQ.isLoading, selectedAgentId, setSelectedAgentId }}>
-      <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
+    <Ctx.Provider
+      value={{
+        agents,
+        agentsLoading: agentsQ.isLoading,
+        selectedAgentId,
+        setSelectedAgentId,
+      }}
+    >
+      <AssistantRuntimeProvider runtime={runtime}>
+        {children}
+      </AssistantRuntimeProvider>
     </Ctx.Provider>
   );
 }

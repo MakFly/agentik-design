@@ -18,10 +18,20 @@ export const qk = {
     list: (team: string, filters?: Filters) => ["team", team, "workflows", "list", filters ?? {}] as const,
     detail: (team: string, id: string) => ["team", team, "workflows", "detail", id] as const,
   },
+  projects: {
+    all: (team: string) => ["team", team, "projects"] as const,
+    list: (team: string, filters?: Filters) => ["team", team, "projects", "list", filters ?? {}] as const,
+    detail: (team: string, id: string) => ["team", team, "projects", "detail", id] as const,
+    taskComments: (team: string, taskId: string) => ["team", team, "projects", "task", taskId, "comments"] as const,
+  },
   chat: {
     all: (team: string) => ["team", team, "chat"] as const,
     sessions: (team: string) => ["team", team, "chat", "sessions"] as const,
     session: (team: string, id: string) => ["team", team, "chat", "session", id] as const,
+  },
+  channels: {
+    all: (team: string) => ["team", team, "channels"] as const,
+    list: (team: string) => ["team", team, "channels", "list"] as const,
   },
   runs: {
     all: (team: string) => ["team", team, "runs"] as const,

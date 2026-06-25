@@ -39,18 +39,44 @@ type HeartbeatRequest struct {
 
 // ClaimedTask is returned by the claim endpoint (204 → no task available).
 type ClaimedTask struct {
-	ID      string            `json:"id"`
-	TeamID  string            `json:"teamId"`
-	AgentID string            `json:"agentId"`
-	Kind    string            `json:"kind"`
-	Input   json.RawMessage   `json:"input"`
-	WorkDir string            `json:"workDir"`
-	Env     map[string]string `json:"env,omitempty"` // org provider keys, merged into the runtime env
+	ID        string            `json:"id"`
+	TeamID    string            `json:"teamId"`
+	AgentID   string            `json:"agentId"`
+	ProjectID string            `json:"projectId,omitempty"`
+	Kind      string            `json:"kind"`
+	Input     json.RawMessage   `json:"input"`
+	WorkDir   string            `json:"workDir"`
+	Workspace *WorkspaceRef     `json:"workspace,omitempty"`
+	Env       map[string]string `json:"env,omitempty"` // org provider keys, merged into the runtime env
 }
 
-// TaskInput is the shape stored in agent_tasks.input by /agents/test.
+type WorkspaceRef struct {
+	ID         string `json:"id"`
+	ProjectID  string `json:"projectId"`
+	ResourceID string `json:"resourceId"`
+	Type       string `json:"type"` // git_repo | local_dir
+	Ref        string `json:"ref"`
+	Branch     string `json:"branch,omitempty"`
+	Path       string `json:"path"`
+}
+
+// TaskInput is the shape stored in agent_tasks.input. The engine folds the agent's
+// live-version config into it at claim time: Prompt carries the (learned-context
+// preamble + user) text, SystemPrompt the agent's instructions/persona, Model its
+// model, and Skills any native runtime skills (e.g. hermes --skills) to preload.
 type TaskInput struct {
-	Prompt string `json:"prompt"`
+	Prompt       string          `json:"prompt"`
+	SystemPrompt string          `json:"systemPrompt,omitempty"`
+	Model        string          `json:"model,omitempty"`
+	Skills       []string        `json:"skills,omitempty"`
+	Approval     *ApprovalPolicy `json:"approval,omitempty"`
+}
+
+type ApprovalPolicy struct {
+	RequiresApproval bool     `json:"requiresApproval,omitempty"`
+	Approved         bool     `json:"approved,omitempty"`
+	Message          string   `json:"message,omitempty"`
+	Risks            []string `json:"risks,omitempty"`
 }
 
 // TaskMessage is one streamed unit of agent output.
@@ -77,6 +103,18 @@ type CompleteRequest struct {
 
 type FailRequest struct {
 	Error string `json:"error"`
+}
+
+type WorkspaceStatusRequest struct {
+	Status string         `json:"status"` // pending | ready | syncing | error
+	Path   string         `json:"path,omitempty"`
+	Error  string         `json:"error,omitempty"`
+	Meta   map[string]any `json:"meta,omitempty"`
+}
+
+type ApprovalRequest struct {
+	Message string         `json:"message"`
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // BundleCommand is returned by the bundle claim endpoint (204 → nothing queued).

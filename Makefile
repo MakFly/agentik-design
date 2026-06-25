@@ -116,7 +116,7 @@ build/daemon: ## Build the Go Agentik CLI/daemon static binary → bin/agentik
 
 # ── Test ─────────────────────────────────────────────────────────────────────
 
-.PHONY: test test/web test/engine test/e2e
+.PHONY: test test/web test/engine
 test: test/web test/engine ## Run all tests
 
 test/web: ## Run frontend tests (vitest)
@@ -126,10 +126,6 @@ test/web: ## Run frontend tests (vitest)
 test/engine: ## Run engine + package tests (bun test)
 	@printf "$(C)→ Running engine tests...$(N)\n"
 	@cd $(ENGINE) && bun test
-
-test/e2e: ## Run e2e tests (Playwright)
-	@printf "$(C)→ Running e2e tests...$(N)\n"
-	@cd $(WEB) && bun run test:e2e
 
 # ── Lint & Type-check ─────────────────────────────────────────────────────────
 

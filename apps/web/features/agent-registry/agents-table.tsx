@@ -4,19 +4,21 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryState } from "nuqs";
-import { Plus, Bot } from "lucide-react";
+import { Plus, Bot, Filter, LayoutList, ShieldAlert } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/shared/data-table";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { RbacGate } from "@/lib/auth/rbac";
 import { useAgents, useAgentTaskSnapshot } from "./api";
 import type { AgentRow } from "./types";
 import { derivePresence, type AgentTaskSnapshot, type Availability } from "@/lib/agents/presence";
 import { formatRelativeTime, formatDuration, formatPercent, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { TemplatesButton } from "./agent-templates-dialog";
 
 const DOT: Record<Availability, string> = {
   online: "bg-success",
@@ -46,7 +48,29 @@ function PresenceCell({ agentId, snapshot }: { agentId: string; snapshot?: Agent
   );
 }
 
-const STATUSES = ["all", "healthy", "degraded", "error", "idle"] as const;
+const AGENT_SCOPES = ["all", "working", "ready", "attention"] as const;
+type AgentScope = (typeof AGENT_SCOPES)[number];
+
+const SCOPE_LABEL: Record<AgentScope, string> = {
+  all: "All",
+  working: "Working",
+  ready: "Ready",
+  attention: "Attention",
+};
+
+function agentScope(agent: AgentRow, snapshot?: AgentTaskSnapshot): AgentScope[] {
+  const meta = snapshot?.agents.find((a) => a.id === agent.id);
+  const presence = derivePresence(snapshot, {
+    id: agent.id,
+    runtimeKind: meta?.runtimeKind ?? "echo",
+    maxConcurrentTasks: meta?.maxConcurrentTasks ?? 1,
+  });
+  const scopes: AgentScope[] = ["all"];
+  if (presence.runningCount > 0 || presence.queuedCount > 0) scopes.push("working");
+  if (agent.health === "healthy" || agent.health === "idle") scopes.push("ready");
+  if (agent.health === "degraded" || agent.health === "error" || presence.availability !== "online") scopes.push("attention");
+  return scopes;
+}
 
 const columns: ColumnDef<AgentRow>[] = [
   {
@@ -129,10 +153,23 @@ export function NewAgentButton({ team }: { team: string }) {
 
 export function AgentsTable({ team }: { team: string }) {
   const router = useRouter();
-  const [status, setStatus] = useQueryState("status");
-  const { data, isLoading, isError, error, refetch } = useAgents(team, { status: status ?? undefined });
+  const [scopeParam, setScopeParam] = useQueryState("scope");
+  const [query, setQuery] = useQueryState("q");
+  const scope = AGENT_SCOPES.includes(scopeParam as AgentScope) ? (scopeParam as AgentScope) : "all";
+  const { data, isLoading, isError, error, refetch } = useAgents(team, { q: query ?? undefined });
   const { data: snapshot } = useAgentTaskSnapshot(team);
   const items = data?.items ?? [];
+  const scopeCounts = useMemo(() => {
+    const counts: Record<AgentScope, number> = { all: 0, working: 0, ready: 0, attention: 0 };
+    for (const agent of items) {
+      for (const bucket of agentScope(agent, snapshot)) counts[bucket]++;
+    }
+    return counts;
+  }, [items, snapshot]);
+  const visibleItems = useMemo(
+    () => items.filter((agent) => agentScope(agent, snapshot).includes(scope)),
+    [items, scope, snapshot],
+  );
 
   // Inject the live presence column after the name column.
   const cols = useMemo<ColumnDef<AgentRow>[]>(() => {
@@ -145,52 +182,105 @@ export function AgentsTable({ team }: { team: string }) {
   }, [snapshot]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {STATUSES.map((s) => {
-          const active = (s === "all" && !status) || status === s;
-          return (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setStatus(s === "all" ? null : s)}
-              className={cn(
-                "min-h-[32px] rounded-full border px-2.5 py-1 text-xs font-medium capitalize transition-colors",
-                active ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-surface-2",
-              )}
-            >
-              {s}
-            </button>
-          );
-        })}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Bot className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <h1 className="text-sm font-medium">Agents</h1>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground/70">{items.length}</span>
+          <p className="ml-2 hidden truncate text-xs text-muted-foreground md:block">
+            Runtime-bound teammates for code, ops, review, and support work
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <TemplatesButton team={team} />
+          <NewAgentButton team={team} />
+        </div>
+      </div>
+
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/70 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {AGENT_SCOPES.map((item) => {
+            const active = scope === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setScopeParam(item === "all" ? null : item)}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
+                  active
+                    ? "border-border bg-accent text-accent-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                )}
+              >
+                {SCOPE_LABEL[item]}
+                <span className="font-mono tabular-nums text-muted-foreground/70">{scopeCounts[item]}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="relative w-56 max-w-full">
+            <Filter className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query ?? ""}
+              onChange={(event) => setQuery(event.target.value.trim() ? event.target.value : null)}
+              placeholder="Filter agents"
+              aria-label="Filter agents"
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:inline-flex">
+            <LayoutList className="size-3.5" />
+            <span className="tabular-nums">{visibleItems.length}</span>
+            shown
+          </span>
+          {scopeCounts.attention > 0 ? (
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-warning/20 bg-warning/10 px-2 text-xs font-medium text-warning">
+              <ShieldAlert className="size-3.5" />
+              <span className="tabular-nums">{scopeCounts.attention}</span>
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {isError ? (
         <ErrorState error={error} onRetry={() => refetch()} />
       ) : (
-        <DataTable
-          columns={cols}
-          data={items}
-          isLoading={isLoading}
-          onRowClick={(a) => router.push(`/${team}/agents/${a.id}`)}
-          emptyState={
-            status ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                No agents match this filter.{" "}
-                <button type="button" className="text-primary underline" onClick={() => setStatus(null)}>
-                  Clear
-                </button>
-              </div>
-            ) : (
-              <EmptyState
-                icon={Bot}
-                title="No agents yet"
-                description="Create your first agent to see it here."
-                action={<NewAgentButton team={team} />}
-              />
-            )
-          }
-        />
+        <div className="min-h-0 flex-1 pt-3">
+          <DataTable
+            columns={cols}
+            data={visibleItems}
+            isLoading={isLoading}
+            onRowClick={(a) => router.push(`/${team}/agents/${a.id}`)}
+            emptyState={
+              scope !== "all" || query ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  No agents match this view.{" "}
+                  <button
+                    type="button"
+                    className="text-primary underline"
+                    onClick={() => {
+                      setScopeParam(null);
+                      setQuery(null);
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Bot}
+                  title="No agents yet"
+                  description="Create your first agent to see it here."
+                  action={<NewAgentButton team={team} />}
+                />
+              )
+            }
+          />
+        </div>
       )}
     </div>
   );

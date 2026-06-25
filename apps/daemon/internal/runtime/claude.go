@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -77,12 +76,11 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 		return nil, fmt.Errorf("empty prompt")
 	}
 
-	// Isolated work dir, removed on completion.
-	dir := filepath.Join(c.WorkRoot, task.ID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("workdir: %w", err)
+	dir, cleanup, err := taskWorkDir(c.WorkRoot, task)
+	if err != nil {
+		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer cleanup()
 
 	timeout := 5 * time.Minute
 	if c.TimeoutMs > 0 {
@@ -92,8 +90,13 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 	defer cancel()
 
 	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
+	// The agent's persona/skill is its system prompt: append it so the CLI's built-in
+	// capabilities are preserved (an autonomous agent with its own skill).
+	if sp := strings.TrimSpace(in.SystemPrompt); sp != "" {
+		args = append(args, "--append-system-prompt", sp)
+	}
+	if model := pick(in.Model, c.Model); model != "" {
+		args = append(args, "--model", model)
 	}
 	cmd := exec.CommandContext(runCtx, "claude", args...)
 	cmd.Dir = dir

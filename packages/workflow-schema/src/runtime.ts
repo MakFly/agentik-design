@@ -14,6 +14,7 @@ export const runtimeKindSchema = z.enum([
   "codex",
   "openai",
   "anthropic",
+  "openrouter",
   "custom",
 ]); // enum stays extensible — "hermes" wraps the Nous Research CLI as a daemon runtime
 export type RuntimeKind = z.infer<typeof runtimeKindSchema>;

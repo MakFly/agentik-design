@@ -4,6 +4,7 @@ import { hub, type WsData } from "./hub";
 import { handleControl } from "./control";
 import { resolveAuthFromRequest } from "./auth";
 import { startTaskScanner } from "./task-scanner";
+import { startTelegramPolling } from "./telegram-poller";
 
 const server = Bun.serve<WsData>({
   port: env.PORT,
@@ -39,3 +40,7 @@ console.log(`[engine] API + realtime listening on http://localhost:${server.port
 // Lifecycle scanner: times out stuck tasks and auto-retries the retryable ones.
 // Single-owner across instances via a Postgres advisory lock (see task-scanner.ts).
 startTaskScanner();
+
+// Telegram long polling (default channel transport): pulls updates so bots work
+// with only a token — no public webhook URL required. Single-owner via advisory lock.
+startTelegramPolling();

@@ -28,6 +28,16 @@ func withTaskEnv(base []string, extra map[string]string) []string {
 	return base
 }
 
+// pick returns the first non-empty string, or "" when all are empty.
+func pick(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Registry maps a runtime kind to its adapter.
 type Registry map[string]Runtime
 

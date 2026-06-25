@@ -245,11 +245,11 @@ export function LocalThreadHistoryProvider({
   const [hydrated, setHydrated] = useState(false);
   const activeThreadIdRef = useRef<string | null>(null);
   const restoringRef = useRef(false);
-  // Base path of the surface hosting this chat (e.g. /team/thechat or /team/chat),
+  // Base path of the surface hosting this chat (e.g. /team/chat),
   // derived from the URL so threads route back to the right surface.
   const pathname = usePathname();
   const dashboardHref = useMemo(() => {
-    const segment = pathname.split("/").filter(Boolean)[1] ?? "thechat";
+    const segment = pathname.split("/").filter(Boolean)[1] ?? "chat";
     return `/${encodeURIComponent(team)}/${segment}`;
   }, [team, pathname]);
   const threadHref = useCallback(

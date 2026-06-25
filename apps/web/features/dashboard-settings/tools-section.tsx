@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { GlobeIcon, PlusIcon, Trash2Icon, WrenchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,18 +18,16 @@ const STORAGE_KEY = "aui:dashboard:enabled-tools";
 
 /** Persisted per-tool enabled state (defaults to enabled when unset). */
 function useEnabledTools() {
-  const [disabled, setDisabled] = useState<Record<string, boolean>>({});
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
+  const [disabled, setDisabled] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {};
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setDisabled(JSON.parse(raw));
+      return raw ? JSON.parse(raw) : {};
     } catch {
-      /* ignore corrupt storage */
+      return {};
     }
-    setReady(true);
-  }, []);
+  });
+  const [ready] = useState(() => typeof window !== "undefined");
 
   const isEnabled = (name: string) => !disabled[name];
   const setEnabled = (name: string, enabled: boolean) => {
@@ -51,12 +49,10 @@ function useEnabledTools() {
 
 export function ToolsSection() {
   const { isEnabled, setEnabled, ready } = useEnabledTools();
-  const [custom, setCustom] = useState<CustomTool[]>([]);
+  const [custom, setCustom] = useState<CustomTool[]>(() =>
+    typeof window === "undefined" ? [] : readCustomTools(),
+  );
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  useEffect(() => {
-    setCustom(readCustomTools());
-  }, []);
 
   const persist = (next: CustomTool[]) => {
     setCustom(next);
@@ -68,8 +64,9 @@ export function ToolsSection() {
       <header className="flex flex-col gap-1">
         <h1 className="text-lg font-semibold">Tools</h1>
         <p className="text-muted-foreground text-sm">
-          Tools the assistant can call during a conversation. Toggle a built-in off
-          to keep it out of the model&apos;s reach, or add your own HTTP tools.
+          Tools the assistant can call during a conversation. Toggle a built-in
+          off to keep it out of the model&apos;s reach, or add your own HTTP
+          tools.
         </p>
       </header>
 
@@ -82,7 +79,10 @@ export function ToolsSection() {
           {BUILTIN_TOOLS.map((t) => {
             const id = `tool-${t.name}`;
             return (
-              <li key={t.name} className="flex items-center gap-3 p-3 sm:gap-4 sm:p-4">
+              <li
+                key={t.name}
+                className="flex items-center gap-3 p-3 sm:gap-4 sm:p-4"
+              >
                 <div className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-lg">
                   <WrenchIcon className="size-4" />
                 </div>
@@ -117,7 +117,11 @@ export function ToolsSection() {
           <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
             Custom
           </h2>
-          <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setDialogOpen(true)}
+          >
             <PlusIcon className="size-4" /> New tool
           </Button>
         </div>
@@ -129,7 +133,10 @@ export function ToolsSection() {
         ) : (
           <ul className="divide-border divide-y rounded-xl border">
             {custom.map((t) => (
-              <li key={t.id} className="flex items-center gap-3 p-3 sm:gap-4 sm:p-4">
+              <li
+                key={t.id}
+                className="flex items-center gap-3 p-3 sm:gap-4 sm:p-4"
+              >
                 <div className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-lg">
                   <GlobeIcon className="size-4" />
                 </div>
@@ -163,10 +170,11 @@ export function ToolsSection() {
       </div>
 
       <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-xs">
-        Custom tools run in your browser (public, CORS-enabled APIs; any auth header
-        is client-side). Server-side execution with stored secrets is the next tier.
-        Using tools via <code className="bg-muted rounded px-1 py-0.5">@</code> in the
-        composer comes next too.
+        Custom tools run in your browser (public, CORS-enabled APIs; any auth
+        header is client-side). Server-side execution with stored secrets is the
+        next tier. Using tools via{" "}
+        <code className="bg-muted rounded px-1 py-0.5">@</code> in the composer
+        comes next too.
       </p>
 
       <CustomToolDialog

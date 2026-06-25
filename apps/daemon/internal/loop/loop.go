@@ -3,7 +3,12 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +25,7 @@ const (
 	metaEvery      = 30 * time.Second
 	flushEvery     = 250 * time.Millisecond
 	idlePoll       = 1 * time.Second
+	agentsMdLimit  = 12_000
 )
 
 type Loop struct {
@@ -167,6 +173,21 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 	}
 	log.Printf("task %s claimed (kind=%s)", task.ID, kind)
 
+	if approval := preflightApproval(task); approval != nil {
+		log.Printf("task %s waiting for approval: %s", task.ID, approval.Message)
+		if err := l.client.RequestApproval(ctx, task.ID, protocol.ApprovalRequest{
+			Message: approval.Message,
+			Context: map[string]any{
+				"risks": approval.Risks,
+				"kind":  kind,
+			},
+		}); err != nil {
+			log.Printf("approval request error %s: %v", task.ID, err)
+			_ = l.client.Fail(ctx, task.ID, "approval request failed: "+err.Error())
+		}
+		return
+	}
+
 	if err := l.client.Start(ctx, task.ID); err != nil {
 		log.Printf("start error %s: %v", task.ID, err)
 		return
@@ -176,15 +197,17 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 	defer cancel()
 
 	var (
-		mu  sync.Mutex
-		buf []protocol.TaskMessage
-		seq int
+		mu      sync.Mutex
+		buf     []protocol.TaskMessage
+		emitted []protocol.TaskMessage
+		seq     int
 	)
 	emit := func(m protocol.TaskMessage) {
 		mu.Lock()
 		m.Seq = seq
 		seq++
 		buf = append(buf, m)
+		emitted = append(emitted, m)
 		mu.Unlock()
 	}
 
@@ -215,7 +238,39 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 			return
 		}
 		defer release()
+		if task.Workspace != nil {
+			emit(protocol.TaskMessage{Type: "tool_use", Tool: "workspace.prepare", Input: map[string]any{
+				"type":   task.Workspace.Type,
+				"ref":    task.Workspace.Ref,
+				"branch": task.Workspace.Branch,
+			}})
+			_ = l.client.ReportWorkspace(runCtx, task.Workspace.ID, protocol.WorkspaceStatusRequest{Status: "syncing", Path: task.Workspace.Path})
+			dir, err := runtime.PrepareWorkspace(runCtx, l.cfg.WorkRoot, task.Workspace)
+			if err != nil {
+				_ = l.client.ReportWorkspace(context.Background(), task.Workspace.ID, protocol.WorkspaceStatusRequest{Status: "error", Path: task.Workspace.Path, Error: err.Error()})
+				done <- result{nil, err}
+				return
+			}
+			task.WorkDir = dir
+			_ = l.client.ReportWorkspace(runCtx, task.Workspace.ID, protocol.WorkspaceStatusRequest{Status: "ready", Path: dir, Meta: map[string]any{
+				"type":       task.Workspace.Type,
+				"resourceId": task.Workspace.ResourceID,
+				"ref":        task.Workspace.Ref,
+				"branch":     task.Workspace.Branch,
+			}})
+			emit(protocol.TaskMessage{Type: "tool_result", Tool: "workspace.prepare", Output: map[string]any{"path": dir}})
+			injectWorkspaceInstructions(&task, dir)
+		}
 		val, err := rt.Run(runCtx, task, emit)
+		if err == nil && task.Workspace != nil {
+			val = withFileChanges(val, runtime.ChangedFiles(runCtx, task.WorkDir), runtime.DiffStats(runCtx, task.WorkDir))
+		}
+		if err == nil {
+			mu.Lock()
+			seen := append([]protocol.TaskMessage(nil), emitted...)
+			mu.Unlock()
+			val = withDetectedTests(val, detectTestResults(seen))
+		}
 		done <- result{val, err}
 	}()
 
@@ -244,6 +299,214 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 			return
 		}
 	}
+}
+
+func injectWorkspaceInstructions(task *protocol.ClaimedTask, dir string) {
+	content := readAgentsMarkdown(dir)
+	if content == "" || len(task.Input) == 0 {
+		return
+	}
+	var input protocol.TaskInput
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		return
+	}
+	section := "Workspace AGENTS.md instructions:\n" + content
+	if strings.TrimSpace(input.SystemPrompt) != "" {
+		input.SystemPrompt = strings.TrimSpace(input.SystemPrompt) + "\n\n---\n\n" + section
+	} else {
+		input.SystemPrompt = section
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return
+	}
+	task.Input = encoded
+}
+
+func readAgentsMarkdown(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimSpace(string(b))
+	if len(content) > agentsMdLimit {
+		content = content[:agentsMdLimit] + "\n..."
+	}
+	return content
+}
+
+type preflightApprovalPolicy struct {
+	RequiresApproval bool     `json:"requiresApproval"`
+	Approved         bool     `json:"approved"`
+	Message          string   `json:"message"`
+	Risks            []string `json:"risks"`
+}
+
+func preflightApproval(task protocol.ClaimedTask) *preflightApprovalPolicy {
+	if len(task.Input) == 0 {
+		return nil
+	}
+	var input struct {
+		Approval *preflightApprovalPolicy `json:"approval"`
+	}
+	if err := json.Unmarshal(task.Input, &input); err != nil || input.Approval == nil {
+		return nil
+	}
+	if !input.Approval.RequiresApproval || input.Approval.Approved {
+		return nil
+	}
+	if input.Approval.Message == "" {
+		input.Approval.Message = "Operator approval required before execution."
+	}
+	return input.Approval
+}
+
+func withChangedFiles(val any, changed []string) any {
+	return withFileChanges(val, changed, nil)
+}
+
+func withFileChanges(val any, changed []string, fileChanges []runtime.FileChange) any {
+	if len(changed) == 0 {
+		if len(fileChanges) == 0 {
+			return val
+		}
+	}
+	if m, ok := val.(map[string]any); ok {
+		if len(changed) > 0 {
+			m["changed_files"] = changed
+		}
+		if len(fileChanges) > 0 {
+			m["file_changes"] = fileChanges
+		}
+		return m
+	}
+	out := map[string]any{"result": val}
+	if len(changed) > 0 {
+		out["changed_files"] = changed
+	}
+	if len(fileChanges) > 0 {
+		out["file_changes"] = fileChanges
+	}
+	return out
+}
+
+type detectedTest struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Output string `json:"output,omitempty"`
+}
+
+var testCommandPattern = regexp.MustCompile(`(?i)(^|\s)(bun|npm|pnpm|yarn|go|cargo|pytest|phpunit|vitest|jest|rspec|make)\s+([^;&|]*\b(test|check|spec|phpunit|vitest|jest)\b[^;&|]*)`)
+var failingCountPattern = regexp.MustCompile(`(?i)([1-9][0-9]*)\s+(fail|failed|failure|failures|error|errors)\b`)
+
+func withDetectedTests(val any, tests []detectedTest) any {
+	if len(tests) == 0 {
+		return val
+	}
+	if m, ok := val.(map[string]any); ok {
+		if existing, ok := m["tests"].([]detectedTest); ok && len(existing) > 0 {
+			return m
+		}
+		if existing, ok := m["tests"].([]any); ok && len(existing) > 0 {
+			return m
+		}
+		m["tests"] = tests
+		return m
+	}
+	return map[string]any{"result": val, "tests": tests}
+}
+
+func detectTestResults(messages []protocol.TaskMessage) []detectedTest {
+	var out []detectedTest
+	var pendingCommand string
+	for _, msg := range messages {
+		if msg.Type == "tool_use" {
+			if cmd := testCommandFrom(msg.Input); cmd != "" {
+				pendingCommand = cmd
+			}
+			continue
+		}
+		if msg.Type != "tool_result" || pendingCommand == "" {
+			continue
+		}
+		output := outputString(msg.Output)
+		out = append(out, detectedTest{
+			Name:   pendingCommand,
+			Status: statusFromOutput(output),
+			Output: truncateOutput(output, 4000),
+		})
+		pendingCommand = ""
+	}
+	return out
+}
+
+func testCommandFrom(input any) string {
+	raw := commandString(input)
+	if raw == "" {
+		return ""
+	}
+	match := testCommandPattern.FindString(strings.TrimSpace(raw))
+	return strings.TrimSpace(match)
+}
+
+func commandString(input any) string {
+	switch v := input.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for _, key := range []string{"command", "cmd", "script", "input"} {
+			if s, ok := v[key].(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func outputString(output any) string {
+	switch v := output.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case map[string]any:
+		for _, key := range []string{"output", "stdout", "stderr", "content", "text"} {
+			if s, ok := v[key].(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+		b, _ := json.Marshal(v)
+		return string(b)
+	default:
+		if output == nil {
+			return ""
+		}
+		b, _ := json.Marshal(output)
+		return string(b)
+	}
+}
+
+func statusFromOutput(output string) string {
+	lower := strings.ToLower(output)
+	switch {
+	case failingCountPattern.MatchString(lower) || strings.Contains(lower, "panic"):
+		return "failed"
+	case strings.Contains(lower, "pass") || strings.Contains(lower, "ok") || strings.Contains(lower, "success"):
+		return "passed"
+	default:
+		return "reported"
+	}
+}
+
+func truncateOutput(output string, limit int) string {
+	output = strings.TrimSpace(output)
+	if len(output) <= limit {
+		return output
+	}
+	return output[:limit] + "\n..."
 }
 
 func (l *Loop) acquireSlot(ctx context.Context) (func(), bool) {

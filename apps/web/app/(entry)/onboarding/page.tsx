@@ -55,8 +55,8 @@ export default function OnboardingPage() {
           <Button className="min-h-11" onClick={() => router.push(`/${created.slug}/agents/new`)}>
             Create your first agent
           </Button>
-          <Button variant="outline" className="min-h-11" onClick={() => router.push(`/${created.slug}/runs`)}>
-            Skip to dashboard
+          <Button variant="outline" className="min-h-11" onClick={() => router.push(`/${created.slug}/projects`)}>
+            Skip to projects
           </Button>
         </div>
       </div>

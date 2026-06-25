@@ -8,7 +8,7 @@ export type AppWebSocket = ServerWebSocket<WsData>;
 
 /** Lifecycle/presence events broadcast to a team's connected clients. */
 export type HubEvent =
-  | { kind: "run"; action: "created" | "dispatched" | "running" | "succeeded" | "failed" | "cancelled"; runId: string }
+  | { kind: "run"; action: "created" | "dispatched" | "running" | "paused" | "waiting_approval" | "succeeded" | "failed" | "cancelled"; runId: string }
   | { kind: "run.progress"; runId: string; completedSteps: number; stepCount: number }
   | { kind: "chat.message"; sessionId: string; runId: string; role: "assistant" }
   | { kind: "presence" }

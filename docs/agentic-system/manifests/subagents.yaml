@@ -1,0 +1,56 @@
+version: 1
+subagents:
+  - id: product-architect
+    name: Product Architect
+    mission: Clarify product intent, scope, workflows, information architecture, and acceptance criteria.
+    outputs:
+      - product_decisions
+      - workflow_map
+      - acceptance_criteria
+  - id: repo-cartographer
+    name: Repo Cartographer
+    mission: Map existing routes, schemas, APIs, tests, conventions, and integration points before implementation.
+    outputs:
+      - code_path_map
+      - repo_constraints
+      - implementation_risks
+  - id: ui-tui-architect
+    name: UI/TUI Architect
+    mission: Design the project cockpit and Hermes-like live console using existing UI primitives.
+    outputs:
+      - surface_spec
+      - state_model
+      - interaction_rules
+  - id: engine-api-architect
+    name: Engine/API Architect
+    mission: Design persistence, Hono APIs, RBAC, realtime events, and channel contracts.
+    outputs:
+      - api_contract
+      - schema_plan
+      - realtime_contract
+  - id: runtime-adapter-engineer
+    name: Runtime Adapter Engineer
+    mission: Integrate Codex, Claude Code, shell, git, workspace, and BYOK adapters behind one run contract.
+    outputs:
+      - adapter_contract
+      - runtime_capabilities
+      - execution_report
+  - id: telegram-channel-engineer
+    name: Telegram Channel Engineer
+    mission: Implement Telegram pairing, commands, summaries, approvals, and run controls.
+    outputs:
+      - command_contract
+      - pairing_flow
+      - notification_rules
+  - id: qa-verifier
+    name: QA/Verifier
+    mission: Verify behavior with targeted tests, typechecks, command output, and acceptance evidence.
+    outputs:
+      - checks_run
+      - pass_fail_report
+      - residual_risks
+handoff_rules:
+  - Subagents receive a bounded task, relevant files, constraints, and expected output.
+  - Subagents return evidence, not broad speculation.
+  - The orchestrator decides which output becomes persistent project memory.
+  - Telegram receives summaries only; full detail remains in the web run console.

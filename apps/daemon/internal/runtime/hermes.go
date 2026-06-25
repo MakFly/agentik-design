@@ -125,12 +125,11 @@ func (c Hermes) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 		return nil, fmt.Errorf("empty prompt")
 	}
 
-	// Isolated work dir, removed on completion.
-	dir := filepath.Join(c.WorkRoot, task.ID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("workdir: %w", err)
+	dir, cleanup, err := taskWorkDir(c.WorkRoot, task)
+	if err != nil {
+		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer cleanup()
 
 	timeout := 5 * time.Minute
 	if c.TimeoutMs > 0 {
@@ -139,20 +138,37 @@ func (c Hermes) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	configDir := dir
+	if task.Workspace != nil {
+		tempDir, err := os.MkdirTemp("", "agentik-hermes-home-*")
+		if err != nil {
+			return nil, fmt.Errorf("hermes temp home: %w", err)
+		}
+		defer os.RemoveAll(tempDir)
+		configDir = tempDir
+	}
 	// Materialize an isolated HERMES_HOME from the org's managed key so the run is
 	// driven entirely by keys set in the web UI — no `hermes auth`, no machine config.
-	home, model, err := writeHermesHome(dir, task.Env)
+	home, model, err := writeHermesHome(configDir, task.Env)
 	if err != nil {
 		return nil, fmt.Errorf("hermes config: %w", err)
 	}
 
+	// The agent's persona/skill is its system prompt. Hermes `chat -q` has no
+	// system-prompt flag, so prepend it to the query as a delimited block.
+	query := prompt
+	if sp := strings.TrimSpace(in.SystemPrompt); sp != "" {
+		query = sp + "\n\n---\n\n" + prompt
+	}
 	// `-Q` = programmatic mode (final response only, no banner/spinner); `--yolo`
 	// auto-approves since there is no TTY to confirm dangerous actions on the server.
-	args := []string{"chat", "-q", prompt, "-Q", "--yolo", "--max-turns", hermesMaxTurns}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	} else if model != "" {
-		args = append(args, "--model", model)
+	args := []string{"chat", "-q", query, "-Q", "--yolo", "--max-turns", hermesMaxTurns}
+	if m := pick(in.Model, c.Model, model); m != "" {
+		args = append(args, "--model", m)
+	}
+	// Preload the agent's native Hermes skills (its "own skill", multica-style).
+	if len(in.Skills) > 0 {
+		args = append(args, "--skills", strings.Join(in.Skills, ","))
 	}
 	cmd := exec.CommandContext(runCtx, "hermes", args...)
 	cmd.Dir = dir

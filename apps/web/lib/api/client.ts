@@ -12,7 +12,8 @@ export interface ApiOpts {
 
 /**
  * Typed fetch wrapper (docs/03 §7.4). Normalizes failures into AppError and
- * scopes requests to the active team. In dev, requests are intercepted by MSW.
+ * scopes requests to the active team. MSW is opt-in only; dev requests hit the
+ * engine through the Next.js API rewrite by default.
  */
 export async function apiFetch<T>(path: string, opts: ApiOpts = {}): Promise<T> {
   try {

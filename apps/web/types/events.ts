@@ -29,7 +29,13 @@ export interface RunCostUpdated {
 }
 export interface StepStarted {
   type: "step.started";
-  step: { id: StepId; index: number; actor: StepActor; summary: string; nodeId?: string };
+  step: {
+    id: StepId;
+    index: number;
+    actor: StepActor;
+    summary: string;
+    nodeId?: string;
+  };
 }
 export interface StepCompleted {
   type: "step.completed";
@@ -118,6 +124,8 @@ export interface EventEnvelope<T extends RunEvent = RunEvent> {
   ts: ISODate;
   runId: RunId;
   event: T["type"];
+  /** Orchestrator-level event name from docs/agentic-system/ORCHESTRATOR.md. */
+  contractEvent?: string;
   data: T;
 }
 
@@ -129,7 +137,13 @@ export type ControlMessage =
   | { type: "run.pause"; runId: RunId }
   | { type: "run.resume"; runId: RunId }
   | { type: "run.cancel"; runId: RunId }
-  | { type: "run.approve"; runId: RunId; stepId: StepId; decision: "approve" | "reject"; reason?: string };
+  | {
+      type: "run.approve";
+      runId: RunId;
+      stepId: StepId;
+      decision: "approve" | "reject";
+      reason?: string;
+    };
 
 export interface ControlAck {
   type: "control.ack";

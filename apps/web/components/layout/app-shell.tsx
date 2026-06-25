@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useRealtimeSync } from "@/lib/realtime/use-realtime-sync";
@@ -9,21 +9,19 @@ import { Topbar } from "./topbar";
 import { AppSidebar } from "./sidebar";
 import { CommandPalette } from "./command-palette";
 
-export function AppShell({ team, children }: { team: string; children: ReactNode }) {
+export function AppShell({
+  team,
+  children,
+}: {
+  team: string;
+  children: ReactNode;
+}) {
   const pathname = usePathname();
   // The runs kanban is full-bleed (no centered max-width container).
   const fullBleed = pathname?.endsWith("/runs") ?? false;
-  // The chat surfaces (/{team}/chat* and /{team}/thechat*) are immersive: no topbar, full height.
+  // The chat surface (/{team}/chat*) is immersive: no topbar, full height.
   const segment = pathname?.split("/")[2];
-  const isChat = segment === "chat" || segment === "thechat";
-
-  // The chat has its own threads column, so the app nav starts collapsed there
-  // and expanded elsewhere. The effect only fires when crossing the chat
-  // boundary, so manual toggles within a route still stick.
-  const [sidebarOpen, setSidebarOpen] = useState(!isChat);
-  useEffect(() => {
-    setSidebarOpen(!isChat);
-  }, [isChat]);
+  const isChat = segment === "chat";
 
   // One realtime socket per team; events invalidate React Query caches.
   useRealtimeSync(team);
@@ -35,7 +33,10 @@ export function AppShell({ team, children }: { team: string; children: ReactNode
   }, [reduceMotion]);
 
   return (
-    <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
+    <SidebarProvider
+      key={isChat ? "chat-shell" : "app-shell"}
+      defaultOpen={!isChat}
+    >
       <AppSidebar team={team} />
       <SidebarInset className="min-w-0">
         {isChat ? (
@@ -44,7 +45,13 @@ export function AppShell({ team, children }: { team: string; children: ReactNode
           <>
             <Topbar />
             <main className="min-w-0 flex-1 overflow-x-hidden">
-              <div className={fullBleed ? "w-full p-4 md:p-6" : "mx-auto w-full max-w-[1600px] p-4 md:p-6"}>
+              <div
+                className={
+                  fullBleed
+                    ? "w-full p-4 md:p-6"
+                    : "mx-auto w-full max-w-[1600px] p-4 md:p-6"
+                }
+              >
                 {children}
               </div>
             </main>

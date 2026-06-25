@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, PanelLeft } from "lucide-react";
 import { Base, type BaseHeaderControls } from "@/components/examples/base";
@@ -7,6 +8,7 @@ import { AgentTaskRuntimeProvider, useAgentChat } from "@/components/runtime/age
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { apiFetch } from "@/lib/api/client";
+import { qk } from "@/lib/api/queryKeys";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,7 +30,7 @@ function agentInitial(name: string): string {
 
 function useDaemonOnline(team: string): boolean {
   const { data } = useQuery({
-    queryKey: ["team", team, "system"],
+    queryKey: qk.settings.system(team),
     queryFn: ({ signal }) => apiFetch<{ daemons: { status: string }[] }>("/system", { team, signal }),
     refetchInterval: 5000,
   });
@@ -83,7 +85,7 @@ function ChatHeader({ team, controls }: { team: string; controls: BaseHeaderCont
                 <span className="text-sm font-semibold text-foreground">{selected.name}</span>
                 <span className="text-[11px] text-muted-foreground">
                   {runtime ? `${runtime} · ` : ""}
-                  {online ? "ready" : "no daemon"}
+                  {online ? "ready" : "no runtime"}
                 </span>
               </span>
               <ChevronsUpDown className="ml-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
@@ -112,15 +114,21 @@ function ChatHeader({ team, controls }: { team: string; controls: BaseHeaderCont
         </SelectContent>
       </Select>
 
-      <span
-        className={cn(
-          "ml-auto inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-          online ? "border-success/30 bg-success/10 text-success" : "border-border bg-surface-2 text-muted-foreground",
-        )}
-      >
-        <span className={cn("size-1.5 rounded-full", online ? "bg-success motion-safe:animate-pulse" : "bg-muted-foreground/50")} />
-        {online ? "Daemon online" : "No daemon"}
-      </span>
+      {online ? (
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
+          <span className="size-1.5 rounded-full bg-success motion-safe:animate-pulse" />
+          Runtime online
+        </span>
+      ) : (
+        <Link
+          href={`/${team}/settings?section=runtimes`}
+          title="No runtime online — open Settings ▸ Runtimes to connect one"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+        >
+          <span className="size-1.5 rounded-full bg-muted-foreground/50" />
+          No runtime — connect
+        </Link>
+      )}
     </header>
   );
 }

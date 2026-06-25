@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS, NAV_GROUP_LABELS, hrefFor, type NavGroup, type NavItem } from "@/config/nav";
+import {
+  NAV_ITEMS,
+  NAV_GROUP_LABELS,
+  hrefFor,
+  type NavGroup,
+  type NavItem,
+} from "@/config/nav";
 import { useRbac } from "@/lib/auth/rbac";
 import { useIndicators } from "@/lib/hooks/use-indicators";
 import {
@@ -21,7 +27,7 @@ import {
 import { TeamSwitcher } from "./team-switcher";
 import { NavUser } from "./nav-user";
 
-const GROUP_ORDER: NavGroup[] = ["observe", "author", "quality", "system"];
+const GROUP_ORDER: NavGroup[] = ["control", "build", "knowledge", "system"];
 
 export function AppSidebar({ team }: { team: string }) {
   const pathname = usePathname();
@@ -53,19 +59,29 @@ export function AppSidebar({ team }: { team: string }) {
               <SidebarMenu>
                 {items.map((item) => {
                   const href = hrefFor(team, item.segment);
-                  const active = pathname === href || pathname.startsWith(`${href}/`);
+                  const active =
+                    pathname === href || pathname.startsWith(`${href}/`);
                   const Icon = item.icon;
                   const count = badgeFor(item);
                   return (
                     <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
-                        <Link href={href} aria-current={active ? "page" : undefined}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        tooltip={item.label}
+                      >
+                        <Link
+                          href={href}
+                          aria-current={active ? "page" : undefined}
+                        >
                           <Icon aria-hidden="true" />
                           <span>{item.label}</span>
                         </Link>
                       </SidebarMenuButton>
                       {count > 0 ? (
-                        <SidebarMenuBadge className="tabular-nums">{count}</SidebarMenuBadge>
+                        <SidebarMenuBadge className="tabular-nums">
+                          {count}
+                        </SidebarMenuBadge>
                       ) : null}
                     </SidebarMenuItem>
                   );

@@ -1,5 +1,5 @@
 import type { AppWebSocket } from "./hub";
-import { cancelAgentTask } from "./agents-repo";
+import { approveAgentTask, cancelAgentTask, pauseAgentTask, rejectAgentTask, resumeAgentTask } from "./agents-repo";
 
 /**
  * Handle a ControlMessage from the web client (run-control.ts). The control
@@ -8,7 +8,7 @@ import { cancelAgentTask } from "./agents-repo";
  * until their gates are implemented.
  */
 export async function handleControl(ws: AppWebSocket, raw: string | Buffer): Promise<void> {
-  let msg: { type?: string; runId?: string } | null = null;
+  let msg: { type?: string; runId?: string; decision?: "approve" | "reject"; reason?: string } | null = null;
   try {
     msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
   } catch {
@@ -17,6 +17,7 @@ export async function handleControl(ws: AppWebSocket, raw: string | Buffer): Pro
   const type = msg?.type;
   const runId = msg?.runId;
   if (!type || !runId) return;
+  const control = msg as { type: string; runId: string; decision?: "approve" | "reject"; reason?: string };
 
   let accepted = true;
   if (type === "run.cancel") {
@@ -24,6 +25,15 @@ export async function handleControl(ws: AppWebSocket, raw: string | Buffer): Pro
     // team-scoped (no user/role is carried through the /realtime upgrade). Gating it on
     // `run:control` requires plumbing identity into WsData — deferred (out of Phase 1 scope).
     accepted = await cancelAgentTask(ws.data.teamId, runId);
+  } else if (type === "run.pause") {
+    accepted = await pauseAgentTask(ws.data.teamId, runId);
+  } else if (type === "run.resume") {
+    accepted = await resumeAgentTask(ws.data.teamId, runId);
+  } else if (type === "run.approve") {
+    accepted =
+      control.decision === "reject"
+        ? await rejectAgentTask(ws.data.teamId, runId, control.reason)
+        : await approveAgentTask(ws.data.teamId, runId, control.reason);
   }
 
   ws.send(JSON.stringify({ kind: "control.ack", runId, action: type, accepted }));

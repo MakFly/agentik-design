@@ -92,6 +92,27 @@
       "when": 1782390292831,
       "tag": "0012_personal_daemon_token_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782416609610,
+      "tag": "0013_bored_magus",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782419417190,
+      "tag": "0014_superb_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1782423385056,
+      "tag": "0015_deep_darkstar",
+      "breakpoints": true
     }
   ]
 }

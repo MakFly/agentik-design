@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   doublePrecision,
   integer,
@@ -36,12 +37,27 @@ export type AgentTaskStatus =
   | "queued"
   | "dispatched"
   | "running"
+  | "paused"
+  | "waiting_approval"
   | "completed"
   | "failed"
   | "cancelled";
 export type TaskMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
 export type ChatSessionStatus = "active" | "archived";
 export type ChatMessageRole = "user" | "assistant";
+export type ProjectType = "ops" | "code" | "hybrid";
+export type ProjectStatus = "active" | "archived";
+export type ProjectResourceType = "git_repo" | "local_dir" | "url" | "document" | "tool";
+export type ProjectTaskStatus = "backlog" | "ready" | "running" | "blocked" | "review" | "done" | "cancelled";
+export type ProjectTaskPriority = "P0" | "P1" | "P2" | "P3";
+export type ProjectTaskCommentAuthorKind = "user" | "agent" | "system";
+export type ProjectWorkspaceStatus = "pending" | "ready" | "syncing" | "error";
+export type ChannelProvider = "telegram";
+export type ChannelConnectionStatus = "setup" | "active" | "disabled" | "error";
+/** How Telegram updates reach us. Polling needs no public URL (default); webhook needs one. */
+export type ChannelTransport = "polling" | "webhook";
+export type ChannelIdentityRole = "operator" | "viewer";
+export type ChannelMessageDirection = "inbound" | "outbound";
 /**
  * Why a task ended in `failed`. Drives retry policy: `timeout`/`runtime_offline`/
  * `runtime_recovery` are retryable; `agent_error` is terminal. v1 only produces
@@ -180,11 +196,97 @@ export const runtimes = pgTable("runtimes", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
+/* ── Project/task cockpit (Multica-style product layer) ─────────────── */
+
+/** A project is the user's operating context: TPE/PME ops, coding repo, or both. */
+export const projects = pgTable("projects", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  name: text("name").notNull(),
+  type: text("type").$type<ProjectType>().notNull().default("hybrid"),
+  status: text("status").$type<ProjectStatus>().notNull().default("active"),
+  description: text("description").notNull().default(""),
+  leadAgentId: text("lead_agent_id"),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Resources attached to a project: repos/local folders for coding, URLs/docs/tools for ops. */
+export const projectResources = pgTable("project_resources", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  type: text("type").$type<ProjectResourceType>().notNull(),
+  label: text("label").notNull().default(""),
+  ref: text("ref").notNull(),
+  status: text("status").notNull().default("active"),
+  meta: jsonb("meta").$type<Record<string, unknown>>(),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Product-level work item. One task may spawn many low-level agent_tasks. */
+export const projectTasks = pgTable("project_tasks", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  status: text("status").$type<ProjectTaskStatus>().notNull().default("ready"),
+  priority: text("priority").$type<ProjectTaskPriority>().notNull().default("P2"),
+  assignedAgentId: text("assigned_agent_id"),
+  lastRunId: text("last_run_id"),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** TUI-style task thread: human comments, agent notes, and run links. */
+export const projectTaskComments = pgTable("project_task_comments", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  projectTaskId: text("project_task_id")
+    .notNull()
+    .references(() => projectTasks.id, { onDelete: "cascade" }),
+  authorKind: text("author_kind").$type<ProjectTaskCommentAuthorKind>().notNull().default("user"),
+  userId: text("user_id"),
+  agentId: text("agent_id"),
+  content: text("content").notNull().default(""),
+  runId: text("run_id"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+/** A daemon-local workspace prepared for a project resource. */
+export const projectWorkspaces = pgTable("project_workspaces", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  resourceId: text("resource_id").references(() => projectResources.id, { onDelete: "set null" }),
+  daemonId: text("daemon_id").references(() => daemons.id, { onDelete: "set null" }),
+  path: text("path").notNull().default(""),
+  branch: text("branch").notNull().default(""),
+  status: text("status").$type<ProjectWorkspaceStatus>().notNull().default("pending"),
+  error: text("error"),
+  meta: jsonb("meta").$type<Record<string, unknown>>(),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
 /** A unit of agent work — claimed by a daemon, mapped to a Run in the web UI. */
 export const agentTasks = pgTable("agent_tasks", {
   id: text("id").primaryKey(),
   teamId: text("team_id").notNull(),
   agentId: text("agent_id").notNull(),
+  /** Product-level context, when this run is backing a project task. */
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  projectTaskId: text("project_task_id").references(() => projectTasks.id, { onDelete: "set null" }),
   runtimeId: text("runtime_id"),
   daemonId: text("daemon_id"),
   status: text("status").$type<AgentTaskStatus>().notNull().default("queued"),
@@ -207,6 +309,71 @@ export const agentTasks = pgTable("agent_tasks", {
   startedAt: ts("started_at"),
   endedAt: ts("ended_at"),
   durationMs: integer("duration_ms"),
+});
+
+/* ── External channels (OpenClaw-style control surfaces) ─────────────── */
+
+/** Configured channel adapter. Telegram uses webhookSecret for the public webhook URL. */
+export const channelConnections = pgTable("channel_connections", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  provider: text("provider").$type<ChannelProvider>().notNull(),
+  label: text("label").notNull().default(""),
+  status: text("status").$type<ChannelConnectionStatus>().notNull().default("setup"),
+  botTokenEncrypted: text("bot_token_encrypted"),
+  /** Default polling: the engine pulls updates with getUpdates — no public URL needed. */
+  transport: text("transport").$type<ChannelTransport>().notNull().default("polling"),
+  /** Last acknowledged Telegram update_id (next getUpdates offset). Prevents reprocessing on restart. */
+  pollOffset: bigint("poll_offset", { mode: "number" }).notNull().default(0),
+  webhookSecret: text("webhook_secret").notNull(),
+  pairingCode: text("pairing_code").notNull(),
+  createdBy: text("created_by").notNull().default(""),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Approved external identities. Commands are ignored until a user pairs with /start <code>. */
+export const channelIdentities = pgTable(
+  "channel_identities",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => channelConnections.id, { onDelete: "cascade" }),
+    externalUserId: text("external_user_id").notNull(),
+    externalChatId: text("external_chat_id").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    role: text("role").$type<ChannelIdentityRole>().notNull().default("operator"),
+    approvedAt: ts("approved_at").notNull().defaultNow(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("channel_identity_connection_user_chat_unique").on(
+      t.connectionId,
+      t.externalUserId,
+      t.externalChatId,
+    ),
+  ],
+);
+
+/** Audit trail for inbound commands and compact outbound Telegram summaries. */
+export const channelMessages = pgTable("channel_messages", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  connectionId: text("connection_id")
+    .notNull()
+    .references(() => channelConnections.id, { onDelete: "cascade" }),
+  identityId: text("identity_id").references(() => channelIdentities.id, { onDelete: "set null" }),
+  externalMessageId: text("external_message_id"),
+  direction: text("direction").$type<ChannelMessageDirection>().notNull(),
+  text: text("text").notNull().default(""),
+  payload: jsonb("payload").$type<Record<string, unknown>>(),
+  runId: text("run_id"),
+  projectId: text("project_id"),
+  projectTaskId: text("project_task_id"),
+  createdAt: ts("created_at").notNull().defaultNow(),
 });
 
 /** Streamed output of an agent task — maps to a Step/timeline entry in the web UI. */

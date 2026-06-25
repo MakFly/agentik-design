@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { CredentialType } from "@agentik/workflow-schema";
 import { useCredentials } from "./api";
 import { CredentialPicker } from "./credential-picker";
@@ -24,19 +24,15 @@ interface Props {
 export function ApiAuthPicker({ team, value, onChange }: Props) {
   const { data } = useCredentials(team);
   const current = data?.items.find((c) => c.id === value);
-  const [kind, setKind] = useState<AuthKind>("none");
-
-  // Reflect the type of the already-selected credential.
-  useEffect(() => {
-    if (current) setKind(current.type);
-  }, [current?.type]);
+  const [selectedKind, setSelectedKind] = useState<AuthKind | null>(null);
+  const kind = selectedKind ?? current?.type ?? "none";
 
   return (
     <div className="flex flex-col gap-2">
       <Select
         value={kind}
         onValueChange={(k) => {
-          setKind(k as AuthKind);
+          setSelectedKind(k as AuthKind);
           if (k === "none") onChange("");
         }}
       >
@@ -50,7 +46,12 @@ export function ApiAuthPicker({ team, value, onChange }: Props) {
         </SelectContent>
       </Select>
       {kind !== "none" && (
-        <CredentialPicker team={team} type={kind} value={value} onChange={onChange} />
+        <CredentialPicker
+          team={team}
+          type={kind}
+          value={value}
+          onChange={onChange}
+        />
       )}
     </div>
   );

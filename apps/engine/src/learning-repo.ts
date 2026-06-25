@@ -129,6 +129,31 @@ export async function insertMemoryFromProposal(
   return { id };
 }
 
+export async function insertConfirmedMemory(input: {
+  teamId: string;
+  scope: KnowledgeScope;
+  targetId?: string;
+  content: string;
+  confidence?: number;
+  sourceRunId?: string;
+  createdBy?: CreatedBy;
+}) {
+  const content = input.content.trim();
+  if (!content) return { error: "content_required" as const };
+  const id = genId("mem");
+  await db.insert(memoryEntries).values({
+    id,
+    teamId: input.teamId,
+    scope: input.scope,
+    targetId: input.targetId,
+    content,
+    sourceRunId: input.sourceRunId,
+    confidence: input.confidence ?? 1,
+    createdBy: input.createdBy ?? "user",
+  });
+  return { id };
+}
+
 /* ── Skills + skill versions ─────────────────────────────────────────── */
 
 export async function listSkills(teamId: string, filter: { scope?: KnowledgeScope; targetId?: string } = {}) {
@@ -442,6 +467,9 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
 export type InjectionContext = {
   memories: { content: string; confidence: number; scope: KnowledgeScope }[];
   skills: { name: string; bodyMd: string; triggerConditions: string[] }[];
+  /** The agent live version's base config, threaded to the runtime (not "learned" context). */
+  systemPrompt?: string;
+  model?: string;
 };
 
 /**
@@ -479,6 +507,8 @@ export async function resolveInjectionContext(teamId: string, agentId: string): 
   return {
     memories: mems.map((m) => ({ content: m.content, confidence: m.confidence, scope: m.scope })),
     skills: outSkills,
+    systemPrompt: ver.instructions || undefined,
+    model: ver.model ?? undefined,
   };
 }
 

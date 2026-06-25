@@ -12,6 +12,16 @@ export type IdPrefix =
   | "amsg"
   | "chat"
   | "cmsg"
+  // project/task cockpit
+  | "proj"
+  | "pres"
+  | "ptask"
+  | "pmsg"
+  | "pwsp"
+  // external channel control surfaces
+  | "chan"
+  | "chident"
+  | "chmsg"
   | "daemon"
   | "runtime"
   // learning loop

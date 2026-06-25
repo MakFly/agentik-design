@@ -114,6 +114,11 @@ func (c *Client) Start(ctx context.Context, taskID string) error {
 	return err
 }
 
+func (c *Client) RequestApproval(ctx context.Context, taskID string, req protocol.ApprovalRequest) error {
+	_, err := c.do(ctx, "/daemon/tasks/"+taskID+"/approval/request", req, nil)
+	return err
+}
+
 // SendMessages posts a batch and returns whether the task was cancelled meanwhile.
 func (c *Client) SendMessages(ctx context.Context, taskID string, msgs []protocol.TaskMessage) (bool, error) {
 	var out protocol.MessagesResponse
@@ -130,6 +135,11 @@ func (c *Client) Complete(ctx context.Context, taskID string, result any) error 
 
 func (c *Client) Fail(ctx context.Context, taskID, msg string) error {
 	_, err := c.do(ctx, "/daemon/tasks/"+taskID+"/fail", protocol.FailRequest{Error: msg}, nil)
+	return err
+}
+
+func (c *Client) ReportWorkspace(ctx context.Context, workspaceID string, req protocol.WorkspaceStatusRequest) error {
+	_, err := c.do(ctx, "/daemon/project-workspaces/"+workspaceID+"/status", req, nil)
 	return err
 }
 

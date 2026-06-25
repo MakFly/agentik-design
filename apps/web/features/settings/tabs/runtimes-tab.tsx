@@ -77,7 +77,12 @@ interface DaemonInfo {
 
 interface SystemInfo {
   daemonEnabled: boolean;
-  providers: { anthropic: boolean; openai: boolean; google: boolean };
+  providers: {
+    anthropic: boolean;
+    openai: boolean;
+    openrouter: boolean;
+    google: boolean;
+  };
   daemons: DaemonInfo[];
   runtimes: Array<{
     id: string;
@@ -88,7 +93,8 @@ interface SystemInfo {
   availableRuntimes: string[];
 }
 
-const PERSONAL_RUNTIMES = "echo,claude,hermes";
+const PERSONAL_RUNTIMES =
+  "echo,claude,hermes,codex,openai,anthropic,openrouter,custom";
 const DEFAULT_ENGINE_URL =
   process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:8787";
 
@@ -246,26 +252,32 @@ const modeLabel = (mode: DaemonInfo["mode"]): string => {
   return "Workspace";
 };
 
+// multica-style Settings hub: a "Runtimes" section (compute environments — the
+// local daemon and the CLIs it detects) and a "Providers" section (provider keys).
 const CONNECTION_SECTIONS = [
-  { value: "overview", label: "Overview" },
-  { value: "setup", label: "Daemon" },
-  { value: "providers", label: "Provider keys" },
+  { value: "runtimes", label: "Runtimes" },
+  { value: "providers", label: "Providers" },
 ] as const;
 
 type ConnectionSection = (typeof CONNECTION_SECTIONS)[number]["value"];
 
+// Old ?section deep links (overview/setup/computers) now resolve to "runtimes".
+const LEGACY_SECTION_ALIASES: Record<string, ConnectionSection> = {
+  overview: "runtimes",
+  setup: "runtimes",
+  computers: "runtimes",
+};
+
 export function RuntimesTab({ team }: { team: string }) {
   const system = useSystem(team);
   const [section, setSection] = useQueryState("section", {
-    defaultValue: "overview",
+    defaultValue: "runtimes",
   });
   const active: ConnectionSection = CONNECTION_SECTIONS.some(
     (s) => s.value === section,
   )
     ? (section as ConnectionSection)
-    : section === "computers"
-      ? "setup"
-      : "overview";
+    : (LEGACY_SECTION_ALIASES[section] ?? "runtimes");
 
   if (system.isError) {
     return (
@@ -293,12 +305,9 @@ export function RuntimesTab({ team }: { team: string }) {
         </TabsList>
       </div>
 
-      <TabsContent value="overview" className="mt-0 flex flex-col gap-5">
+      <TabsContent value="runtimes" className="mt-0 flex flex-col gap-5">
         <ConnectionsIntro />
         <RuntimeSummary data={system.data} loading={system.isLoading} />
-      </TabsContent>
-
-      <TabsContent value="setup" className="mt-0 flex flex-col gap-5">
         <ConnectMachine team={team} />
         <ConnectedComputers data={system.data} loading={system.isLoading} />
       </TabsContent>
@@ -351,57 +360,57 @@ function ConnectedComputers({
 
 function ConnectionsIntro() {
   return (
-    <section className="rounded-xl border border-border bg-surface p-4 shadow-sm">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)] lg:items-start">
+    <section className="rounded-lg border border-border bg-surface p-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,0.85fr)] lg:items-start">
         <div className="max-w-2xl">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground">
             <PlugZap className="size-3.5" />
-            Local tools
+            Agent runtime layer
           </div>
           <h2 className="text-base font-semibold text-foreground">
-            Connect a computer so agents can use its CLIs.
+            Connect computers, terminals, and channels into one agent system.
           </h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Agentik does not run Claude, Hermes, or other local CLIs on its own.
-            A small local connector reports which tools are installed on your
-            machine and makes them selectable for runs.
+            The daemon keeps the workspace online, exposes local CLIs such as
+            Claude Code, Codex, and Hermes, and lets project tasks run against
+            real folders, repos, Telegram channels, and BYOK provider keys.
           </p>
         </div>
-        <ol className="grid gap-2 text-sm">
-          <SetupStep
-            number="1"
-            title="Create command"
-            description="Generate a private one-time command for your account."
+        <div className="grid gap-2 text-sm">
+          <RuntimeLayer
+            icon={Server}
+            title="Workspace daemon"
+            description="Clones or opens project folders, reports machine status, and streams run events."
           />
-          <SetupStep
-            number="2"
-            title="Install locally"
-            description="Run the Agentik CLI on the machine that owns the CLIs."
+          <RuntimeLayer
+            icon={Terminal}
+            title="Terminal runners"
+            description="Hands tasks to Claude Code, Codex, Hermes, or provider-backed agents."
           />
-          <SetupStep
-            number="3"
-            title="Keep it online"
-            description="When the connector is running, available tools appear below."
+          <RuntimeLayer
+            icon={PlugZap}
+            title="Gateway channels"
+            description="Lets Telegram and API channels trigger tasks, approvals, and learning events."
           />
-        </ol>
+        </div>
       </div>
     </section>
   );
 }
 
-function SetupStep({
-  number,
+function RuntimeLayer({
+  icon: Icon,
   title,
   description,
 }: {
-  number: string;
+  icon: typeof Terminal;
   title: string;
   description: string;
 }) {
   return (
-    <li className="grid grid-cols-[1.75rem_1fr] gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
-      <span className="flex size-7 items-center justify-center rounded-full bg-surface text-xs font-semibold text-foreground shadow-xs">
-        {number}
+    <div className="grid grid-cols-[1.75rem_1fr] gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+      <span className="flex size-7 items-center justify-center rounded-md bg-surface text-foreground shadow-xs">
+        <Icon className="size-3.5" />
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium text-foreground">
@@ -411,7 +420,7 @@ function SetupStep({
           {description}
         </span>
       </span>
-    </li>
+    </div>
   );
 }
 

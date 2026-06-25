@@ -32,7 +32,12 @@ import {
 } from "./chat-repo";
 import {
   agentTaskMessageToEvents,
+  contractEventForStatus,
+  contractEventForTaskMessage,
+  approveAgentTask,
   cancelAgentTask,
+  pauseAgentTask,
+  rejectAgentTask,
   retryAgentTask,
   createAgent,
   createTestTask,
@@ -45,9 +50,12 @@ import {
   listRunsUnion,
   listTaskMessagesAfter,
   publishAgent,
+  requestAgentTaskApproval,
+  resumeAgentTask,
   runAgent,
   workflowDetailToWeb,
   type LiveRunEvent,
+  type OrchestratorRunEvent,
 } from "./agents-repo";
 import type { SSEStreamingApi } from "hono/streaming";
 import { daemon } from "./daemon-routes";
@@ -63,6 +71,25 @@ import {
   listBundleCommands,
   setNetworkInstallEnabled,
 } from "./bundle-repo";
+import {
+  addProjectResource,
+  addProjectTaskComment,
+  createProject,
+  createProjectTask,
+  getProject,
+  listProjectTaskComments,
+  listProjects,
+  runProjectTask,
+  updateProjectTask,
+} from "./projects-repo";
+import {
+  createTelegramConnection,
+  deleteChannelConnection,
+  handleTelegramWebhookSecret,
+  listChannelConnections,
+  registerTelegramWebhook,
+  useTelegramPolling,
+} from "./channels-repo";
 import {
   getUserDaemonTokenStatus,
   listUserDaemonOrgs,
@@ -89,6 +116,7 @@ import {
   setRunReviewStatus,
 } from "./learning-repo";
 import type { RunReviewStatus } from "@agentik/workflow-schema";
+import { listTraces, getTrace } from "./observability-repo";
 
 type Vars = AuthVars;
 
@@ -287,6 +315,205 @@ api.get("/agent-task-snapshot", async (c) => {
   return c.json(await getAgentTaskSnapshot(c.get("teamId")));
 });
 
+/* ── Project/task cockpit ───────────────────────────────────────────── */
+
+api.get("/projects", requirePermission("run:read"), async (c) => {
+  const items = await listProjects(c.get("teamId"));
+  return c.json({ items, nextCursor: null, total: items.length });
+});
+
+api.post("/projects", requirePermission("run:run"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: string;
+    type?: unknown;
+    description?: string;
+    leadAgentId?: string | null;
+  };
+  const res = await createProject(c.get("teamId"), c.get("auth").userId, body);
+  if ("error" in res) return c.json({ error: res.error }, 400);
+  return c.json(res.project, 201);
+});
+
+api.get("/projects/:id", requirePermission("run:read"), async (c) => {
+  const res = await getProject(c.get("teamId"), c.req.param("id"));
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json(res);
+});
+
+api.post("/projects/:id/resources", requirePermission("run:run"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    type?: unknown;
+    ref?: string;
+    label?: string;
+    meta?: Record<string, unknown>;
+  };
+  const res = await addProjectResource(
+    c.get("teamId"),
+    c.req.param("id"),
+    body,
+  );
+  if ("error" in res)
+    return c.json(
+      { error: res.error },
+      res.error === "project_not_found" ? 404 : 400,
+    );
+  return c.json(res.resource, 201);
+});
+
+api.post("/projects/:id/tasks", requirePermission("run:run"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    title?: string;
+    description?: string;
+    priority?: unknown;
+    assignedAgentId?: string | null;
+    status?: unknown;
+  };
+  const res = await createProjectTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    c.get("auth").userId,
+    body,
+  );
+  if ("error" in res)
+    return c.json(
+      { error: res.error },
+      res.error === "project_not_found" ? 404 : 400,
+    );
+  return c.json(res.task, 201);
+});
+
+api.patch("/project-tasks/:id", requirePermission("run:control"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    status?: unknown;
+    assignedAgentId?: string | null;
+    title?: string;
+    description?: string;
+    priority?: unknown;
+  };
+  const task = await updateProjectTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body,
+  );
+  if (!task) return c.json({ error: "not_found" }, 404);
+  return c.json(task);
+});
+
+api.get(
+  "/project-tasks/:id/comments",
+  requirePermission("run:read"),
+  async (c) => {
+    const items = await listProjectTaskComments(
+      c.get("teamId"),
+      c.req.param("id"),
+    );
+    return c.json({ items, total: items.length });
+  },
+);
+
+api.post(
+  "/project-tasks/:id/comments",
+  requirePermission("run:run"),
+  async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { content?: string };
+    const res = await addProjectTaskComment(
+      c.get("teamId"),
+      c.req.param("id"),
+      c.get("auth").userId,
+      body.content ?? "",
+    );
+    if ("error" in res)
+      return c.json(
+        { error: res.error },
+        res.error === "task_not_found" ? 404 : 400,
+      );
+    return c.json(res.comment, 201);
+  },
+);
+
+api.post("/project-tasks/:id/run", requirePermission("run:run"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    instruction?: string;
+  };
+  const res = await runProjectTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.instruction,
+  );
+  if ("error" in res) {
+    const error = res.error ?? "unknown_error";
+    const status =
+      error.endsWith("_not_found") || error === "task_not_found" ? 404 : 409;
+    return c.json({ error }, status);
+  }
+  return c.json(res, 202);
+});
+
+/* ── Channels (OpenClaw-style remote control) ───────────────────────── */
+
+api.get("/channels", requirePermission("settings:read"), async (c) => {
+  const items = await listChannelConnections(c.get("teamId"));
+  return c.json({ items, total: items.length });
+});
+
+api.post(
+  "/channels/telegram",
+  requirePermission("settings:update"),
+  async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      label?: string;
+      botToken?: string;
+    };
+    const result = await createTelegramConnection(
+      c.get("teamId"),
+      c.get("auth").userId,
+      body,
+    );
+    if ("error" in result) return c.json(result, 422);
+    return c.json(result.connection, 201);
+  },
+);
+
+api.delete("/channels/:id", requirePermission("settings:update"), async (c) => {
+  const ok = await deleteChannelConnection(c.get("teamId"), c.req.param("id"));
+  if (!ok) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
+});
+
+api.post(
+  "/channels/:id/webhook",
+  requirePermission("settings:update"),
+  async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string };
+    const baseUrl = body.baseUrl?.trim() || env.ENGINE_PUBLIC_URL;
+    const result = await registerTelegramWebhook(
+      c.get("teamId"),
+      c.req.param("id"),
+      baseUrl,
+    );
+    if (!result.ok)
+      return c.json(
+        result,
+        result.error === "connection_not_found" ? 404 : 422,
+      );
+    return c.json(result);
+  },
+);
+
+api.post(
+  "/channels/:id/polling",
+  requirePermission("settings:update"),
+  async (c) => {
+    const result = await useTelegramPolling(c.get("teamId"), c.req.param("id"));
+    if (!result.ok)
+      return c.json(
+        result,
+        result.error === "connection_not_found" ? 404 : 422,
+      );
+    return c.json(result);
+  },
+);
+
 /** System view: daemons, runtimes, detected CLIs, provider key presence. */
 api.get("/system", async (c) => {
   const info = await getSystemInfo(c.get("teamId"));
@@ -295,6 +522,7 @@ api.get("/system", async (c) => {
     providers: {
       anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
       openai: Boolean(env.OPENAI_API_KEY),
+      openrouter: Boolean(process.env.OPENROUTER_API_KEY),
       google: Boolean(env.GOOGLE_CLIENT_ID),
     },
     ...info,
@@ -614,12 +842,91 @@ api.post("/runs/:id/cancel", requirePermission("run:control"), async (c) => {
   return c.json({ ok }, ok ? 200 : 404);
 });
 
+api.post("/runs/:id/pause", requirePermission("run:control"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  const ok = await pauseAgentTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.reason,
+  );
+  return c.json({ ok }, ok ? 200 : 409);
+});
+
+api.post("/runs/:id/resume", requirePermission("run:control"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  const ok = await resumeAgentTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.reason,
+  );
+  return c.json({ ok }, ok ? 200 : 409);
+});
+
+api.post(
+  "/runs/:id/approval/request",
+  requirePermission("run:control"),
+  async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      message?: string;
+      context?: Record<string, unknown>;
+    };
+    const message =
+      typeof body.message === "string" && body.message.trim()
+        ? body.message.trim()
+        : "Operator approval required.";
+    const ok = await requestAgentTaskApproval(
+      c.get("teamId"),
+      c.req.param("id"),
+      message,
+      body.context,
+    );
+    return c.json({ ok }, ok ? 202 : 409);
+  },
+);
+
+api.post("/runs/:id/approve", requirePermission("run:approve"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  const ok = await approveAgentTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.reason,
+  );
+  return c.json({ ok }, ok ? 202 : 409);
+});
+
+api.post("/runs/:id/reject", requirePermission("run:approve"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  const ok = await rejectAgentTask(
+    c.get("teamId"),
+    c.req.param("id"),
+    body.reason,
+  );
+  return c.json({ ok }, ok ? 202 : 409);
+});
+
 // Manual re-run: enqueues a fresh task (attempt=1) cloning the original. Distinct from
 // the scanner's auto-retry (which reuses the row for transient failures). agent-tasks only.
 api.post("/runs/:id/retry", requirePermission("run:run"), async (c) => {
   const res = await retryAgentTask(c.get("teamId"), c.req.param("id"));
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res, 202);
+});
+
+/* ── Observability (real traces projected from runs) ──────────────────── */
+
+api.get("/observability/traces", async (c) => {
+  const body = await listTraces(c.get("teamId"), {
+    env: c.req.query("env") ?? undefined,
+    status: c.req.query("status") ?? undefined,
+    q: c.req.query("q") ?? undefined,
+  });
+  return c.json(body);
+});
+
+api.get("/observability/traces/:id", async (c) => {
+  const detail = await getTrace(c.get("teamId"), c.req.param("id"));
+  if (!detail) return c.json({ error: "not_found" }, 404);
+  return c.json(detail);
 });
 
 /* ── Chat-spawns-task ─────────────────────────────────────────────────── */
@@ -667,11 +974,6 @@ api.post(
   },
 );
 
-api.post("/runs/:id/approve", async (c) => {
-  // P1 stub — approval gate wired in Phase 4.
-  return c.json({ ok: true }, 202);
-});
-
 /**
  * Live run status via SSE — polls the run until it reaches a terminal state.
  * Path is `/runs/:id/live` (not `/stream`) on purpose: apps/web already ships a
@@ -698,7 +1000,11 @@ async function streamAgentTaskLive(
   let envSeq = 0;
   const name = await getAgentTaskName(teamId, id);
 
-  const emit = async (ev: LiveRunEvent, idSeq: number) => {
+  const emit = async (
+    ev: LiveRunEvent,
+    idSeq: number,
+    contractEvent?: OrchestratorRunEvent,
+  ) => {
     envSeq += 1;
     const envelope = {
       id: String(idSeq),
@@ -706,6 +1012,7 @@ async function streamAgentTaskLive(
       ts: new Date().toISOString(),
       runId: id,
       event: ev.type,
+      ...(contractEvent ? { contractEvent } : {}),
       data: ev,
     };
     await stream.writeSSE({
@@ -731,11 +1038,16 @@ async function streamAgentTaskLive(
     }
     if (status !== lastStatus) {
       lastStatus = status;
-      await emit({ type: "run.status.changed", status }, lastSeq);
+      await emit(
+        { type: "run.status.changed", status },
+        lastSeq,
+        contractEventForStatus(status),
+      );
     }
     const msgs = await listTaskMessagesAfter(id, lastSeq);
     for (const m of msgs) {
-      for (const ev of agentTaskMessageToEvents(m, name)) await emit(ev, m.seq);
+      for (const ev of agentTaskMessageToEvents(m, name))
+        await emit(ev, m.seq, contractEventForTaskMessage(m, ev));
       lastSeq = m.seq;
     }
     if (TERMINAL.has(status)) return;
@@ -778,6 +1090,22 @@ api.get("/runs/:id/live", (c) => {
 
 // Auth routes are NOT org-scoped — mount before the org middleware app.
 app.route("/api/v1/auth", auth);
+
+// Telegram cannot send Agentik org cookies/headers. The unguessable webhook
+// secret resolves the org-scoped channel connection before command dispatch.
+app.post("/api/v1/channels/telegram/:secret/webhook", async (c) => {
+  const update = await c.req.json().catch(() => null);
+  if (!update || typeof update !== "object")
+    return c.json({ ok: false, error: "invalid_update" }, 400);
+  const result = await handleTelegramWebhookSecret(
+    c.req.param("secret"),
+    update as never,
+  );
+  if (result.reply === "connection_not_found")
+    return c.json({ ok: false, error: "not_found" }, 404);
+  return c.json({ ok: result.ok });
+});
+
 app.route("/api/v1", api);
 app.route("/daemon", daemon);
 

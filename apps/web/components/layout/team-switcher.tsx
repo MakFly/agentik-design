@@ -19,7 +19,7 @@ import { useSessionStore } from "@/lib/stores/session.store";
 
 /**
  * Organisation switcher in the sidebar header (v3 look). Lists the teams the
- * session is a member of and navigates to the picked team's dashboard.
+ * session is a member of and navigates to the picked team's project cockpit.
  */
 export function TeamSwitcher({ team }: { team: string }) {
   const router = useRouter();
@@ -29,7 +29,7 @@ export function TeamSwitcher({ team }: { team: string }) {
   if (!session) return null;
 
   function switchTeam(slug: string) {
-    if (slug !== team) router.push(`/${slug}/thechat`);
+    if (slug !== team) router.push(`/${slug}/projects`);
   }
 
   return (

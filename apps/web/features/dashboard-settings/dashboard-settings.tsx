@@ -28,11 +28,11 @@ const GROUP_ORDER = ["Personal", "Assistant"] as const;
 /**
  * Linear-style settings surface for the dashboard assistant: a full-screen view
  * with a section rail on the left and a content pane on the right. Escape (or the
- * close button) returns to the chat. Reachable at /{team}/thechat/settings.
+ * close button) returns to the chat. Reachable at /{team}/chat/settings.
  */
 export function DashboardSettings({ team }: { team: string }) {
   const router = useRouter();
-  const backHref = `/${team}/thechat`;
+  const backHref = `/${team}/chat`;
   const [active, setActive] = useState<SectionId>("preferences");
 
   useEffect(() => {

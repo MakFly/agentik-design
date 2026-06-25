@@ -27,7 +27,7 @@ import (
 )
 
 const discoverEvery = 30 * time.Second
-const defaultRuntimes = "echo,claude,hermes"
+const defaultRuntimes = "echo,claude,hermes,codex,openai,anthropic,openrouter,custom"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -261,9 +261,14 @@ func runDaemon(opts config.Options) error {
 	}
 
 	available := runtime.Registry{
-		"echo":   runtime.Echo{},
-		"claude": runtime.Claude{WorkRoot: cfg.WorkRoot, Model: cfg.ClaudeModel, TimeoutMs: cfg.TaskTimeoutMs},
-		"hermes": runtime.Hermes{WorkRoot: cfg.WorkRoot, Model: os.Getenv("HERMES_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"echo":       runtime.Echo{},
+		"claude":     runtime.Claude{WorkRoot: cfg.WorkRoot, Model: cfg.ClaudeModel, TimeoutMs: cfg.TaskTimeoutMs},
+		"hermes":     runtime.Hermes{WorkRoot: cfg.WorkRoot, Model: os.Getenv("HERMES_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"codex":      runtime.Codex{WorkRoot: cfg.WorkRoot, Model: os.Getenv("CODEX_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"openai":     runtime.Provider{KindName: "openai", WorkRoot: cfg.WorkRoot, Model: os.Getenv("OPENAI_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"anthropic":  runtime.Provider{KindName: "anthropic", WorkRoot: cfg.WorkRoot, Model: firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), cfg.ClaudeModel), TimeoutMs: cfg.TaskTimeoutMs},
+		"openrouter": runtime.Provider{KindName: "openrouter", WorkRoot: cfg.WorkRoot, Model: os.Getenv("OPENROUTER_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"custom":     runtime.Provider{KindName: "custom", WorkRoot: cfg.WorkRoot, Model: os.Getenv("CUSTOM_MODEL"), BaseURL: os.Getenv("CUSTOM_BASE_URL"), TimeoutMs: cfg.TaskTimeoutMs},
 	}
 	selected := runtime.Registry{}
 	for _, kind := range cfg.RuntimeKinds {

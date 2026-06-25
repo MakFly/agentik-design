@@ -6,10 +6,13 @@ import {
   completeTask,
   failTask,
   getDaemonTeamId,
+  getProjectWorkspaceTeamId,
   getRuntimeTeamId,
   getTaskTeamId,
   heartbeat,
   registerDaemon,
+  requestDaemonTaskApproval,
+  reportProjectWorkspaceStatus,
   startTask,
   updateDaemonMeta,
   type IncomingMessage,
@@ -185,6 +188,23 @@ daemon.post("/tasks/:id/start", async (c) => {
   return c.json({ ok }, ok ? 200 : 409);
 });
 
+daemon.post("/tasks/:id/approval/request", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    message?: string;
+    context?: Record<string, unknown>;
+  };
+  const taskId = c.req.param("id");
+  const teamId = await getTaskTeamId(taskId);
+  if (!teamId) return c.json({ error: "not_found" }, 404);
+  if (!(await canAccessTeam(auth(c), teamId)))
+    return c.json({ error: "forbidden" }, 403);
+  const ok = await requestDaemonTaskApproval(taskId, {
+    message: body.message,
+    context: body.context,
+  });
+  return c.json({ ok }, ok ? 202 : 409);
+});
+
 daemon.post("/tasks/:id/messages", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     messages?: IncomingMessage[];
@@ -219,6 +239,30 @@ daemon.post("/tasks/:id/fail", async (c) => {
   if (!(await canAccessTeam(auth(c), teamId)))
     return c.json({ error: "forbidden" }, 403);
   const ok = await failTask(taskId, body.error ?? "unknown error");
+  return c.json({ ok }, ok ? 200 : 409);
+});
+
+daemon.post("/project-workspaces/:id/status", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as {
+    status?: "pending" | "ready" | "syncing" | "error";
+    path?: string;
+    error?: string;
+    meta?: Record<string, unknown>;
+  } | null;
+  if (!body || !body.status || !["pending", "ready", "syncing", "error"].includes(body.status)) {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const workspaceId = c.req.param("id");
+  const teamId = await getProjectWorkspaceTeamId(workspaceId);
+  if (!teamId) return c.json({ error: "not_found" }, 404);
+  if (!(await canAccessTeam(auth(c), teamId)))
+    return c.json({ error: "forbidden" }, 403);
+  const ok = await reportProjectWorkspaceStatus(workspaceId, {
+    status: body.status,
+    path: body.path,
+    error: body.error,
+    meta: body.meta,
+  });
   return c.json({ ok }, ok ? 200 : 409);
 });
 

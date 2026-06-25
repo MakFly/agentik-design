@@ -3,12 +3,26 @@ import { db, schema } from "./db/client";
 import { genId } from "./db/ids";
 import { resolveTeam } from "./repo";
 import { hub } from "./hub";
-import { buildInjectionPreamble, ensureRunReview, resolveInjectionContext, type InjectionContext } from "./learning-repo";
+import {
+  buildInjectionPreamble,
+  ensureRunReview,
+  resolveInjectionContext,
+  type InjectionContext,
+} from "./learning-repo";
 import { appendAssistantTurn } from "./chat-repo";
 import { resolveProviderEnv } from "./providers-repo";
+import { notifyRunTelegram } from "./channels-repo";
 import type { TaskErrorReason, TaskMessageType } from "./db/schema";
 
-const { daemons, runtimes, agentTasks, taskMessages } = schema;
+const {
+  daemons,
+  runtimes,
+  agentTasks,
+  taskMessages,
+  projectTasks,
+  projectResources,
+  projectWorkspaces,
+} = schema;
 
 /** Messages that count as a completed step (vs an in-flight tool_use). */
 const TERMINAL_MSG: TaskMessageType[] = ["text", "tool_result", "error"];
@@ -20,11 +34,15 @@ export interface RegisterInput {
   teamId?: string;
   name: string;
   meta?: Record<string, unknown>;
-  runtimes: Array<{ kind: string; capabilities?: { maxConcurrent?: number; agentKinds?: string[] } }>;
+  runtimes: Array<{
+    kind: string;
+    capabilities?: { maxConcurrent?: number; agentKinds?: string[] };
+  }>;
 }
 
 export async function registerDaemon(input: RegisterInput) {
-  const teamId = input.teamId ?? (input.team ? await resolveTeam(input.team) : null);
+  const teamId =
+    input.teamId ?? (input.team ? await resolveTeam(input.team) : null);
   if (!teamId) throw new Error("register: no team resolved");
 
   const [existing] = await db
@@ -38,35 +56,73 @@ export async function registerDaemon(input: RegisterInput) {
     daemonId = existing.id;
     await db
       .update(daemons)
-      .set({ status: "online", lastHeartbeatAt: sql`now()`, meta: input.meta ?? null })
+      .set({
+        status: "online",
+        lastHeartbeatAt: sql`now()`,
+        meta: input.meta ?? null,
+      })
       .where(eq(daemons.id, daemonId));
     await db.delete(runtimes).where(eq(runtimes.daemonId, daemonId));
   } else {
     daemonId = genId("daemon");
-    await db.insert(daemons).values({ id: daemonId, teamId, name: input.name, status: "online", lastHeartbeatAt: sql`now()`, meta: input.meta ?? null });
+    await db
+      .insert(daemons)
+      .values({
+        id: daemonId,
+        teamId,
+        name: input.name,
+        status: "online",
+        lastHeartbeatAt: sql`now()`,
+        meta: input.meta ?? null,
+      });
   }
 
   const created = await db
     .insert(runtimes)
-    .values(input.runtimes.map((r) => ({ id: genId("runtime"), daemonId, teamId, kind: r.kind, status: "online" as const, capabilities: r.capabilities ?? null })))
+    .values(
+      input.runtimes.map((r) => ({
+        id: genId("runtime"),
+        daemonId,
+        teamId,
+        kind: r.kind,
+        status: "online" as const,
+        capabilities: r.capabilities ?? null,
+      })),
+    )
     .returning({ id: runtimes.id, kind: runtimes.kind });
 
   hub.publish(teamId, { kind: "presence" });
   return { daemonId, teamId, runtimes: created };
 }
 
-export async function getDaemonTeamId(daemonId: string): Promise<string | null> {
-  const [row] = await db.select({ teamId: daemons.teamId }).from(daemons).where(eq(daemons.id, daemonId)).limit(1);
+export async function getDaemonTeamId(
+  daemonId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ teamId: daemons.teamId })
+    .from(daemons)
+    .where(eq(daemons.id, daemonId))
+    .limit(1);
   return row?.teamId ?? null;
 }
 
-export async function getRuntimeTeamId(runtimeId: string): Promise<string | null> {
-  const [row] = await db.select({ teamId: runtimes.teamId }).from(runtimes).where(eq(runtimes.id, runtimeId)).limit(1);
+export async function getRuntimeTeamId(
+  runtimeId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ teamId: runtimes.teamId })
+    .from(runtimes)
+    .where(eq(runtimes.id, runtimeId))
+    .limit(1);
   return row?.teamId ?? null;
 }
 
 export async function getTaskTeamId(taskId: string): Promise<string | null> {
-  const [row] = await db.select({ teamId: agentTasks.teamId }).from(agentTasks).where(eq(agentTasks.id, taskId)).limit(1);
+  const [row] = await db
+    .select({ teamId: agentTasks.teamId })
+    .from(agentTasks)
+    .where(eq(agentTasks.id, taskId))
+    .limit(1);
   return row?.teamId ?? null;
 }
 
@@ -75,7 +131,10 @@ export async function getTaskTeamId(taskId: string): Promise<string | null> {
  * used after a bundle install/uninstall so a newly available CLI shows up immediately,
  * with no runtime-id churn (register() deletes+reinserts runtimes; this doesn't).
  */
-export async function updateDaemonMeta(daemonId: string, meta: Record<string, unknown>): Promise<boolean> {
+export async function updateDaemonMeta(
+  daemonId: string,
+  meta: Record<string, unknown>,
+): Promise<boolean> {
   const updated = await db
     .update(daemons)
     .set({ meta })
@@ -93,7 +152,10 @@ export async function heartbeat(daemonId: string): Promise<boolean> {
     .where(eq(daemons.id, daemonId))
     .returning({ id: daemons.id, teamId: daemons.teamId });
   if (!updated[0]) return false;
-  await db.update(runtimes).set({ status: "online" }).where(eq(runtimes.daemonId, daemonId));
+  await db
+    .update(runtimes)
+    .set({ status: "online" })
+    .where(eq(runtimes.daemonId, daemonId));
   hub.publish(updated[0].teamId, { kind: "presence" });
   return true;
 }
@@ -102,13 +164,110 @@ export interface ClaimedTask {
   id: string;
   teamId: string;
   agentId: string;
+  projectId?: string | null;
+  projectTaskId?: string | null;
   kind: string;
   input: unknown;
   workDir: string;
+  workspace?: {
+    id: string;
+    projectId: string;
+    resourceId: string;
+    type: "git_repo" | "local_dir";
+    ref: string;
+    branch: string;
+    path: string;
+  };
   /** Bounded learned context the engine injected for this run (also folded into input.prompt). */
   context?: InjectionContext;
   /** Org provider keys as { ENV_VAR: value } — the daemon merges these into the runtime env. */
   env?: Record<string, string>;
+}
+
+async function ensureProjectWorkspace(task: ClaimedTask, daemonId: string) {
+  if (!task.projectId) return null;
+  const [resource] = await db
+    .select()
+    .from(projectResources)
+    .where(
+      and(
+        eq(projectResources.teamId, task.teamId),
+        eq(projectResources.projectId, task.projectId),
+        inArray(projectResources.type, ["git_repo", "local_dir"]),
+      ),
+    )
+    .orderBy(projectResources.createdAt)
+    .limit(1);
+  if (
+    !resource ||
+    (resource.type !== "git_repo" && resource.type !== "local_dir")
+  )
+    return null;
+
+  const [existing] = await db
+    .select()
+    .from(projectWorkspaces)
+    .where(
+      and(
+        eq(projectWorkspaces.teamId, task.teamId),
+        eq(projectWorkspaces.projectId, task.projectId),
+        eq(projectWorkspaces.resourceId, resource.id),
+        eq(projectWorkspaces.daemonId, daemonId),
+      ),
+    )
+    .limit(1);
+
+  const branch =
+    typeof resource.meta === "object" &&
+    resource.meta &&
+    typeof (resource.meta as Record<string, unknown>).branch === "string"
+      ? ((resource.meta as Record<string, unknown>).branch as string)
+      : "";
+
+  if (existing) {
+    const path = existing.path || `projects/${task.projectId}/${existing.id}`;
+    if (!existing.path) {
+      await db
+        .update(projectWorkspaces)
+        .set({ path, branch, updatedAt: sql`now()` })
+        .where(eq(projectWorkspaces.id, existing.id));
+    }
+    return {
+      id: existing.id,
+      projectId: task.projectId,
+      resourceId: resource.id,
+      type: resource.type,
+      ref: resource.ref,
+      branch: existing.branch || branch,
+      path,
+    };
+  }
+
+  const workspaceId = genId("pwsp");
+  const path = `projects/${task.projectId}/${workspaceId}`;
+  const [workspace] = await db
+    .insert(projectWorkspaces)
+    .values({
+      id: workspaceId,
+      teamId: task.teamId,
+      projectId: task.projectId,
+      resourceId: resource.id,
+      daemonId,
+      path,
+      branch,
+      status: "pending",
+      meta: { resourceType: resource.type, resourceRef: resource.ref },
+    })
+    .returning();
+  return {
+    id: workspace!.id,
+    projectId: task.projectId,
+    resourceId: resource.id,
+    type: resource.type,
+    ref: resource.ref,
+    branch,
+    path,
+  };
 }
 
 /**
@@ -116,8 +275,14 @@ export interface ClaimedTask {
  * guarantees two daemons never grab the same row. Only tasks whose agent runs on
  * this runtime's kind are eligible.
  */
-export async function claimTask(runtimeId: string): Promise<ClaimedTask | null> {
-  const [rt] = await db.select().from(runtimes).where(eq(runtimes.id, runtimeId)).limit(1);
+export async function claimTask(
+  runtimeId: string,
+): Promise<ClaimedTask | null> {
+  const [rt] = await db
+    .select()
+    .from(runtimes)
+    .where(eq(runtimes.id, runtimeId))
+    .limit(1);
   if (!rt) return null;
 
   const result = await db.execute(sql`
@@ -132,42 +297,109 @@ export async function claimTask(runtimeId: string): Promise<ClaimedTask | null> 
     )
     UPDATE ${agentTasks} t
     SET status = 'dispatched', runtime_id = ${runtimeId}, daemon_id = ${rt.daemonId},
-        dispatched_at = now(), work_dir = '/work/' || t.id
+        dispatched_at = now(), work_dir = coalesce(t.work_dir, '/work/' || t.id)
     FROM next
     WHERE t.id = next.id
     RETURNING t.id AS "id", t.team_id AS "teamId", t.agent_id AS "agentId",
+              t.project_id AS "projectId", t.project_task_id AS "projectTaskId",
               t.kind AS "kind", t.input AS "input", t.work_dir AS "workDir";
   `);
 
   const rows = result as unknown as ClaimedTask[];
   const task = rows[0] ?? null;
   if (task) {
+    const workspace = await ensureProjectWorkspace(task, rt.daemonId);
+    if (workspace) {
+      task.workspace = workspace;
+      task.workDir = workspace.path;
+      await db
+        .update(agentTasks)
+        .set({ workDir: workspace.path })
+        .where(eq(agentTasks.id, task.id));
+    }
     // Phase E injection: resolve bounded memory/skills per the agent's live-version policy
     // and fold them into the prompt the runtime receives (the daemon reads input.prompt).
     const ctx = await resolveInjectionContext(task.teamId, task.agentId);
     const preamble = buildInjectionPreamble(ctx);
-    if (preamble) {
-      const input = (task.input && typeof task.input === "object" ? task.input : {}) as Record<string, unknown>;
-      const prompt = typeof input.prompt === "string" ? input.prompt : "";
-      task.input = { ...input, prompt: preamble + prompt };
-    }
+    // Fold the agent's live-version config into the task input the daemon receives:
+    // the learned-context preamble + the agent's systemPrompt (persona/skill) + model.
+    // Runtimes (claude --append-system-prompt, hermes, codex) read these from input.
+    const base = (
+      task.input && typeof task.input === "object" ? task.input : {}
+    ) as Record<string, unknown>;
+    const prompt = typeof base.prompt === "string" ? base.prompt : "";
+    task.input = {
+      ...base,
+      prompt: preamble + prompt,
+      ...(ctx.systemPrompt ? { systemPrompt: ctx.systemPrompt } : {}),
+      ...(ctx.model ? { model: ctx.model } : {}),
+    };
     task.context = ctx;
     // Inject the org's runtime provider keys so the runtime (hermes/claude…)
     // authenticates from credentials managed entirely in the web UI.
     task.env = await resolveProviderEnv(task.teamId);
-    hub.publish(task.teamId, { kind: "run", action: "dispatched", runId: task.id });
+    hub.publish(task.teamId, {
+      kind: "run",
+      action: "dispatched",
+      runId: task.id,
+    });
   }
   return task;
+}
+
+export async function getProjectWorkspaceTeamId(
+  workspaceId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ teamId: projectWorkspaces.teamId })
+    .from(projectWorkspaces)
+    .where(eq(projectWorkspaces.id, workspaceId))
+    .limit(1);
+  return row?.teamId ?? null;
+}
+
+export async function reportProjectWorkspaceStatus(
+  workspaceId: string,
+  input: {
+    status: "pending" | "ready" | "syncing" | "error";
+    path?: string;
+    error?: string;
+    meta?: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  const updated = await db
+    .update(projectWorkspaces)
+    .set({
+      status: input.status,
+      ...(input.path !== undefined ? { path: input.path } : {}),
+      error: input.error ?? null,
+      ...(input.meta ? { meta: input.meta } : {}),
+      updatedAt: sql`now()`,
+    })
+    .where(eq(projectWorkspaces.id, workspaceId))
+    .returning({ id: projectWorkspaces.id, teamId: projectWorkspaces.teamId });
+  if (!updated[0]) return false;
+  hub.publish(updated[0].teamId, { kind: "presence" });
+  return true;
 }
 
 export async function startTask(taskId: string): Promise<boolean> {
   const updated = await db
     .update(agentTasks)
     .set({ status: "running", startedAt: sql`now()` })
-    .where(and(eq(agentTasks.id, taskId), inArray(agentTasks.status, ["queued", "dispatched"])))
+    .where(
+      and(
+        eq(agentTasks.id, taskId),
+        inArray(agentTasks.status, ["queued", "dispatched"]),
+      ),
+    )
     .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
   if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, { kind: "run", action: "running", runId: taskId });
+  hub.publish(updated[0].teamId, {
+    kind: "run",
+    action: "running",
+    runId: taskId,
+  });
   return true;
 }
 
@@ -180,30 +412,161 @@ export interface IncomingMessage {
   output?: unknown;
 }
 
+async function nextTaskMessageSeq(taskId: string) {
+  const rows = (await db.execute(sql`
+    SELECT coalesce(max(seq) + 1, 0)::int AS "nextSeq"
+    FROM ${taskMessages}
+    WHERE task_id = ${taskId}
+  `)) as unknown as Array<{ nextSeq: number }>;
+  return rows[0]?.nextSeq ?? 0;
+}
+
+async function appendTaskControlMessage(
+  teamId: string,
+  taskId: string,
+  content: string,
+  input?: Record<string, unknown>,
+) {
+  const seq = await nextTaskMessageSeq(taskId);
+  await db.insert(taskMessages).values({
+    id: genId("amsg"),
+    taskId,
+    seq,
+    type: "text",
+    tool: "run.control",
+    content,
+    input: input ?? null,
+  });
+  await db
+    .update(agentTasks)
+    .set({ stepCount: seq + 1, completedSteps: seq + 1 })
+    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.teamId, teamId)));
+  hub.publish(teamId, {
+    kind: "run.progress",
+    runId: taskId,
+    completedSteps: seq + 1,
+    stepCount: seq + 1,
+  });
+}
+
+export async function requestDaemonTaskApproval(
+  taskId: string,
+  input: { message?: string; context?: Record<string, unknown> },
+): Promise<boolean> {
+  const [task] = await db
+    .select({
+      id: agentTasks.id,
+      teamId: agentTasks.teamId,
+      status: agentTasks.status,
+      projectTaskId: agentTasks.projectTaskId,
+    })
+    .from(agentTasks)
+    .where(eq(agentTasks.id, taskId))
+    .limit(1);
+  if (!task) return false;
+  if (task.status === "waiting_approval") return true;
+  if (!["dispatched", "running"].includes(task.status)) return false;
+  await db
+    .update(agentTasks)
+    .set({ status: "waiting_approval" })
+    .where(eq(agentTasks.id, taskId));
+  const message =
+    input.message?.trim() || "Operator approval required before execution.";
+  await appendTaskControlMessage(
+    task.teamId,
+    taskId,
+    `Approval requested: ${message}`,
+    {
+      action: "approval.requested",
+      source: "daemon.preflight",
+      context: input.context ?? {},
+    },
+  );
+  if (task.projectTaskId) {
+    await db
+      .update(projectTasks)
+      .set({ status: "blocked", updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(projectTasks.id, task.projectTaskId),
+          eq(projectTasks.teamId, task.teamId),
+        ),
+      );
+  }
+  hub.publish(task.teamId, {
+    kind: "run",
+    action: "waiting_approval",
+    runId: taskId,
+  });
+  await notifyRunTelegram(
+    task.teamId,
+    taskId,
+    `Approval requested\n${message}`,
+  ).catch(() => undefined);
+  return true;
+}
+
 /**
  * Append a batch of streamed messages (idempotent on (taskId, seq)), recompute
  * progress counters, and tell the daemon whether the task was cancelled meanwhile.
  */
-export async function appendMessages(taskId: string, messages: IncomingMessage[]): Promise<{ cancel: boolean }> {
+export async function appendMessages(
+  taskId: string,
+  messages: IncomingMessage[],
+): Promise<{ cancel: boolean }> {
   if (messages.length > 0) {
     await db
       .insert(taskMessages)
-      .values(messages.map((m) => ({ id: genId("amsg"), taskId, seq: m.seq, type: m.type, tool: m.tool ?? null, content: m.content ?? null, input: m.input ?? null, output: m.output ?? null })))
+      .values(
+        messages.map((m) => ({
+          id: genId("amsg"),
+          taskId,
+          seq: m.seq,
+          type: m.type,
+          tool: m.tool ?? null,
+          content: m.content ?? null,
+          input: m.input ?? null,
+          output: m.output ?? null,
+        })),
+      )
       .onConflictDoNothing({ target: [taskMessages.taskId, taskMessages.seq] });
 
-    const all = await db.select({ type: taskMessages.type }).from(taskMessages).where(eq(taskMessages.taskId, taskId));
+    const all = await db
+      .select({ type: taskMessages.type })
+      .from(taskMessages)
+      .where(eq(taskMessages.taskId, taskId));
     const completed = all.filter((m) => TERMINAL_MSG.includes(m.type)).length;
-    await db.update(agentTasks).set({ stepCount: all.length, completedSteps: completed }).where(eq(agentTasks.id, taskId));
+    await db
+      .update(agentTasks)
+      .set({ stepCount: all.length, completedSteps: completed })
+      .where(eq(agentTasks.id, taskId));
   }
 
-  const [task] = await db.select({ status: agentTasks.status, teamId: agentTasks.teamId, stepCount: agentTasks.stepCount, completedSteps: agentTasks.completedSteps }).from(agentTasks).where(eq(agentTasks.id, taskId)).limit(1);
+  const [task] = await db
+    .select({
+      status: agentTasks.status,
+      teamId: agentTasks.teamId,
+      stepCount: agentTasks.stepCount,
+      completedSteps: agentTasks.completedSteps,
+    })
+    .from(agentTasks)
+    .where(eq(agentTasks.id, taskId))
+    .limit(1);
   if (task && messages.length > 0) {
-    hub.publish(task.teamId, { kind: "run.progress", runId: taskId, completedSteps: task.completedSteps, stepCount: task.stepCount });
+    hub.publish(task.teamId, {
+      kind: "run.progress",
+      runId: taskId,
+      completedSteps: task.completedSteps,
+      stepCount: task.stepCount,
+    });
   }
   return { cancel: task?.status === "cancelled" };
 }
 
-export async function completeTask(taskId: string, result: unknown): Promise<boolean> {
+export async function completeTask(
+  taskId: string,
+  result: unknown,
+): Promise<boolean> {
   const updated = await db
     .update(agentTasks)
     .set({
@@ -213,14 +576,49 @@ export async function completeTask(taskId: string, result: unknown): Promise<boo
       durationMs: sql`(extract(epoch from (now() - coalesce(started_at, created_at))) * 1000)::int`,
       completedSteps: sql`${agentTasks.stepCount}`,
     })
-    .where(and(eq(agentTasks.id, taskId), inArray(agentTasks.status, ["dispatched", "running"])))
-    .returning({ id: agentTasks.id, teamId: agentTasks.teamId, chatSessionId: agentTasks.chatSessionId });
+    .where(
+      and(
+        eq(agentTasks.id, taskId),
+        inArray(agentTasks.status, ["dispatched", "running"]),
+      ),
+    )
+    .returning({
+      id: agentTasks.id,
+      teamId: agentTasks.teamId,
+      chatSessionId: agentTasks.chatSessionId,
+      projectTaskId: agentTasks.projectTaskId,
+    });
   if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, { kind: "run", action: "succeeded", runId: taskId });
+  hub.publish(updated[0].teamId, {
+    kind: "run",
+    action: "succeeded",
+    runId: taskId,
+  });
+  if (updated[0].projectTaskId) {
+    await db
+      .update(projectTasks)
+      .set({ status: "review", updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(projectTasks.id, updated[0].projectTaskId),
+          eq(projectTasks.teamId, updated[0].teamId),
+        ),
+      );
+  }
   // Chat-spawns-task: write the result back as the assistant turn (best-effort).
   if (updated[0].chatSessionId) {
-    await appendAssistantTurn(updated[0].teamId, updated[0].chatSessionId, taskId, resultText(result)).catch(() => undefined);
+    await appendAssistantTurn(
+      updated[0].teamId,
+      updated[0].chatSessionId,
+      taskId,
+      resultText(result),
+    ).catch(() => undefined);
   }
+  await notifyRunTelegram(
+    updated[0].teamId,
+    taskId,
+    `Run completed\n${resultText(result).slice(0, 500)}`,
+  ).catch(() => undefined);
   // Moat: kick off the propose-only review as soon as the run finishes (best-effort;
   // never let a review hiccup fail task completion). Idempotent per run.
   await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
@@ -242,7 +640,11 @@ function resultText(result: unknown): string {
  * `agent_error` (terminal); the timeout scanner passes `timeout` (retryable). Auto-retry
  * is NOT decided here — the scanner owns it so a single component drives retry policy.
  */
-export async function failTask(taskId: string, error: string, reason: TaskErrorReason = "agent_error"): Promise<boolean> {
+export async function failTask(
+  taskId: string,
+  error: string,
+  reason: TaskErrorReason = "agent_error",
+): Promise<boolean> {
   const updated = await db
     .update(agentTasks)
     .set({
@@ -252,10 +654,39 @@ export async function failTask(taskId: string, error: string, reason: TaskErrorR
       endedAt: sql`now()`,
       durationMs: sql`(extract(epoch from (now() - coalesce(started_at, created_at))) * 1000)::int`,
     })
-    .where(and(eq(agentTasks.id, taskId), inArray(agentTasks.status, ["dispatched", "running"])))
-    .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
+    .where(
+      and(
+        eq(agentTasks.id, taskId),
+        inArray(agentTasks.status, ["dispatched", "running"]),
+      ),
+    )
+    .returning({
+      id: agentTasks.id,
+      teamId: agentTasks.teamId,
+      projectTaskId: agentTasks.projectTaskId,
+    });
   if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, { kind: "run", action: "failed", runId: taskId });
+  hub.publish(updated[0].teamId, {
+    kind: "run",
+    action: "failed",
+    runId: taskId,
+  });
+  if (updated[0].projectTaskId) {
+    await db
+      .update(projectTasks)
+      .set({ status: "blocked", updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(projectTasks.id, updated[0].projectTaskId),
+          eq(projectTasks.teamId, updated[0].teamId),
+        ),
+      );
+  }
+  await notifyRunTelegram(
+    updated[0].teamId,
+    taskId,
+    `Run failed\n${error}`,
+  ).catch(() => undefined);
   // A failed run is exactly when the reviewer proposes a lesson — trigger it too.
   await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);
   return true;
@@ -269,7 +700,10 @@ export async function failTask(taskId: string, error: string, reason: TaskErrorR
  * a row that is still `failed` with the expected attempt, so concurrent scanner ticks
  * can't double-bump. Returns true when this call performed the retry.
  */
-export async function autoRetryTask(taskId: string, fromAttempt: number): Promise<boolean> {
+export async function autoRetryTask(
+  taskId: string,
+  fromAttempt: number,
+): Promise<boolean> {
   const updated = await db
     .update(agentTasks)
     .set({
@@ -284,9 +718,19 @@ export async function autoRetryTask(taskId: string, fromAttempt: number): Promis
       endedAt: null,
       durationMs: null,
     })
-    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.status, "failed"), eq(agentTasks.attempt, fromAttempt)))
+    .where(
+      and(
+        eq(agentTasks.id, taskId),
+        eq(agentTasks.status, "failed"),
+        eq(agentTasks.attempt, fromAttempt),
+      ),
+    )
     .returning({ id: agentTasks.id, teamId: agentTasks.teamId });
   if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, { kind: "run", action: "created", runId: taskId });
+  hub.publish(updated[0].teamId, {
+    kind: "run",
+    action: "created",
+    runId: taskId,
+  });
   return true;
 }

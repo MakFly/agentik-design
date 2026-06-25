@@ -5,7 +5,7 @@ import { persist } from "zustand/middleware";
 export type SubmitMode = "enter" | "ctrlEnter";
 
 /**
- * User-facing assistant preferences, edited from /{team}/thechat/settings and
+ * User-facing assistant preferences, edited from /{team}/chat/settings and
  * read live by the chat (composer submit mode) and the app shell (reduce motion).
  * Persisted to localStorage; same-tab updates are reactive via the store.
  */

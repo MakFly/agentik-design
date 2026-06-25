@@ -1,0 +1,49 @@
+version: 1
+name: agentik-orchestrator
+purpose: Coordinate project-centric agent work across web, Telegram, runners, workspaces, policies, and memory.
+owns:
+  - project_resolution
+  - task_lifecycle
+  - run_lifecycle
+  - workspace_preparation
+  - context_pack_assembly
+  - policy_enforcement
+  - channel_routing
+  - memory_proposals
+inputs:
+  - team
+  - channel
+  - user_intent
+  - project
+  - task
+  - agent
+  - policy
+  - memory
+outputs:
+  - run_events
+  - approval_requests
+  - artifacts
+  - channel_summaries
+  - memory_candidates
+default_flow:
+  - resolve_team_and_permissions
+  - resolve_or_create_project
+  - resolve_or_create_task
+  - select_agent_and_runtime
+  - prepare_workspace_if_needed
+  - assemble_context_pack
+  - execute_runner
+  - stream_observability
+  - request_approvals_when_needed
+  - persist_result
+  - propose_memory_updates
+policies:
+  risky_actions_require_approval:
+    - destructive_shell
+    - external_write
+    - deploy
+    - pull_request_creation
+    - secret_access
+    - provider_or_billing_change
+  telegram_stream_mode: summaries_only
+  web_stream_mode: full_events
