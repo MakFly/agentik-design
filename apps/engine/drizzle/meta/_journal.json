@@ -71,6 +71,13 @@
       "when": 1782299894604,
       "tag": "0009_sweet_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782385077511,
+      "tag": "0010_motionless_cassandra_nova",
+      "breakpoints": true
     }
   ]
 }

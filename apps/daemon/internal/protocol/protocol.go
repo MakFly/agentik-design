@@ -78,3 +78,24 @@ type CompleteRequest struct {
 type FailRequest struct {
 	Error string `json:"error"`
 }
+
+// BundleCommand is returned by the bundle claim endpoint (204 → nothing queued).
+// The engine sends only a validated {kind, action} — never a shell command.
+type BundleCommand struct {
+	ID     string `json:"id"`
+	TeamID string `json:"teamId"`
+	Kind   string `json:"kind"`
+	Action string `json:"action"` // install | upgrade | uninstall
+}
+
+type BundleStatusRequest struct {
+	Status string `json:"status"` // done | failed
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// MetaRequest refreshes a daemon's probed CLIs/host without touching its runtimes.
+type MetaRequest struct {
+	DaemonID string         `json:"daemonId"`
+	Meta     map[string]any `json:"meta"`
+}

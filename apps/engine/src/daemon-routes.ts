@@ -8,9 +8,11 @@ import {
   heartbeat,
   registerDaemon,
   startTask,
+  updateDaemonMeta,
   type IncomingMessage,
 } from "./daemon-repo";
 import { resolveTeamByDaemonToken } from "./auth-repo";
+import { claimNextBundleCommand, reportBundleStatus } from "./bundle-repo";
 
 type DaemonVars = { daemonTeamId?: string };
 
@@ -58,6 +60,13 @@ daemon.post("/register", async (c) => {
   return c.json(res, 201);
 });
 
+daemon.post("/meta", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { daemonId?: string; meta?: Record<string, unknown> } | null;
+  if (!body?.daemonId || !body.meta) return c.json({ error: "invalid_body" }, 400);
+  const ok = await updateDaemonMeta(body.daemonId, body.meta);
+  return c.json({ ok }, ok ? 200 : 404);
+});
+
 daemon.post("/heartbeat", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { daemonId?: string } | null;
   if (!body?.daemonId) return c.json({ error: "invalid_body" }, 400);
@@ -92,5 +101,26 @@ daemon.post("/tasks/:id/complete", async (c) => {
 daemon.post("/tasks/:id/fail", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { error?: string };
   const ok = await failTask(c.req.param("id"), body.error ?? "unknown error");
+  return c.json({ ok }, ok ? 200 : 409);
+});
+
+/* ── Bundle manager: the daemon polls for and reports install/upgrade commands ── */
+
+daemon.post("/bundles/claim", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { daemonId?: string } | null;
+  if (!body?.daemonId) return c.json({ error: "invalid_body" }, 400);
+  const cmd = await claimNextBundleCommand(body.daemonId);
+  if (!cmd) return c.body(null, 204);
+  return c.json(cmd);
+});
+
+daemon.post("/bundles/:id/status", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as
+    | { status?: "done" | "failed"; result?: string; error?: string }
+    | null;
+  if (!body || (body.status !== "done" && body.status !== "failed")) {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const ok = await reportBundleStatus(c.req.param("id"), { status: body.status, result: body.result, error: body.error });
   return c.json({ ok }, ok ? 200 : 409);
 });

@@ -47,6 +47,8 @@ import {
 import type { SSEStreamingApi } from "hono/streaming";
 import { daemon } from "./daemon-routes";
 import { listProviderKeys, setProviderKey, deleteProviderKey, isSupportedProvider } from "./providers-repo";
+import { enqueueBundleCommand, getNetworkInstallEnabled, listBundleCommands, setNetworkInstallEnabled } from "./bundle-repo";
+import type { BundleAction } from "./db/schema";
 import { auth } from "./auth-routes";
 import { withAuth, requirePermission, type AuthVars } from "./auth";
 import { createAgentVersionInput } from "@agentik/workflow-schema";
@@ -235,6 +237,44 @@ api.get("/system", async (c) => {
     },
     ...info,
   });
+});
+
+/* ── Bundle manager: install/upgrade agent CLIs on a daemon host (owner-gated) ── */
+
+const BUNDLE_ACTIONS: BundleAction[] = ["install", "upgrade", "uninstall"];
+
+api.get("/bundles", requirePermission("settings:read"), async (c) => {
+  const teamId = c.get("teamId");
+  const [networkInstall, items] = await Promise.all([
+    getNetworkInstallEnabled(teamId),
+    listBundleCommands(teamId),
+  ]);
+  return c.json({ policy: { networkInstall }, items });
+});
+
+api.put("/bundles/policy", requirePermission("settings:update"), async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { networkInstall?: unknown } | null;
+  if (typeof body?.networkInstall !== "boolean") return c.json({ error: "invalid_body" }, 400);
+  await setNetworkInstallEnabled(c.get("teamId"), body.networkInstall);
+  return c.json({ networkInstall: body.networkInstall });
+});
+
+api.post("/bundles", requirePermission("settings:update"), async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { daemonId?: string; kind?: string; action?: BundleAction } | null;
+  if (!body?.daemonId || !body.kind || !body.action || !BUNDLE_ACTIONS.includes(body.action)) {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  const res = await enqueueBundleCommand(c.get("teamId"), {
+    daemonId: body.daemonId,
+    kind: body.kind,
+    action: body.action,
+    requestedBy: c.get("auth").userId,
+  });
+  if (!res.ok) {
+    const status = res.error === "daemon_not_found" ? 404 : res.error === "network_install_disabled" ? 403 : 409;
+    return c.json({ error: res.error }, status);
+  }
+  return c.json(res.command, 202);
 });
 
 api.post("/agents", async (c) => {

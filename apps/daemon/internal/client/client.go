@@ -108,3 +108,27 @@ func (c *Client) Fail(ctx context.Context, taskID, msg string) error {
 	_, err := c.do(ctx, "/daemon/tasks/"+taskID+"/fail", protocol.FailRequest{Error: msg}, nil)
 	return err
 }
+
+// ClaimBundle returns nil (no error) when no bundle command is queued (HTTP 204).
+func (c *Client) ClaimBundle(ctx context.Context, daemonID string) (*protocol.BundleCommand, error) {
+	var out protocol.BundleCommand
+	code, err := c.do(ctx, "/daemon/bundles/claim", map[string]string{"daemonId": daemonID}, &out)
+	if err != nil {
+		return nil, err
+	}
+	if code == http.StatusNoContent || out.ID == "" {
+		return nil, nil
+	}
+	return &out, nil
+}
+
+func (c *Client) ReportBundle(ctx context.Context, id string, req protocol.BundleStatusRequest) error {
+	_, err := c.do(ctx, "/daemon/bundles/"+id+"/status", req, nil)
+	return err
+}
+
+// UpdateMeta refreshes the daemon's probed CLIs/host (e.g. after a bundle install).
+func (c *Client) UpdateMeta(ctx context.Context, daemonID string, meta map[string]any) error {
+	_, err := c.do(ctx, "/daemon/meta", protocol.MetaRequest{DaemonID: daemonID, Meta: meta}, nil)
+	return err
+}

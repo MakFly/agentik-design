@@ -26,7 +26,10 @@ export type IdPrefix =
   | "mbr"
   | "inv"
   // runtime provider keys (managed from the web UI, injected into the daemon)
-  | "pkey";
+  | "pkey"
+  // bundle manager + generic org settings
+  | "bcmd"
+  | "oset";
 
 export function genId(prefix: IdPrefix): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;

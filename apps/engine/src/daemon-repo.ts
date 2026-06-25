@@ -55,6 +55,22 @@ export async function registerDaemon(input: RegisterInput) {
   return { daemonId, teamId, runtimes: created };
 }
 
+/**
+ * Refresh just a daemon's meta (probed CLIs/host) without touching its runtimes —
+ * used after a bundle install/uninstall so a newly available CLI shows up immediately,
+ * with no runtime-id churn (register() deletes+reinserts runtimes; this doesn't).
+ */
+export async function updateDaemonMeta(daemonId: string, meta: Record<string, unknown>): Promise<boolean> {
+  const updated = await db
+    .update(daemons)
+    .set({ meta })
+    .where(eq(daemons.id, daemonId))
+    .returning({ id: daemons.id, teamId: daemons.teamId });
+  if (!updated[0]) return false;
+  hub.publish(updated[0].teamId, { kind: "presence" });
+  return true;
+}
+
 export async function heartbeat(daemonId: string): Promise<boolean> {
   const updated = await db
     .update(daemons)

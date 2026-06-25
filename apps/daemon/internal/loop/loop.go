@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"agentik/daemon/internal/bundle"
 	"agentik/daemon/internal/client"
 	"agentik/daemon/internal/config"
 	"agentik/daemon/internal/probe"
@@ -60,6 +61,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			claimed = true
 			l.execute(ctx, *task, rt.Kind)
 		}
+		// Bundle commands (install/upgrade a CLI) are polled alongside task claims.
+		if l.pollBundle(ctx, reg.DaemonID) {
+			claimed = true
+		}
 		if !claimed {
 			select {
 			case <-ctx.Done():
@@ -70,20 +75,64 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
+// meta is the daemon's self-description (advertised runtimes + probed CLIs + host),
+// sent at register and refreshed after a bundle op changes what's installed.
+func (l *Loop) meta() map[string]any {
+	return map[string]any{
+		"runtimes":    l.cfg.RuntimeKinds,
+		"tools":       probe.Tools(),
+		"host":        probe.Host(),
+		"installable": bundle.Installable(),
+	}
+}
+
 func (l *Loop) register(ctx context.Context) (*protocol.RegisterResponse, error) {
 	req := protocol.RegisterRequest{
 		Team: l.cfg.Team,
 		Name: l.cfg.Name,
-		Meta: map[string]any{
-			"runtimes": l.cfg.RuntimeKinds,
-			"tools":    probe.Tools(),
-			"host":     probe.Host(),
-		},
+		Meta: l.meta(),
 	}
 	for _, kind := range l.cfg.RuntimeKinds {
 		req.Runtimes = append(req.Runtimes, protocol.RegisterRuntime{Kind: kind})
 	}
 	return l.client.Register(ctx, req)
+}
+
+// pollBundle claims one bundle command, runs it (when this host opted in), reports the
+// outcome, and re-probes so a freshly (un)installed CLI shows up immediately. Returns
+// true when a command was handled (so the loop skips its idle sleep).
+func (l *Loop) pollBundle(ctx context.Context, daemonID string) bool {
+	cmd, err := l.client.ClaimBundle(ctx, daemonID)
+	if err != nil {
+		log.Printf("bundle claim error: %v", err)
+		return false
+	}
+	if cmd == nil {
+		return false
+	}
+	log.Printf("bundle %s: %s %s", cmd.ID, cmd.Action, cmd.Kind)
+
+	// Daemon-side gate: refuse network installers unless this host explicitly opted in,
+	// even when the engine enqueued the command. Defense-in-depth for an RCE-class op.
+	if !l.cfg.BundleInstallEnabled {
+		_ = l.client.ReportBundle(ctx, cmd.ID, protocol.BundleStatusRequest{
+			Status: "failed",
+			Error:  "bundle install disabled on this daemon (set BUNDLE_INSTALL_ENABLED=true)",
+		})
+		return true
+	}
+
+	summary, runErr := bundle.Execute(ctx, cmd.Kind, cmd.Action, l.cfg.WorkRoot, 10*time.Minute)
+	if runErr != nil {
+		_ = l.client.ReportBundle(ctx, cmd.ID, protocol.BundleStatusRequest{Status: "failed", Error: runErr.Error()})
+		return true
+	}
+	_ = l.client.ReportBundle(ctx, cmd.ID, protocol.BundleStatusRequest{Status: "done", Result: summary})
+	// Re-probe so the newly available/removed CLI reflects in meta.tools right away.
+	if err := l.client.UpdateMeta(ctx, daemonID, l.meta()); err != nil {
+		log.Printf("meta refresh after bundle failed: %v", err)
+	}
+	return true
 }
 
 func (l *Loop) heartbeatLoop(ctx context.Context, daemonID string) {
