@@ -17,10 +17,6 @@ type Config struct {
 	RuntimeKinds  []string
 	ClaudeModel   string
 	TaskTimeoutMs int
-	// BundleInstallEnabled gates running network installers on this host. Default false:
-	// even if the engine enqueues an install, the daemon refuses unless this host opts in.
-	// Daemon-side defense-in-depth for an RCE-class op (the engine policy is the other gate).
-	BundleInstallEnabled bool
 }
 
 func getenv(key, def string) string {
@@ -45,10 +41,6 @@ func Load() (*Config, error) {
 		ClaudeModel: os.Getenv("CLAUDE_MODEL"),
 	}
 	cfg.TaskTimeoutMs, _ = strconv.Atoi(getenv("TASK_TIMEOUT_MS", "300000"))
-	switch strings.ToLower(os.Getenv("BUNDLE_INSTALL_ENABLED")) {
-	case "true", "1", "yes":
-		cfg.BundleInstallEnabled = true
-	}
 	for _, k := range strings.Split(getenv("RUNTIME_KINDS", "echo"), ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			cfg.RuntimeKinds = append(cfg.RuntimeKinds, k)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Server, Cpu, CircleCheck, CircleX, Wifi, WifiOff, Download, ArrowUpCircle, Loader2 } from "lucide-react";
+import { Server, Cpu, CircleCheck, CircleX, Wifi, WifiOff, Download, ArrowUpCircle, Loader2, ShieldCheck, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,9 @@ interface DetectedTool {
   path?: string;
   version?: string;
   available: boolean;
+  /** True when the CLI already has usable credentials on the host (saved login or env key). */
+  authenticated?: boolean;
+  authSource?: string; // "session" | "key"
 }
 
 interface DaemonInfo {
@@ -226,6 +229,22 @@ export function RuntimesTab({ team }: { team: string }) {
                             <span className="truncate text-[11px] text-muted-foreground" title={t.path}>
                               {t.available ? (t.version || "available") : "not found"}
                             </span>
+                            {t.available &&
+                              (t.authenticated ? (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success"
+                                  title={`Authenticated via ${t.authSource === "key" ? "an API key" : "a saved session"} — usable now`}
+                                >
+                                  <ShieldCheck className="size-2.5" /> ready
+                                </span>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning"
+                                  title="Installed but not authenticated — log in on the host, or set a matching provider key below"
+                                >
+                                  <ShieldAlert className="size-2.5" /> auth
+                                </span>
+                              ))}
                             {canBundle &&
                               (inFlight ? (
                                 <span className="inline-flex items-center gap-1 text-[11px] text-running">

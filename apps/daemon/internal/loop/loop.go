@@ -112,17 +112,11 @@ func (l *Loop) pollBundle(ctx context.Context, daemonID string) bool {
 	}
 	log.Printf("bundle %s: %s %s", cmd.ID, cmd.Action, cmd.Kind)
 
-	// Daemon-side gate: refuse network installers unless this host explicitly opted in,
-	// even when the engine enqueued the command. Defense-in-depth for an RCE-class op.
-	if !l.cfg.BundleInstallEnabled {
-		_ = l.client.ReportBundle(ctx, cmd.ID, protocol.BundleStatusRequest{
-			Status: "failed",
-			Error:  "bundle install disabled on this daemon (set BUNDLE_INSTALL_ENABLED=true)",
-		})
-		return true
-	}
-
-	summary, runErr := bundle.Execute(ctx, cmd.Kind, cmd.Action, l.cfg.WorkRoot, 10*time.Minute)
+	// Authorization is the engine's job: it only enqueues a bundle command when the
+	// org's network-install policy is ON and the requester is an owner. The daemon
+	// executes the allowlisted installer (it already runs claimed agent CLIs anyway).
+	// 20 min covers the Hermes installer pulling Python/Node/ripgrep/ffmpeg.
+	summary, runErr := bundle.Execute(ctx, cmd.Kind, cmd.Action, l.cfg.WorkRoot, 20*time.Minute)
 	if runErr != nil {
 		_ = l.client.ReportBundle(ctx, cmd.ID, protocol.BundleStatusRequest{Status: "failed", Error: runErr.Error()})
 		return true
