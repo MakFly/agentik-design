@@ -32,6 +32,8 @@ interface SystemInfo {
   providers: { anthropic: boolean; openai: boolean; google: boolean };
   daemons: DaemonInfo[];
   runtimes: Array<{ id: string; daemonId: string; kind: string; status: string }>;
+  /** Runtimes that are wired on an online daemon with the backing CLI present — selectable for new agents. */
+  availableRuntimes: string[];
 }
 
 function useSystem(team: string) {
@@ -84,6 +86,25 @@ export function RuntimesTab({ team }: { team: string }) {
           Pills above reflect keys in the engine&apos;s own env. Manage per-org runtime keys below — Agent CLIs (e.g.
           Claude Code) may also authenticate via their own session instead of a key.
         </p>
+
+        {/* Selectable runtimes — the set the agent builder can target right now */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Selectable runtimes</span>
+          {data && data.availableRuntimes.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {data.availableRuntimes.map((r) => (
+                <span key={r} className="inline-flex items-center gap-1 rounded-full bg-running/10 px-2 py-0.5 text-[11px] font-medium text-running">
+                  <Cpu className="size-3" />
+                  {r}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              None yet — connect a daemon whose host has the agent CLI installed (claude, hermes…) to make it selectable in the agent builder.
+            </p>
+          )}
+        </div>
       </section>
 
       {/* Managed runtime provider keys (encrypted, injected into the daemon) */}

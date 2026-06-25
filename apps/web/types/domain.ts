@@ -3,6 +3,9 @@
  * an agentId is expected. These are the canonical shapes the UI renders.
  */
 
+import type { RuntimeKind } from "@agentik/workflow-schema";
+export type { RuntimeKind };
+
 type Brand<T, B> = T & { readonly __brand: B };
 export type TeamId = Brand<string, "Team">;
 export type AgentId = Brand<string, "Agent">;
@@ -157,6 +160,8 @@ export interface Guardrails {
 }
 
 export interface AgentConfig {
+  /** Which daemon runtime executes this agent (echo/claude/hermes/…). Defaults to echo. */
+  runtimeKind?: RuntimeKind;
   model: ModelConfig;
   systemPrompt: string;
   promptVariables: PromptVariable[];

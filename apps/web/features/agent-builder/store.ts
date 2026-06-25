@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AgentConfig, ModelConfig, AgentLimits, RetryPolicy, Guardrails, ToolGrant, MemoryBinding } from "@/types/domain";
+import type { AgentConfig, ModelConfig, AgentLimits, RetryPolicy, Guardrails, ToolGrant, MemoryBinding, RuntimeKind } from "@/types/domain";
 import { defaultAgentConfig } from "./default-config";
 import type { BuilderSectionKey, DraftIdentity } from "./validation";
 
@@ -18,6 +18,7 @@ interface BuilderState {
   setSaveState: (s: SaveState) => void;
 
   patchIdentity: (patch: Partial<DraftIdentity>) => void;
+  setRuntimeKind: (runtimeKind: RuntimeKind) => void;
   patchModel: (patch: Partial<ModelConfig>) => void;
   patchLimits: (patch: Partial<AgentLimits>) => void;
   patchRetry: (patch: Partial<RetryPolicy>) => void;
@@ -50,6 +51,8 @@ export const useBuilderStore = create<BuilderState>((set) => ({
 
   patchIdentity: (patch) =>
     set((s) => ({ identity: { ...s.identity, ...patch }, rev: s.rev + 1, saveState: "dirty" })),
+  setRuntimeKind: (runtimeKind) =>
+    set((s) => ({ config: { ...s.config, runtimeKind }, rev: s.rev + 1, saveState: "dirty" })),
   patchModel: (patch) =>
     set((s) => ({ config: { ...s.config, model: { ...s.config.model, ...patch } }, rev: s.rev + 1, saveState: "dirty" })),
   patchLimits: (patch) =>

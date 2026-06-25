@@ -13,6 +13,7 @@ export function ConfigPreview({ config }: { config: AgentConfig }) {
       <h3 className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Resolved config</h3>
       <KeyValueList
         items={[
+          { label: "Runtime", value: config.runtimeKind ?? "echo" },
           { label: "Model", value: meta?.label ?? config.model.model },
           { label: "Temperature", value: config.model.temperature },
           { label: "Tools", value: config.tools.length },

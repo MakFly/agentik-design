@@ -3,6 +3,7 @@ import type { AgentConfig } from "@/types/domain";
 /** A valid, safe starting point for a new agent draft (docs/01 §4.2). */
 export function defaultAgentConfig(): AgentConfig {
   return {
+    runtimeKind: "echo",
     model: {
       provider: "anthropic",
       model: "claude-sonnet-4",

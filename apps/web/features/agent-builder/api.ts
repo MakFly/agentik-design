@@ -1,10 +1,20 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/queryKeys";
 import type { AgentConfig, AgentId, RunId } from "@/types/domain";
 import type { DraftIdentity } from "./validation";
+
+/** Runtimes selectable for a new agent — wired on a connected daemon with the CLI present. */
+export function useAvailableRuntimes(team: string) {
+  return useQuery({
+    queryKey: ["team", team, "system"],
+    queryFn: ({ signal }) => apiFetch<{ availableRuntimes?: string[] }>("/system", { team, signal }),
+    select: (d) => d.availableRuntimes ?? [],
+    staleTime: 5_000,
+  });
+}
 
 export interface CreateAgentResult {
   id: AgentId;
@@ -59,7 +69,8 @@ export function useTestRun(team: string) {
       apiFetch<TestRunResult>("/agents/test", {
         method: "POST",
         team,
-        body: { config, input },
+        // Test on the selected runtime so the harness matches what publish will run.
+        body: { config, input, runtime: config.runtimeKind ?? "echo" },
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
   });

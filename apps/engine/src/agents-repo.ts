@@ -372,6 +372,29 @@ export async function getSystemInfo(teamId: string) {
     const ts = Date.parse(hb.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
     return !Number.isNaN(ts) && now - ts <= STALE_MS ? "online" : "offline";
   };
+  // A runtime is *available* (selectable for a new agent) when its daemon is online AND
+  // the backing CLI is actually present on that host. `echo` is self-contained; kinds we
+  // don't probe (custom/openai/…) are trusted from the daemon's own registration.
+  const onlineDaemonIds = new Set(
+    daemonRows.filter((d) => liveStatus(d.lastHeartbeatAt) === "online").map((d) => d.id),
+  );
+  const toolsByDaemon = new Map<string, Map<string, boolean>>();
+  for (const d of daemonRows) {
+    const tools = (d.meta as { tools?: Array<{ name: string; available: boolean }> } | null)?.tools ?? [];
+    toolsByDaemon.set(d.id, new Map(tools.map((t) => [t.name, t.available])));
+  }
+  const availableRuntimes = [
+    ...new Set(
+      runtimeRows
+        .filter((rt) => {
+          if (!onlineDaemonIds.has(rt.daemonId)) return false;
+          const probed = toolsByDaemon.get(rt.daemonId)?.get(rt.kind);
+          return rt.kind === "echo" || probed === undefined || probed === true;
+        })
+        .map((rt) => rt.kind),
+    ),
+  ].sort();
+
   return {
     daemons: daemonRows.map((d) => ({
       id: d.id,
@@ -381,6 +404,7 @@ export async function getSystemInfo(teamId: string) {
       meta: d.meta ?? {},
     })),
     runtimes: runtimeRows,
+    availableRuntimes,
   };
 }
 

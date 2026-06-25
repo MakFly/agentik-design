@@ -1,5 +1,6 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,7 +16,9 @@ import {
 } from "@/components/ui/select";
 import { PromptEditor } from "./prompt-editor";
 import { useBuilderStore } from "./store";
+import { useAvailableRuntimes } from "./api";
 import { MODEL_CATALOG, PROVIDERS, findModel, estimateRunCents } from "@/config/models";
+import type { RuntimeKind } from "@/types/domain";
 import type { BuilderSectionKey, Issue } from "./validation";
 import { issuesForSection } from "./validation";
 import { formatMoney } from "@/lib/format";
@@ -93,12 +96,53 @@ function IdentitySection({ issues }: { issues: Issue[] }) {
   );
 }
 
+function RuntimeField() {
+  const { config, setRuntimeKind } = useBuilderStore();
+  const { team } = useParams<{ team: string }>();
+  const { data: available = [], isLoading } = useAvailableRuntimes(team);
+  const current = config.runtimeKind ?? "echo";
+  // Always keep the current value selectable, even if its daemon dropped — never silently lose a choice.
+  const options = [...new Set([current, ...available])];
+  const currentOffline = current !== "echo" && !available.includes(current);
+  return (
+    <div className={fieldRow}>
+      <Label htmlFor="runtime">Runtime</Label>
+      <Select value={current} onValueChange={(v) => setRuntimeKind(v as RuntimeKind)}>
+        <SelectTrigger id="runtime">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((k) => (
+            <SelectItem key={k} value={k}>
+              {k}
+              {k !== "echo" && !available.includes(k) ? " · offline" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        {isLoading
+          ? "Detecting connected daemons…"
+          : available.length
+            ? `Available on a connected daemon: ${available.join(", ")}.`
+            : "No daemon online — start one (make dev/daemon) to run agents. echo is the safe default."}
+      </p>
+      {currentOffline ? (
+        <p className="text-xs text-warning">
+          “{current}” isn’t on any connected daemon right now — runs will queue until one registers it.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ModelSection({ issues }: { issues: Issue[] }) {
   const { config, patchModel } = useBuilderStore();
   const m = config.model;
   const meta = findModel(m.model);
   return (
     <div className="flex max-w-xl flex-col gap-4">
+      <RuntimeField />
       <div className={fieldRow}>
         <Label htmlFor="model">Model</Label>
         <Select value={m.model} onValueChange={(model) => patchModel({ model, provider: findModel(model)?.provider ?? m.provider })}>
