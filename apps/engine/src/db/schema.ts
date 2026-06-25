@@ -321,6 +321,8 @@ export const channelConnections = pgTable("channel_connections", {
   label: text("label").notNull().default(""),
   status: text("status").$type<ChannelConnectionStatus>().notNull().default("setup"),
   botTokenEncrypted: text("bot_token_encrypted"),
+  /** Public Telegram username from getMe. Safe to return and used for t.me pairing links. */
+  botUsername: text("bot_username"),
   /** Default polling: the engine pulls updates with getUpdates — no public URL needed. */
   transport: text("transport").$type<ChannelTransport>().notNull().default("polling"),
   /** Last acknowledged Telegram update_id (next getUpdates offset). Prevents reprocessing on restart. */

@@ -51,6 +51,7 @@ d("telegram channel control", () => {
       label: "Ops Telegram",
       status: "active",
       botTokenEncrypted: encryptJson({ token: "123:test" }),
+      botUsername: "ops_test_bot",
       transport: "polling",
       webhookSecret,
       pairingCode,
@@ -89,6 +90,28 @@ d("telegram channel control", () => {
 
   test("parses operator commands", () => {
     expect(parseTelegramCommand("/projects")).toEqual({ kind: "projects" });
+    expect(parseTelegramCommand("/agents")).toEqual({ kind: "agents" });
+    expect(parseTelegramCommand("/run")).toEqual({ kind: "runHelp" });
+    expect(parseTelegramCommand('/run task:ptask_1 "ship it"')).toEqual({
+      kind: "runTask",
+      taskId: "ptask_1",
+      instruction: "ship it",
+    });
+    expect(parseTelegramCommand('/run agent:agt_1 "Inspect leads"')).toEqual({
+      kind: "runAgent",
+      agentId: "agt_1",
+      input: "Inspect leads",
+    });
+    expect(parseTelegramCommand('/run @telegram_controller "Inspect leads"')).toEqual({
+      kind: "runAgentHandle",
+      handle: "telegram_controller",
+      input: "Inspect leads",
+    });
+    expect(parseTelegramCommand("@telegram_controller Inspect leads")).toEqual({
+      kind: "runAgentHandle",
+      handle: "telegram_controller",
+      input: "Inspect leads",
+    });
     expect(
       parseTelegramCommand('/run project:proj_1 agent:agt_1 "Fix checkout"'),
     ).toEqual({
@@ -151,6 +174,65 @@ d("telegram channel control", () => {
 
     const connections = await listChannelConnections(teamId);
     expect(connections[0]?.identityCount).toBe(1);
+  });
+
+  test("guides natural run requests instead of returning unknown command", async () => {
+    const sender = async ({ text }: { text: string }) => {
+      sent.push(text);
+    };
+    await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 20,
+          text: `/start ${pairingCode}`,
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+
+    const res = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 21,
+          text: "tu peux me lancer un agent existant ?",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.reply).not.toContain("Unknown command");
+    expect(res.reply).toContain("/run @agent_handle");
+    expect(res.reply).toContain("Telegram Controller");
+  });
+
+  test("lists agents from Telegram", async () => {
+    const sender = async ({ text }: { text: string }) => {
+      sent.push(text);
+    };
+    const res = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 22,
+          text: "/agents",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.reply).toContain("Telegram Controller");
+    expect(res.reply).toContain("@telegram_controller");
+    expect(res.reply).toContain(agentId);
   });
 
   test("saves confirmed project memory from /learn", async () => {

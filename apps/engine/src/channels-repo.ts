@@ -7,9 +7,11 @@ import {
   approveAgentTask,
   cancelAgentTask,
   getRunUnified,
+  listAgentRows,
   pauseAgentTask,
   rejectAgentTask,
   resumeAgentTask,
+  runAgent,
 } from "./agents-repo";
 import {
   createProjectTask,
@@ -24,6 +26,7 @@ const { channelConnections, channelIdentities, channelMessages } = schema;
 
 type ChannelConnectionRow = typeof channelConnections.$inferSelect;
 type ChannelIdentityRow = typeof channelIdentities.$inferSelect;
+type AgentListRow = Awaited<ReturnType<typeof listAgentRows>>[number];
 
 export interface TelegramUpdate {
   update_id?: number;
@@ -51,9 +54,14 @@ interface TelegramMessage {
 export type TelegramCommand =
   | { kind: "help" }
   | { kind: "pair"; code: string }
+  | { kind: "agents" }
   | { kind: "projects" }
   | { kind: "tasks"; projectId?: string }
   | { kind: "run"; projectId: string; agentId?: string; title: string }
+  | { kind: "runAgent"; agentId: string; input: string }
+  | { kind: "runAgentHandle"; handle: string; input: string }
+  | { kind: "runTask"; taskId: string; instruction?: string }
+  | { kind: "runHelp"; text?: string }
   | { kind: "status"; runId: string }
   | { kind: "kill"; runId: string }
   | { kind: "pause"; runId: string; reason?: string }
@@ -97,14 +105,29 @@ function cleanArg(value: string) {
     .trim();
 }
 
+function normalizeAgentHandle(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function agentHandle(agent: { id: string; name: string }) {
+  return normalizeAgentHandle(agent.name).slice(0, 40) || agent.id;
+}
+
 export function parseTelegramCommand(text: string): TelegramCommand {
   const clean = text.trim();
   if (!clean || clean === "/help") return { kind: "help" };
   const start = clean.match(/^\/start(?:\s+(.+))?$/);
   if (start) return { kind: "pair", code: (start[1] ?? "").trim() };
   if (clean === "/projects") return { kind: "projects" };
+  if (clean === "/agents") return { kind: "agents" };
   const tasks = clean.match(/^\/tasks(?:\s+project:([^\s]+))?$/);
   if (tasks) return { kind: "tasks", projectId: tasks[1] };
+  if (clean === "/run") return { kind: "runHelp" };
   const status = clean.match(/^\/status\s+([^\s]+)$/);
   if (status?.[1]) return { kind: "status", runId: status[1] };
   const kill = clean.match(/^\/kill\s+([^\s]+)$/);
@@ -144,6 +167,38 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       projectId: learn[1],
       content: cleanArg(learn[2] ?? ""),
     };
+  const runTask = clean.match(/^\/run\s+task:([^\s]+)(?:\s+([\s\S]+))?$/);
+  if (runTask?.[1]) {
+    return {
+      kind: "runTask",
+      taskId: runTask[1],
+      instruction: runTask[2] ? cleanArg(runTask[2]) : undefined,
+    };
+  }
+  const runAgentMatch = clean.match(/^\/run\s+agent:([^\s]+)\s+([\s\S]+)$/);
+  if (runAgentMatch?.[1]) {
+    return {
+      kind: "runAgent",
+      agentId: runAgentMatch[1],
+      input: cleanArg(runAgentMatch[2] ?? ""),
+    };
+  }
+  const runAgentHandleMatch = clean.match(/^\/run\s+@([a-zA-Z0-9_]+)\s+([\s\S]+)$/);
+  if (runAgentHandleMatch?.[1]) {
+    return {
+      kind: "runAgentHandle",
+      handle: normalizeAgentHandle(runAgentHandleMatch[1]),
+      input: cleanArg(runAgentHandleMatch[2] ?? ""),
+    };
+  }
+  const directAgentHandleMatch = clean.match(/^@([a-zA-Z0-9_]+)\s+([\s\S]+)$/);
+  if (directAgentHandleMatch?.[1]) {
+    return {
+      kind: "runAgentHandle",
+      handle: normalizeAgentHandle(directAgentHandleMatch[1]),
+      input: cleanArg(directAgentHandleMatch[2] ?? ""),
+    };
+  }
   const run = clean.match(
     /^\/run\s+project:([^\s]+)(?:\s+agent:([^\s]+))?\s+([\s\S]+)$/,
   );
@@ -154,6 +209,9 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       agentId: run[2],
       title: cleanArg(run[3] ?? ""),
     };
+  }
+  if (/\b(agent|agents|lance|lancer|lances|run|ex[eé]cute|start)\b/i.test(clean)) {
+    return { kind: "runHelp", text: clean };
   }
   return { kind: "unknown", text: clean };
 }
@@ -205,6 +263,7 @@ export async function listChannelConnections(teamId: string) {
     webhookSecret: row.webhookSecret,
     webhookPath: `/api/v1/channels/telegram/${row.webhookSecret}/webhook`,
     pairingCode: row.pairingCode,
+    botUsername: row.botUsername,
     botTokenConfigured: Boolean(row.botTokenEncrypted),
     identityCount: identities.filter(
       (identity) => identity.connectionId === row.id,
@@ -263,7 +322,12 @@ export async function registerTelegramWebhook(
 
   await db
     .update(channelConnections)
-    .set({ status: "active", transport: "webhook", updatedAt: sql`now()` })
+    .set({
+      status: "active",
+      transport: "webhook",
+      botUsername: me.result?.username ?? null,
+      updatedAt: sql`now()`,
+    })
     .where(eq(channelConnections.id, connection.id));
   return { ok: true, url, botUsername: me.result?.username };
 }
@@ -293,7 +357,12 @@ export async function useTelegramPolling(
   await telegramCall(token, "deleteWebhook", { drop_pending_updates: false });
   await db
     .update(channelConnections)
-    .set({ status: "active", transport: "polling", updatedAt: sql`now()` })
+    .set({
+      status: "active",
+      transport: "polling",
+      botUsername: me.result?.username ?? null,
+      updatedAt: sql`now()`,
+    })
     .where(eq(channelConnections.id, connection.id));
   return { ok: true, botUsername: me.result?.username };
 }
@@ -307,12 +376,14 @@ export async function createTelegramConnection(
   | { error: string }
 > {
   const botToken = input.botToken?.trim();
+  let botUsername: string | null = null;
 
   // Fail fast on a bad token (Telegram's "Invalid bot passed." / "Unauthorized")
   // instead of storing a dead connection the user later can't make work.
   if (botToken) {
-    const me = await telegramCall(botToken, "getMe");
+    const me = await telegramCall<{ username?: string }>(botToken, "getMe");
     if (!me?.ok) return { error: me?.description ?? "Invalid bot token (getMe failed)." };
+    botUsername = me.result?.username ?? null;
     // Clear any stale webhook so the default polling transport can use getUpdates.
     await telegramCall(botToken, "deleteWebhook", { drop_pending_updates: false });
   }
@@ -326,6 +397,7 @@ export async function createTelegramConnection(
       label: input.label?.trim() || "Telegram",
       status: botToken ? "active" : "setup",
       botTokenEncrypted: botToken ? encryptJson({ token: botToken }) : null,
+      botUsername,
       transport: "polling",
       webhookSecret: randomToken(24),
       pairingCode: randomToken(6),
@@ -419,8 +491,12 @@ function helpText(connection: ChannelConnectionRow) {
     "Agentik Telegram control",
     `Pair: /start ${connection.pairingCode}`,
     "/projects",
+    "/agents",
     "/tasks project:<projectId>",
-    '/run project:<projectId> "Task title"',
+    '/run task:<taskId> ["extra instruction"]',
+    '/run @agent_handle "Prompt"',
+    '/run agent:<agentId> "Prompt"',
+    '/run project:<projectId> [agent:<agentId>] "Task title"',
     "/status <runId>",
     "/pause <runId>",
     "/resume <runId>",
@@ -429,6 +505,61 @@ function helpText(connection: ChannelConnectionRow) {
     "/kill <runId>",
     '/learn project:<projectId> "confirmed project memory"',
   ].join("\n");
+}
+
+async function runHelpText(teamId: string, intro?: string) {
+  const [agents, projects] = await Promise.all([
+    listAgentRows(teamId),
+    listProjects(teamId),
+  ]);
+  const lines = [
+    intro ?? "I can start an existing project task or a published agent.",
+    "",
+    "Fast paths:",
+    '/run task:<taskId> "optional extra instruction"',
+    '/run @agent_handle "what should the agent do?"',
+    '/run agent:<agentId> "what should the agent do?"',
+    '/run project:<projectId> "new task title"',
+  ];
+  if (agents.length) {
+    lines.push(
+      "",
+      "Agents:",
+      ...agents
+        .slice(0, 6)
+        .map((agent) => `${agent.name} · @${agentHandle(agent)} · ${agent.id} · ${agent.health}`),
+    );
+  }
+  if (projects.length) {
+    lines.push(
+      "",
+      "Projects:",
+      ...projects
+        .slice(0, 6)
+        .map((project) => `${project.name} · ${project.id} · ${project.openTaskCount} open`),
+    );
+  }
+  lines.push("", "Use /tasks to list open task ids.");
+  return lines.join("\n");
+}
+
+async function resolveAgentHandle(
+  teamId: string,
+  handle: string,
+): Promise<
+  | { agent: AgentListRow }
+  | { error: "ambiguous" | "not_found"; agents: AgentListRow[] }
+> {
+  const normalized = normalizeAgentHandle(handle);
+  const agents = await listAgentRows(teamId);
+  const matches = agents.filter(
+    (agent) =>
+      normalizeAgentHandle(agent.id) === normalized ||
+      agentHandle(agent) === normalized,
+  );
+  if (matches.length === 1) return { agent: matches[0]! };
+  if (matches.length > 1) return { error: "ambiguous" as const, agents: matches };
+  return { error: "not_found" as const, agents };
 }
 
 async function webRunUrl(teamId: string, runId: string) {
@@ -451,6 +582,20 @@ async function executeCommand(
       return { ok: true, reply: helpText(connection) };
     case "pair":
       return { ok: true, reply: "This chat is already paired." };
+    case "agents": {
+      const agents = await listAgentRows(connection.teamId);
+      if (!agents.length) return { ok: true, reply: "No agents yet." };
+      return {
+        ok: true,
+        reply: agents
+          .slice(0, 10)
+          .map(
+            (agent) =>
+              `${agent.name}\n@${agentHandle(agent)} · ${agent.id} · ${agent.health} · ${agent.model}`,
+          )
+          .join("\n\n"),
+      };
+    }
     case "projects": {
       const projects = await listProjects(connection.teamId);
       if (!projects.length) return { ok: true, reply: "No projects yet." };
@@ -541,6 +686,96 @@ async function executeCommand(
         projectTaskId: projectTask.id,
       };
     }
+    case "runAgent": {
+      if (!command.input)
+        return {
+          ok: false,
+          reply: 'Usage: /run agent:<agentId> "what should the agent do?"',
+        };
+      const run = await runAgent(connection.teamId, command.agentId, command.input);
+      if (!run) return { ok: false, reply: "Agent not found." };
+      if ("error" in run)
+        return {
+          ok: false,
+          reply:
+            run.error === "not_published"
+              ? "This agent is not published yet."
+              : `Could not start agent: ${run.error}`,
+        };
+      return {
+        ok: true,
+        reply: `Agent run started\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        runId: run.runId,
+      };
+    }
+    case "runAgentHandle": {
+      if (!command.input)
+        return {
+          ok: false,
+          reply: 'Usage: /run @agent_handle "what should the agent do?"',
+        };
+      const resolved = await resolveAgentHandle(connection.teamId, command.handle);
+      if ("error" in resolved) {
+        if (resolved.error === "ambiguous") {
+          return {
+            ok: false,
+            reply: [
+              `Several agents match @${command.handle}. Use one id explicitly:`,
+              ...resolved.agents.map((agent) => `${agent.name} · ${agent.id}`),
+            ].join("\n"),
+          };
+        }
+        return {
+          ok: false,
+          reply: `No agent found for @${command.handle}.\nUse /agents to list available handles.`,
+        };
+      }
+      const run = await runAgent(connection.teamId, resolved.agent.id, command.input);
+      if (!run) return { ok: false, reply: "Agent not found." };
+      if ("error" in run)
+        return {
+          ok: false,
+          reply:
+            run.error === "not_published"
+              ? "This agent is not published yet."
+              : `Could not start agent: ${run.error}`,
+        };
+      return {
+        ok: true,
+        reply: `Agent run started\nAgent: ${resolved.agent.name}\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        runId: run.runId,
+      };
+    }
+    case "runTask": {
+      const run = await runProjectTask(
+        connection.teamId,
+        command.taskId,
+        command.instruction,
+      );
+      if ("error" in run) {
+        return {
+          ok: false,
+          reply: `Could not start task: ${run.error}\nUse /tasks to list open task ids.`,
+          projectTaskId: command.taskId,
+        };
+      }
+      return {
+        ok: true,
+        reply: `Task run started\nTask: ${command.taskId}\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        runId: run.runId,
+        projectTaskId: command.taskId,
+      };
+    }
+    case "runHelp":
+      return {
+        ok: true,
+        reply: await runHelpText(
+          connection.teamId,
+          command.text
+            ? "I do not run free-form chat yet. Use one of these explicit commands."
+            : undefined,
+        ),
+      };
     case "status": {
       const detail = await getRunUnified(connection.teamId, command.runId);
       if (!detail)

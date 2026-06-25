@@ -17,8 +17,11 @@ const {
   agents,
   daemons,
   runtimes,
+  chatSessions,
   agentTasks,
   taskMessages,
+  memoryEntries,
+  runReviews,
   runs,
   runSteps,
   workflows,
@@ -30,6 +33,10 @@ const {
 
 type AgentRowDb = typeof agents.$inferSelect;
 type TaskRowDb = typeof agentTasks.$inferSelect;
+type AgentStatsTaskRow = Pick<
+  TaskRowDb,
+  "agentId" | "status" | "durationMs" | "createdAt"
+>;
 type MsgRowDb = typeof taskMessages.$inferSelect;
 type RunRowDb = typeof runs.$inferSelect;
 
@@ -752,6 +759,47 @@ function agentModel(a: AgentRowDb): string {
   return cfg?.model?.model ?? a.runtimeKind;
 }
 
+function toAgentRow(a: AgentRowDb, tasks: AgentStatsTaskRow[]) {
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+  const mine = tasks.filter((t) => t.agentId === a.id);
+  const completed = mine.filter((t) => t.status === "completed");
+  const failed = mine.filter((t) => t.status === "failed");
+  const finished = completed.length + failed.length;
+  const durations = completed
+    .map((t) => t.durationMs ?? 0)
+    .filter((d) => d > 0);
+  const lastRunAt = mine.reduce<string | null>(
+    (max, t) => (!max || t.createdAt > max ? t.createdAt : max),
+    null,
+  );
+  return {
+    id: a.id,
+    teamId: a.teamId,
+    name: a.name,
+    role: a.role,
+    goal: a.goal,
+    description: a.description ?? undefined,
+    tags: a.tags,
+    owner: "usr_system",
+    health: a.health,
+    liveVersionId: a.liveVersionId,
+    draftVersionId: a.draftVersionId,
+    stats: {
+      lastRunAt,
+      successRate: finished ? completed.length / finished : 0,
+      avgLatencyMs: durations.length
+        ? Math.round(durations.reduce((s, d) => s + d, 0) / durations.length)
+        : 0,
+      avgCost: { amountCents: 0, currency: "USD" as const },
+      runs24h: mine.filter((t) => t.createdAt >= dayAgo).length,
+    },
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+    createdBy: "usr_system",
+    model: agentModel(a),
+  };
+}
+
 export async function listAgentRows(teamId: string) {
   await ensureDevAgents(teamId);
   const rows = await db
@@ -769,46 +817,31 @@ export async function listAgentRows(teamId: string) {
     .from(agentTasks)
     .where(eq(agentTasks.teamId, teamId));
 
-  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
   return rows.map((a) => {
-    const mine = tasks.filter((t) => t.agentId === a.id);
-    const completed = mine.filter((t) => t.status === "completed");
-    const failed = mine.filter((t) => t.status === "failed");
-    const finished = completed.length + failed.length;
-    const durations = completed
-      .map((t) => t.durationMs ?? 0)
-      .filter((d) => d > 0);
-    const lastRunAt = mine.reduce<string | null>(
-      (max, t) => (!max || t.createdAt > max ? t.createdAt : max),
-      null,
-    );
-    return {
-      id: a.id,
-      teamId: a.teamId,
-      name: a.name,
-      role: a.role,
-      goal: a.goal,
-      description: a.description ?? undefined,
-      tags: a.tags,
-      owner: "usr_system",
-      health: a.health,
-      liveVersionId: a.liveVersionId,
-      draftVersionId: a.draftVersionId,
-      stats: {
-        lastRunAt,
-        successRate: finished ? completed.length / finished : 0,
-        avgLatencyMs: durations.length
-          ? Math.round(durations.reduce((s, d) => s + d, 0) / durations.length)
-          : 0,
-        avgCost: { amountCents: 0, currency: "USD" as const },
-        runs24h: mine.filter((t) => t.createdAt >= dayAgo).length,
-      },
-      createdAt: a.createdAt,
-      updatedAt: a.updatedAt,
-      createdBy: "usr_system",
-      model: agentModel(a),
-    };
+    return toAgentRow(a, tasks);
   });
+}
+
+export async function getAgentRow(teamId: string, agentId: string) {
+  await ensureDevAgents(teamId);
+  const [row] = await db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
+    .limit(1);
+  if (!row) return null;
+  const tasks = await db
+    .select({
+      agentId: agentTasks.agentId,
+      status: agentTasks.status,
+      durationMs: agentTasks.durationMs,
+      createdAt: agentTasks.createdAt,
+    })
+    .from(agentTasks)
+    .where(
+      and(eq(agentTasks.teamId, teamId), eq(agentTasks.agentId, agentId)),
+    );
+  return toAgentRow(row, tasks);
 }
 
 /** Single aggregate that backs live agent presence (availability × workload). */
@@ -1039,6 +1072,62 @@ export async function createAgent(
     health: "idle",
   });
   return { id, draftVersionId };
+}
+
+export async function deleteAgent(teamId: string, agentId: string) {
+  const [agent] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
+    .limit(1);
+  if (!agent) return false;
+
+  const taskRows = await db
+    .select({ id: agentTasks.id })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.teamId, teamId), eq(agentTasks.agentId, agent.id)));
+  const taskIds = taskRows.map((r) => r.id);
+  if (taskIds.length > 0) {
+    await db.delete(runReviews).where(
+      and(
+        eq(runReviews.teamId, teamId),
+        inArray(runReviews.runId, taskIds),
+      ),
+    );
+    await db.delete(taskMessages).where(inArray(taskMessages.taskId, taskIds));
+    await db
+      .delete(agentTasks)
+      .where(and(eq(agentTasks.teamId, teamId), eq(agentTasks.agentId, agent.id)));
+  }
+
+  await db
+    .update(projectTasks)
+    .set({ assignedAgentId: null })
+    .where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.assignedAgentId, agent.id)));
+
+  await db
+    .delete(chatSessions)
+    .where(and(eq(chatSessions.teamId, teamId), eq(chatSessions.agentId, agent.id)));
+
+  await db
+    .update(projects)
+    .set({ leadAgentId: null })
+    .where(and(eq(projects.teamId, teamId), eq(projects.leadAgentId, agent.id)));
+
+  await db
+    .delete(memoryEntries)
+    .where(
+      and(
+        eq(memoryEntries.teamId, teamId),
+        eq(memoryEntries.scope, "agent"),
+        eq(memoryEntries.targetId, agent.id),
+      ),
+    );
+
+  await db
+    .delete(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agent.id)));
+  return true;
 }
 
 /** Map the web's free-form config jsonb onto an immutable version's typed fields. */

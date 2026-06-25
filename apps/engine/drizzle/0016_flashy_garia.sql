@@ -1,0 +1,1 @@
+ALTER TABLE "channel_connections" ADD COLUMN "bot_username" text;

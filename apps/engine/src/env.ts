@@ -12,6 +12,8 @@ const schema = z.object({
   ENGINE_PUBLIC_URL: z.string().url().default("http://localhost:8787"),
   /** Public base URL of the web app — where the OAuth popup returns. */
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3333"),
+  /** Telegram polling cadence in ms. Lower values make local bots feel instant. */
+  TELEGRAM_POLL_INTERVAL_MS: z.coerce.number().int().min(250).default(500),
   /** Default Google OAuth2 app credentials (used unless a credential overrides). */
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),

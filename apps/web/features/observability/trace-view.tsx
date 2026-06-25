@@ -14,8 +14,6 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatDuration, formatMoney, formatTokens, formatNumber } from "@/lib/format";
 import type { Span } from "@/types/observability";
 
-const STATUS_MAP: Record<string, string> = { ok: "succeeded", error: "failed", unset: "running" };
-
 function Fact({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
   return (
     <div className="flex flex-col">
@@ -67,7 +65,7 @@ export function TraceView({ team, traceId }: { team: string; traceId: string }) 
         title={
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-base break-all">{trace.traceId}</span>
-            <StatusBadge status={STATUS_MAP[trace.status] ?? trace.status} size="sm" />
+            <StatusBadge status={trace.runStatus} size="sm" />
           </span>
         }
         back={back}

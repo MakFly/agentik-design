@@ -4,21 +4,33 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryState } from "nuqs";
-import { Plus, Bot, Filter, LayoutList, ShieldAlert } from "lucide-react";
+import { Bot, Filter, LayoutList, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/shared/data-table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RbacGate } from "@/lib/auth/rbac";
-import { useAgents, useAgentTaskSnapshot } from "./api";
+import { useAgents, useAgentTaskSnapshot, useDeleteAgent } from "./api";
 import type { AgentRow } from "./types";
 import { derivePresence, type AgentTaskSnapshot, type Availability } from "@/lib/agents/presence";
 import { formatRelativeTime, formatDuration, formatPercent, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TemplatesButton } from "./agent-templates-dialog";
+import { toast } from "sonner";
 
 const DOT: Record<Availability, string> = {
   online: "bg-success",
@@ -45,6 +57,61 @@ function PresenceCell({ agentId, snapshot }: { agentId: string; snapshot?: Agent
       <span className={cn("size-2 shrink-0 rounded-full", DOT[p.availability])} title={p.availability} aria-label={p.availability} />
       <span className="text-xs text-muted-foreground tabular-nums">{label}</span>
     </div>
+  );
+}
+
+function DeleteAgentDialog({ team, agent }: { team: string; agent: AgentRow }) {
+  const deleteAgent = useDeleteAgent(team);
+
+  return (
+    <RbacGate permission="agent:delete">
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5"
+            onClick={(event) => event.stopPropagation()}
+            disabled={deleteAgent.isPending}
+            aria-label={`Delete ${agent.name}`}
+          >
+            <Trash2 className="size-4 text-destructive" />
+            <span className="ml-1">Delete</span>
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete agent</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete <strong>{agent.name}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel asChild>
+              <Button variant="outline" size="sm">
+                Cancel
+              </Button>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/40"
+              disabled={deleteAgent.isPending}
+              onClick={async (event) => {
+                event.stopPropagation();
+                try {
+                  await deleteAgent.mutateAsync(agent.id);
+                  toast.success(`Deleted ${agent.name}`);
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not delete agent");
+                  throw error;
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </RbacGate>
   );
 }
 
@@ -178,8 +245,15 @@ export function AgentsTable({ team }: { team: string }) {
       header: "Presence",
       cell: ({ row }) => <PresenceCell agentId={row.original.id} snapshot={snapshot} />,
     };
-    return [columns[0]!, presence, ...columns.slice(1)];
-  }, [snapshot]);
+    const actions: ColumnDef<AgentRow> = {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => (
+        <DeleteAgentDialog team={team} agent={row.original} />
+      ),
+    };
+    return [columns[0]!, presence, ...columns.slice(1), actions];
+  }, [snapshot, team]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

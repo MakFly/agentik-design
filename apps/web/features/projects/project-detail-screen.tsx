@@ -804,6 +804,8 @@ function PanelHeader({
 }
 
 function ProjectChannelCard({ channel }: { channel: ChannelConnection }) {
+  const startUrl = telegramStartUrl(channel);
+
   return (
     <div className="rounded-md border border-border bg-background px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
@@ -830,9 +832,25 @@ function ProjectChannelCard({ channel }: { channel: ChannelConnection }) {
       <div className="mt-2 flex items-center gap-2 rounded bg-surface-2 px-2 py-1 font-mono text-xs text-muted-foreground">
         <KeyRound className="size-3.5 shrink-0" />
         /start {channel.pairingCode}
+        {startUrl ? (
+          <a
+            href={startUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto inline-flex shrink-0 items-center gap-1 font-sans text-foreground hover:underline"
+          >
+            Open
+            <ExternalLink className="size-3" />
+          </a>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function telegramStartUrl(channel: Pick<ChannelConnection, "botUsername" | "pairingCode">) {
+  if (!channel.botUsername) return null;
+  return `https://t.me/${channel.botUsername}?start=${encodeURIComponent(channel.pairingCode)}`;
 }
 
 function CreateTaskDialog({

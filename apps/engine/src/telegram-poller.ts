@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { listPollableConnections, pollTelegramConnection } from "./channels-repo";
+import { env } from "./env";
 
 /**
  * Long-polling driver for Telegram channels (OpenClaw/Hermes-style). This is the
@@ -14,7 +15,7 @@ import { listPollableConnections, pollTelegramConnection } from "./channels-repo
 
 /** Stable key (distinct from the task-scanner's) so every instance contends for the same lock. */
 export const TELEGRAM_POLL_LOCK_KEY = 4242420002;
-const TICK_MS = 2_000;
+const TICK_MS = env.TELEGRAM_POLL_INTERVAL_MS;
 
 export interface PollTickResult {
   skipped: boolean; // another instance held the lock
@@ -43,7 +44,7 @@ export async function pollTelegramOnce(): Promise<PollTickResult> {
 /** Start the periodic poller. Returns a stop() to clear the interval. */
 export function startTelegramPolling(): () => void {
   let running = false;
-  const timer = setInterval(() => {
+  const tick = () => {
     if (running) return; // never overlap ticks — a slow getUpdates must not stack
     running = true;
     void pollTelegramOnce()
@@ -51,8 +52,10 @@ export function startTelegramPolling(): () => void {
       .finally(() => {
         running = false;
       });
-  }, TICK_MS);
+  };
+  const timer = setInterval(tick, TICK_MS);
   if (typeof timer === "object" && "unref" in timer) timer.unref();
-  console.log("[telegram-poll] started (tick every 2s)");
+  tick();
+  console.log(`[telegram-poll] started (tick every ${TICK_MS}ms)`);
   return () => clearInterval(timer);
 }

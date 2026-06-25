@@ -12,7 +12,6 @@ import { PillGroup, type PillOption } from "./time-range";
 import type { TraceSummary } from "@/types/observability";
 import { formatRelativeTime, formatDuration, formatMoney, formatTokens, formatNumber } from "@/lib/format";
 
-const STATUS_MAP: Record<string, string> = { ok: "succeeded", error: "failed", unset: "running" };
 const STATUS_FILTERS: PillOption[] = [
   { value: "all", label: "All" },
   { value: "ok", label: "OK" },
@@ -31,7 +30,7 @@ const columns: ColumnDef<TraceSummary>[] = [
       </div>
     ),
   },
-  { accessorKey: "status", header: "Status", cell: ({ row }) => <StatusBadge status={STATUS_MAP[row.original.status] ?? row.original.status} size="sm" /> },
+  { accessorKey: "runStatus", header: "Status", cell: ({ row }) => <StatusBadge status={row.original.runStatus} size="sm" /> },
   { accessorKey: "env", header: "Env", cell: ({ row }) => <span className="text-muted-foreground capitalize">{row.original.env}</span> },
   {
     id: "started",

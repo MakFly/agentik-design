@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  ExternalLink,
   FolderKanban,
   GitBranch,
   KeyRound,
@@ -41,7 +42,9 @@ const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
 ]);
 const TELEGRAM_COMMANDS = [
   "/projects",
-  "/run <task>",
+  "/agents",
+  "/run task:<id>",
+  "/run @agent",
   "/approve <run>",
   "/learn <note>",
 ];
@@ -197,6 +200,7 @@ export function CommandCenterScreen({ team }: { team: string }) {
                 connected={connectedChannels.length}
                 total={channels.length}
                 pairingCode={channels[0]?.pairingCode}
+                botUsername={channels[0]?.botUsername}
               />
             </aside>
           </div>
@@ -403,12 +407,19 @@ function TelegramPanel({
   connected,
   total,
   pairingCode,
+  botUsername,
 }: {
   team: string;
   connected: number;
   total: number;
   pairingCode?: string;
+  botUsername?: string | null;
 }) {
+  const startUrl =
+    botUsername && pairingCode
+      ? `https://t.me/${botUsername}?start=${encodeURIComponent(pairingCode)}`
+      : null;
+
   return (
     <section className="rounded-lg border border-border bg-card p-4">
       <SectionHeader
@@ -425,9 +436,21 @@ function TelegramPanel({
             />
             Pairing
           </span>
-          <span className="font-mono text-sm">
-            {pairingCode ?? "not configured"}
-          </span>
+          {startUrl ? (
+            <a
+              href={startUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-w-0 items-center gap-1 font-mono text-sm hover:underline"
+            >
+              <span className="truncate">{pairingCode}</span>
+              <ExternalLink className="size-3.5 shrink-0" />
+            </a>
+          ) : (
+            <span className="font-mono text-sm">
+              {pairingCode ?? "not configured"}
+            </span>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {TELEGRAM_COMMANDS.map((command) => (

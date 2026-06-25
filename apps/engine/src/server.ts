@@ -43,7 +43,9 @@ import {
   createTestTask,
   getAgentTaskName,
   getAgentTaskStatus,
+  deleteAgent,
   getAgentTaskSnapshot,
+  getAgentRow,
   getRunUnified,
   getSystemInfo,
   listAgentRows,
@@ -309,6 +311,18 @@ api.get("/oauth/google/callback", async (c) => {
 api.get("/agents", async (c) => {
   const items = await listAgentRows(c.get("teamId"));
   return c.json({ items, nextCursor: null, total: items.length });
+});
+
+api.get("/agents/:id", async (c) => {
+  const agent = await getAgentRow(c.get("teamId"), c.req.param("id"));
+  if (!agent) return c.json({ error: "not_found" }, 404);
+  return c.json(agent);
+});
+
+api.delete("/agents/:id", requirePermission("agent:delete"), async (c) => {
+  const ok = await deleteAgent(c.get("teamId"), c.req.param("id"));
+  if (!ok) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true });
 });
 
 api.get("/agent-task-snapshot", async (c) => {

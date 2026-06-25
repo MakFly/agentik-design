@@ -46,6 +46,7 @@ interface TraceSummary {
   rootName: string;
   rootService: string;
   status: SpanStatusCode;
+  runStatus: WebRunStatus;
   env: "dev" | "staging" | "prod";
   startedAt: string;
   durationMs: number;
@@ -279,6 +280,7 @@ export async function getTrace(teamId: string, id: string): Promise<{ trace: Tra
     rootName: run.subjectName || (run.subject.kind === "agent" ? "agent.task" : "workflow.run"),
     rootService,
     status: runStatusToSpan(run.status),
+    runStatus: run.status,
     env: run.env,
     startedAt: run.startedAt,
     durationMs: totalMs,
@@ -307,6 +309,7 @@ function shallowSummary(run: PRun): TraceSummary {
     rootName: run.subjectName || (run.subject.kind === "agent" ? "agent.task" : "workflow.run"),
     rootService: run.subjectName || run.subject.kind,
     status,
+    runStatus: run.status,
     env: run.env,
     startedAt: run.startedAt,
     durationMs: runDuration(run),

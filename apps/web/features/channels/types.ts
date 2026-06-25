@@ -12,6 +12,7 @@ export interface ChannelConnection {
   webhookSecret: string;
   webhookPath: string;
   pairingCode: string;
+  botUsername: string | null;
   botTokenConfigured: boolean;
   identityCount: number;
   createdAt: string;

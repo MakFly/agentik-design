@@ -7,7 +7,7 @@
  * `app/api/v1/observability/*` (see lib/observability/trace-data.ts).
  */
 
-import type { Env, ISODate, TokenUsage } from "@/types/domain";
+import type { Env, ISODate, RunStatus, TokenUsage } from "@/types/domain";
 
 export type TraceId = string;
 export type SpanId = string;
@@ -69,7 +69,10 @@ export interface TraceSummary {
   traceId: TraceId;
   rootName: string;
   rootService: string;
+  /** OTel-collapsed code, used for the OK/Errors filter and span coloring. */
   status: SpanStatusCode;
+  /** True run lifecycle status (running/cancelled/queued/…), used for the badge. */
+  runStatus: RunStatus;
   env: Env;
   startedAt: ISODate;
   durationMs: number;

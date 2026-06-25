@@ -1,7 +1,18 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { RadioTower, Plus, Send, ShieldCheck, Webhook, Trash2, BookOpen, Link2, Radio } from "lucide-react";
+import {
+  BookOpen,
+  ExternalLink,
+  Link2,
+  Plus,
+  Radio,
+  RadioTower,
+  Send,
+  ShieldCheck,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -77,6 +88,8 @@ export function ChannelsScreen({ team }: { team: string }) {
 }
 
 function ChannelCard({ connection, team }: { connection: ChannelConnection; team: string }) {
+  const startCommand = `/start ${connection.pairingCode}`;
+  const startUrl = telegramStartUrl(connection);
   const webhookUrl = useMemo(() => {
     if (typeof window === "undefined") return connection.webhookPath;
     return `${window.location.origin}${connection.webhookPath}`;
@@ -109,13 +122,30 @@ function ChannelCard({ connection, team }: { connection: ChannelConnection; team
         </div>
 
         <section className="flex flex-col gap-2 rounded-md border border-border bg-background p-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <ShieldCheck className="size-4 text-muted-foreground" />
-            Pairing
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <ShieldCheck className="size-4 text-muted-foreground" />
+              Pairing
+            </div>
+            {connection.botUsername ? (
+              <span className="text-xs text-muted-foreground">@{connection.botUsername}</span>
+            ) : null}
           </div>
           <code className="overflow-x-auto rounded-md bg-surface-2 px-3 py-2 font-mono text-xs">
-            /start {connection.pairingCode}
+            {startCommand}
           </code>
+          {startUrl ? (
+            <Button asChild variant="outline" size="sm" className="w-fit">
+              <a href={startUrl} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-4" />
+                Open bot with code
+              </a>
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Send this command directly to the bot connected by this token.
+            </p>
+          )}
         </section>
 
         {connection.transport === "polling" ? (
@@ -144,8 +174,11 @@ function ChannelCard({ connection, team }: { connection: ChannelConnection; team
         <div className="flex flex-wrap gap-2">
           {[
             "/projects",
+            "/agents",
             "/tasks project:<id>",
-            "/run project:<id> \"Task\"",
+            "/run task:<id>",
+            "/run @agent \"Prompt\"",
+            "/run agent:<id> \"Prompt\"",
             "/status <runId>",
             "/kill <runId>",
             "/learn project:<id> \"Memory\"",
@@ -167,6 +200,11 @@ function ChannelCard({ connection, team }: { connection: ChannelConnection; team
       </CardContent>
     </Card>
   );
+}
+
+function telegramStartUrl(connection: Pick<ChannelConnection, "botUsername" | "pairingCode">) {
+  if (!connection.botUsername) return null;
+  return `https://t.me/${connection.botUsername}?start=${encodeURIComponent(connection.pairingCode)}`;
 }
 
 function TransportBadge({ transport }: { transport: ChannelConnection["transport"] }) {
@@ -421,9 +459,10 @@ function SetupGuideDialog() {
       title: "Pair your chat",
       body: (
         <>
-          In Telegram, send <code>/start &lt;pairing code&gt;</code> (shown on the card) to your bot.
-          Commands are ignored until a chat is paired. Then try <code>/help</code> or{" "}
-          <code>/projects</code>.
+          Use <strong>Open bot with code</strong> on the channel card. It opens the correct Telegram
+          bot with the start payload already attached. If Telegram only opens the chat, send the shown{" "}
+          <code>/start &lt;pairing code&gt;</code> command there. Commands are ignored until a chat is
+          paired.
         </>
       ),
     },

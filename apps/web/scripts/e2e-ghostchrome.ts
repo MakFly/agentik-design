@@ -9,12 +9,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const ghostchrome =
   process.env.GHOSTCHROME_BIN ??
   "/home/kev/Documents/lab/tools/ghostchrome/ghostchrome";
-const engineUrl = process.env.E2E_ENGINE_URL ?? "http://127.0.0.1:18787";
-const webUrl = process.env.E2E_WEB_URL ?? "http://127.0.0.1:13333";
+const engineUrl = process.env.E2E_ENGINE_URL ?? "http://localhost:8787";
+const webUrl = process.env.E2E_WEB_URL ?? "http://localhost:3333";
 const session = `agentik-e2e-${Date.now()}`;
 const debug = process.env.E2E_DEBUG === "1";
 
 const children: ManagedProcess[] = [];
+const processLogs = new Map<ManagedProcess, { label: string; lines: string[] }>();
 
 function log(message: string) {
   console.log(`[e2e] ${message}`);
@@ -23,10 +24,22 @@ function log(message: string) {
 async function drain(
   stream: Readable | null,
   label: string,
+  owner: ManagedProcess,
 ) {
   if (!stream) return;
   for await (const chunk of stream) {
-    if (debug) process.stdout.write(`[${label}] ${chunk.toString()}`);
+    const text = chunk.toString();
+    const record = processLogs.get(owner);
+    if (record) {
+      record.lines.push(
+        ...text
+          .split(/\r?\n/)
+          .map((line: string) => line.trim())
+          .filter(Boolean),
+      );
+      record.lines = record.lines.slice(-30);
+    }
+    if (debug) process.stdout.write(`[${label}] ${text}`);
   }
 }
 
@@ -41,8 +54,9 @@ function spawnManaged(
     stdio: ["ignore", "pipe", "pipe"],
   });
   children.push(child);
-  void drain(child.stdout, label);
-  void drain(child.stderr, `${label}:err`);
+  processLogs.set(child, { label, lines: [] });
+  void drain(child.stdout, label, child);
+  void drain(child.stderr, `${label}:err`, child);
   return child;
 }
 
@@ -54,6 +68,13 @@ async function waitForUrl(url: string, label: string, timeoutMs = 120_000) {
   const started = Date.now();
   let lastError = "";
   while (Date.now() - started < timeoutMs) {
+    const exited = children.find((child) => child.exitCode !== null);
+    if (exited) {
+      const record = processLogs.get(exited);
+      throw new Error(
+        `${record?.label ?? "server"} exited while waiting for ${label}\n${record?.lines.join("\n") ?? ""}`,
+      );
+    }
     try {
       const res = await fetch(url);
       if (res.ok) return;
@@ -63,7 +84,23 @@ async function waitForUrl(url: string, label: string, timeoutMs = 120_000) {
     }
     await sleep(500);
   }
-  throw new Error(`${label} did not become ready: ${lastError}`);
+  const logs = [...processLogs.values()]
+    .map((record) => `-- ${record.label} --\n${record.lines.join("\n")}`)
+    .join("\n");
+  throw new Error(`${label} did not become ready: ${lastError}\n${logs}`);
+}
+
+async function urlOk(url: string) {
+  try {
+    const res = await fetch(url);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function portFromUrl(url: string) {
+  return new URL(url).port;
 }
 
 async function run(
@@ -111,10 +148,11 @@ function parseJson(stdout: string) {
 }
 
 async function gcEval<T>(expression: string, url?: string): Promise<T> {
-  const args = ["--format", "json", "-s", session, "eval", expression];
+  const serialized = `(async () => JSON.stringify(await (${expression})))()`;
+  const args = ["--format", "json", "-s", session, "eval", serialized];
   if (url) args.push(url);
   const { stdout } = await run([ghostchrome, ...args], { timeoutMs: 45_000 });
-  return parseJson(stdout).result as T;
+  return JSON.parse(String(parseJson(stdout).result)) as T;
 }
 
 function assert(value: unknown, message: string): asserts value {
@@ -127,8 +165,13 @@ async function cleanup() {
     timeoutMs: 10_000,
   });
   for (const child of children.reverse()) {
+    if (child.exitCode !== null) continue;
     child.kill();
-    await new Promise((resolve) => child.once("close", resolve));
+    await Promise.race([
+      new Promise((resolve) => child.once("close", resolve)),
+      sleep(3_000),
+    ]);
+    if (child.exitCode === null) child.kill("SIGKILL");
   }
 }
 
@@ -137,37 +180,45 @@ process.on("SIGINT", () => {
 });
 
 try {
-  log("starting real engine and web servers");
-  spawnManaged("engine", ["bun", "run", "--cwd", "apps/engine", "start"], {
-    PORT: "18787",
-    AUTH_DEV_HEADERS: "true",
-    DAEMON_ENABLED: "false",
-    ENGINE_PUBLIC_URL: engineUrl,
-    WEB_PUBLIC_URL: webUrl,
-  });
-  await waitForUrl(`${engineUrl}/api/v1/health`, "engine");
+  log("preparing real engine and web servers");
+  if (await urlOk(`${engineUrl}/api/v1/health`)) {
+    log(`reusing engine at ${engineUrl}`);
+  } else {
+    spawnManaged("engine", ["bun", "run", "--cwd", "apps/engine", "start"], {
+      PORT: portFromUrl(engineUrl),
+      AUTH_DEV_HEADERS: "true",
+      DAEMON_ENABLED: "false",
+      ENGINE_PUBLIC_URL: engineUrl,
+      WEB_PUBLIC_URL: webUrl,
+    });
+    await waitForUrl(`${engineUrl}/api/v1/health`, "engine");
+  }
 
-  spawnManaged(
-    "web",
-    [
-      "bun",
-      "run",
-      "--cwd",
-      "apps/web",
-      "dev",
-      "--hostname",
-      "127.0.0.1",
-      "--port",
-      "13333",
-    ],
-    {
-      API_URL: engineUrl,
-      NEXT_PUBLIC_ENGINE_URL: engineUrl,
-      NEXT_PUBLIC_USE_MOCK: "false",
-      PORT: "13333",
-    },
-  );
-  await waitForUrl(`${webUrl}/login`, "web", 180_000);
+  if (await urlOk(`${webUrl}/login`)) {
+    log(`reusing web at ${webUrl}`);
+  } else {
+    spawnManaged(
+      "web",
+      [
+        "bun",
+        "run",
+        "--cwd",
+        "apps/web",
+        "dev",
+        "--hostname",
+        new URL(webUrl).hostname,
+        "--port",
+        portFromUrl(webUrl),
+      ],
+      {
+        API_URL: engineUrl,
+        NEXT_PUBLIC_ENGINE_URL: engineUrl,
+        NEXT_PUBLIC_USE_MOCK: "false",
+        PORT: portFromUrl(webUrl),
+      },
+    );
+    await waitForUrl(`${webUrl}/login`, "web", 180_000);
+  }
 
   log("checking engine proxy and disabled MSW");
   const proxy = await gcEval<{
