@@ -99,6 +99,31 @@ daemon/personal: build/daemon ## Rebuild and start the personal daemon (DAEMON_U
 daemon/down: ## Stop the daemon and remove its pid file
 	@./$(DAEMON_BIN) daemon stop
 
+# ── CLI install (symlink bin/agentik into your PATH) ─────────────────────────
+# Override the target dir with: make cli/install INSTALL_DIR=/somewhere/in/PATH
+INSTALL_DIR ?= $(HOME)/.local/bin
+CLI_LINK := $(INSTALL_DIR)/agentik
+
+.PHONY: cli/install cli/uninstall
+
+cli/install: build/daemon ## Symlink the agentik CLI into ~/.local/bin (override INSTALL_DIR=…)
+	@mkdir -p "$(INSTALL_DIR)"
+	@ln -sf "$(abspath $(DAEMON_BIN))" "$(CLI_LINK)"
+	@printf "$(G)✓ linked$(N) $(CLI_LINK) → $(abspath $(DAEMON_BIN))\n"
+	@case ":$$PATH:" in \
+		*":$(INSTALL_DIR):"*) printf "  Run $(C)hash -r$(N) (or open a new shell), then $(C)agentik doctor$(N)\n" ;; \
+		*) printf "$(Y)• %s is not on your PATH$(N) — add it to your shell rc to use $(C)agentik$(N) directly\n" "$(INSTALL_DIR)" ;; \
+	esac
+
+cli/uninstall: ## Remove the agentik CLI symlink from ~/.local/bin (leaves real binaries untouched)
+	@if [ -L "$(CLI_LINK)" ]; then \
+		rm -f "$(CLI_LINK)"; printf "$(G)✓ removed$(N) $(CLI_LINK)\n"; \
+	elif [ -e "$(CLI_LINK)" ]; then \
+		printf "$(Y)• $(CLI_LINK) is a real file, not our symlink — left untouched$(N)\n"; \
+	else \
+		printf "$(Y)• nothing to remove at $(CLI_LINK)$(N)\n"; \
+	fi
+
 # ── Build ────────────────────────────────────────────────────────────────────
 
 .PHONY: build build/web build/daemon
