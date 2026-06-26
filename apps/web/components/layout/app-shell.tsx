@@ -22,6 +22,10 @@ export function AppShell({
   // The chat surface (/{team}/chat*) is immersive: no topbar, full height.
   const segment = pathname?.split("/")[2];
   const isChat = segment === "chat";
+  const isConfigure = ["runtimes", "skills", "settings"].includes(
+    segment ?? "",
+  );
+  const isSettings = segment === "settings";
 
   // One realtime socket per team; events invalidate React Query caches.
   useRealtimeSync(team);
@@ -47,9 +51,13 @@ export function AppShell({
             <main className="min-w-0 flex-1 overflow-x-hidden">
               <div
                 className={
-                  fullBleed
-                    ? "w-full p-4 md:p-6"
-                    : "mx-auto w-full max-w-[1600px] p-4 md:p-6"
+                  isSettings
+                    ? "w-full"
+                    : isConfigure
+                      ? "w-full p-4 md:p-6"
+                      : fullBleed
+                        ? "w-full p-4 md:p-6"
+                        : "mx-auto w-full max-w-[1600px] p-4 md:p-6"
                 }
               >
                 {children}

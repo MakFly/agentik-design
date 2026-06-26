@@ -16,6 +16,21 @@ const {
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const VERIFY_CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+function generateVerifyCode(): string {
+  return String(Math.floor(100_000 + Math.random() * 900_000));
+}
+
+/** Derive a default org name/slug from an email local-part. */
+export function defaultOrgFromEmail(email: string) {
+  const local = (email.split("@")[0] ?? "")
+    .replace(/[^a-z0-9]/gi, "-")
+    .toLowerCase()
+    .replace(/^-+|-+$/g, "");
+  const base = local.slice(0, 40) || "workspace";
+  return { name: `${base}'s workspace`, slug: base };
+}
 
 function token(): string {
   return (
@@ -47,23 +62,84 @@ export async function signUp(input: {
   if (existing) return { error: "email_taken" as const };
   const id = genId("usr");
   const verifyToken = token();
+  const verifyCode = generateVerifyCode();
+  const verifyCodeExpiresAt = new Date(Date.now() + VERIFY_CODE_TTL_MS).toISOString();
   await db.insert(appUsers).values({
     id,
     email,
     passwordHash: await hashPassword(input.password),
     name: input.name ?? "",
     verifyToken,
+    verifyCode,
+    verifyCodeExpiresAt,
   });
-  return { user: { id, email, name: input.name ?? "" }, verifyToken };
+  return { user: { id, email, name: input.name ?? "" }, verifyToken, verifyCode };
 }
 
 export async function verifyEmail(verifyToken: string) {
   const updated = await db
     .update(appUsers)
-    .set({ emailVerifiedAt: new Date().toISOString(), verifyToken: null })
+    .set({
+      emailVerifiedAt: new Date().toISOString(),
+      verifyToken: null,
+      verifyCode: null,
+      verifyCodeExpiresAt: null,
+    })
     .where(eq(appUsers.verifyToken, verifyToken))
-    .returning({ id: appUsers.id });
-  return Boolean(updated[0]);
+    .returning({ id: appUsers.id, email: appUsers.email });
+  return updated[0] ?? null;
+}
+
+export async function verifyEmailCode(email: string, code: string) {
+  const normalized = email.trim().toLowerCase();
+  const trimmed = code.trim();
+  const [user] = await db
+    .select()
+    .from(appUsers)
+    .where(eq(appUsers.email, normalized))
+    .limit(1);
+  if (!user) return { error: "invalid_code" as const };
+  if (user.emailVerifiedAt) {
+    return { userId: user.id, email: user.email, alreadyVerified: true as const };
+  }
+  if (!user.verifyCode || user.verifyCode !== trimmed) {
+    return { error: "invalid_code" as const };
+  }
+  const now = Date.now();
+  if (!user.verifyCodeExpiresAt || new Date(user.verifyCodeExpiresAt).getTime() < now) {
+    return { error: "code_expired" as const };
+  }
+  await db
+    .update(appUsers)
+    .set({
+      emailVerifiedAt: new Date().toISOString(),
+      verifyToken: null,
+      verifyCode: null,
+      verifyCodeExpiresAt: null,
+    })
+    .where(eq(appUsers.id, user.id));
+  return { userId: user.id, email: user.email };
+}
+
+/** Auto-create a workspace for a newly verified user if they have no org yet. */
+export async function autoProvisionOrg(userId: string, email: string) {
+  const existing = await listUserOrgs(userId);
+  if (existing.length > 0) {
+    const first = existing[0]!;
+    return { teamId: first.teamId, slug: first.slug, daemonToken: "" };
+  }
+  const base = defaultOrgFromEmail(email);
+  for (let i = 0; i < 10; i++) {
+    const slug = i === 0 ? base.slug : `${base.slug}-${i + 1}`;
+    const res = await createOrg(userId, { name: base.name, slug });
+    if (!("error" in res)) return res;
+    if (res.error !== "slug_taken") return res;
+  }
+  return { error: "slug_taken" as const };
+}
+
+export async function provisionWorkspaceOnVerify(userId: string, email: string) {
+  return autoProvisionOrg(userId, email);
 }
 
 export async function createSession(userId: string) {
@@ -96,6 +172,7 @@ export async function getSessionUser(sessionToken: string) {
       email: appUsers.email,
       name: appUsers.name,
       emailVerifiedAt: appUsers.emailVerifiedAt,
+      onboardingQuestionnaire: appUsers.onboardingQuestionnaire,
     })
     .from(userSessions)
     .innerJoin(appUsers, eq(appUsers.id, userSessions.userId))
@@ -138,16 +215,43 @@ export async function createOrg(
 }
 
 export async function listUserOrgs(userId: string) {
-  return db
+  const rows = await db
     .select({
       teamId: teams.id,
       slug: teams.slug,
       name: teams.name,
       role: orgMembers.role,
+      onboardingCompletedAt: orgMembers.onboardingCompletedAt,
     })
     .from(orgMembers)
     .innerJoin(teams, eq(teams.id, orgMembers.teamId))
     .where(eq(orgMembers.userId, userId));
+  return rows.map((row) => ({
+    teamId: row.teamId,
+    slug: row.slug,
+    name: row.name,
+    role: row.role,
+    onboardingCompleted: row.onboardingCompletedAt != null,
+  }));
+}
+
+export async function completeOnboarding(userId: string, teamId: string) {
+  const updated = await db
+    .update(orgMembers)
+    .set({ onboardingCompletedAt: new Date().toISOString() })
+    .where(and(eq(orgMembers.userId, userId), eq(orgMembers.teamId, teamId)))
+    .returning({ id: orgMembers.id });
+  return updated.length > 0;
+}
+
+export async function saveOnboardingQuestionnaire(
+  userId: string,
+  questionnaire: Record<string, unknown>,
+) {
+  await db
+    .update(appUsers)
+    .set({ onboardingQuestionnaire: questionnaire })
+    .where(eq(appUsers.id, userId));
 }
 
 /** Resolve the org (team) that owns a given org-scoped daemon token, or null. */
@@ -483,7 +587,13 @@ export async function acceptInvitation(inviteToken: string, userId: string) {
   // Idempotent membership (unique team+user).
   await db
     .insert(orgMembers)
-    .values({ id: genId("mbr"), teamId: inv.teamId, userId, role: inv.role })
+    .values({
+      id: genId("mbr"),
+      teamId: inv.teamId,
+      userId,
+      role: inv.role,
+      onboardingCompletedAt: new Date().toISOString(),
+    })
     .onConflictDoNothing({ target: [orgMembers.teamId, orgMembers.userId] });
   await db
     .update(orgInvitations)

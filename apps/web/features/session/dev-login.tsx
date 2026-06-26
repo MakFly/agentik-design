@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/auth/api";
+import { postAuthDestination } from "@/lib/auth/post-auth";
 
 /**
  * DEV-ONLY quick login. Lists seeded demo accounts (the engine returns them only when
@@ -26,7 +27,7 @@ export function DevLogin() {
     try {
       await authApi.login({ email, password });
       const me = await authApi.me();
-      router.push(me?.orgs[0]?.slug ? `/${me.orgs[0].slug}/runs` : "/onboarding");
+      router.push(me ? postAuthDestination(me) : "/login");
     } catch {
       setBusy(null);
     }

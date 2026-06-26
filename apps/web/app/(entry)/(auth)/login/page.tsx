@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/auth/api";
+import { postAuthDestination } from "@/lib/auth/post-auth";
 import { DevLogin } from "@/features/session/dev-login";
 
 export default function LoginPage() {
@@ -23,8 +24,7 @@ export default function LoginPage() {
     try {
       await authApi.login({ email, password });
       const me = await authApi.me();
-      const slug = me?.orgs[0]?.slug;
-      router.push(slug ? `/${slug}/runs` : "/onboarding");
+      router.push(me ? postAuthDestination(me) : "/login");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
       setError(

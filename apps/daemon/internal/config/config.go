@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"agentik/daemon/internal/identity"
 )
 
 const defaultEngineURL = "http://localhost:8787"
@@ -125,6 +127,10 @@ func Load() (*Config, error) {
 // LoadWithOptions reads and validates daemon config. Precedence is:
 // explicit options, environment, config file, defaults.
 func LoadWithOptions(opts Options) (*Config, error) {
+	daemonID, err := identity.LoadOrCreate()
+	if err != nil {
+		return nil, fmt.Errorf("daemon identity: %w", err)
+	}
 	host, _ := os.Hostname()
 	if host == "" {
 		host = "daemon"
@@ -164,7 +170,7 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		AuthToken:     first(opts.AuthToken, os.Getenv("DAEMON_AUTH_TOKEN")),
 		UserToken:     first(opts.UserToken, os.Getenv("DAEMON_USER_TOKEN"), file.Token),
 		Team:          first(opts.Team, os.Getenv("TEAM"), "acme"),
-		Name:          first(opts.Name, os.Getenv("DAEMON_NAME"), host),
+		Name:          first(opts.Name, os.Getenv("DAEMON_NAME"), daemonID),
 		WorkRoot:      first(opts.WorkRoot, os.Getenv("WORK_ROOT"), file.WorkRoot, "/tmp/agentik-work"),
 		RuntimeKinds:  splitKinds(runtimeKinds),
 		ClaudeModel:   first(opts.ClaudeModel, os.Getenv("CLAUDE_MODEL")),

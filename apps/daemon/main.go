@@ -20,6 +20,8 @@ import (
 
 	"agentik/daemon/internal/client"
 	"agentik/daemon/internal/config"
+	"agentik/daemon/internal/health"
+	"agentik/daemon/internal/identity"
 	"agentik/daemon/internal/loop"
 	"agentik/daemon/internal/probe"
 	"agentik/daemon/internal/protocol"
@@ -282,6 +284,20 @@ func runDaemon(opts config.Options) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	slots := make(chan struct{}, cfg.MaxConcurrent)
+
+	pid := os.Getpid()
+	deviceName := identity.DeviceName()
+	if _, err := health.Start(ctx, func() health.Status {
+		return health.Status{
+			DaemonID:   cfg.Name,
+			DeviceName: deviceName,
+			EngineURL:  cfg.EngineURL,
+			PID:        pid,
+			Runtimes:   cfg.RuntimeKinds,
+		}
+	}); err != nil {
+		log.Printf("health server: %v", err)
+	}
 
 	if cfg.UserToken != "" {
 		runPersonal(ctx, cfg, selected, slots)

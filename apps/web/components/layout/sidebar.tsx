@@ -27,7 +27,16 @@ import {
 import { TeamSwitcher } from "./team-switcher";
 import { NavUser } from "./nav-user";
 
-const GROUP_ORDER: NavGroup[] = ["control", "build", "knowledge", "system"];
+const GROUP_ORDER: NavGroup[] = [
+  "control",
+  "build",
+  "knowledge",
+  "system",
+  "configure",
+];
+
+const MENU_BUTTON_CLASS =
+  "text-muted-foreground hover:not-data-[active=true]:bg-sidebar-accent/70 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground";
 
 export function AppSidebar({ team }: { team: string }) {
   const pathname = usePathname();
@@ -43,7 +52,7 @@ export function AppSidebar({ team }: { team: string }) {
   }
 
   return (
-    <Sidebar collapsible="icon" variant="floating">
+    <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader>
         <TeamSwitcher team={team} />
       </SidebarHeader>
@@ -56,7 +65,7 @@ export function AppSidebar({ team }: { team: string }) {
           return (
             <SidebarGroup key={group}>
               {label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
-              <SidebarMenu>
+              <SidebarMenu className="gap-0.5">
                 {items.map((item) => {
                   const href = hrefFor(team, item.segment);
                   const active =
@@ -69,6 +78,7 @@ export function AppSidebar({ team }: { team: string }) {
                         asChild
                         isActive={active}
                         tooltip={item.label}
+                        className={MENU_BUTTON_CLASS}
                       >
                         <Link
                           href={href}

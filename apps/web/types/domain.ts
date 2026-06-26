@@ -483,4 +483,5 @@ export interface Session {
   role: Role;
   permissions: Permission[] | "*";
   teams: TeamRef[];
+  onboardingCompleted: boolean;
 }

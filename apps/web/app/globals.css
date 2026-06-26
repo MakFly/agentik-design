@@ -449,3 +449,78 @@
     animation: none;
   }
 }
+
+/* ============================================================================
+   Multica landing — cloned design tokens
+   Inter (UI) + Instrument Serif (display) + Geist Mono (code).
+   Ink #0a0d12, muted oklch(55.2% .016 285.938), surfaces #fff / #f8f8f8 / #05070b.
+   ========================================================================== */
+@theme inline {
+  --font-mul-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mul-serif: var(--font-instrument-serif), ui-serif, Georgia, "Times New Roman", serif;
+  --font-mul-onboarding-serif: var(--font-source-serif), ui-serif, Georgia, "Times New Roman", serif;
+  --font-mul-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.mul-landing {
+  --mul-ink: #0a0d12;
+  --mul-muted: oklch(55.2% 0.016 285.938);
+  --mul-muted-2: oklch(70.5% 0.015 286.067);
+  --mul-line: oklch(92% 0.004 286.32);
+  --mul-line-2: oklch(96.7% 0.001 286.375);
+  --mul-accent: oklch(55% 0.16 255);
+  --mul-bg: #ffffff;
+  --mul-bg-2: #f8f8f8;
+  --mul-dark: #05070b;
+  --mul-dark-ink: #0a0d12;
+  font-family: var(--font-mul-sans);
+  color: var(--mul-ink);
+}
+.mul-display {
+  font-family: var(--font-mul-serif);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 0.98;
+}
+.mul-mono {
+  font-family: var(--font-mul-mono);
+}
+.mul-grid-bg {
+  background-image: linear-gradient(oklch(92% 0.004 286.32) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(92% 0.004 286.32) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+.mul-onboarding-serif {
+  font-family: var(--font-mul-onboarding-serif);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+@keyframes onboarding-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-onboarding-enter {
+  animation: onboarding-enter 0.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.onboarding-card-enter {
+  opacity: 0;
+  animation: onboarding-enter 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-onboarding-enter,
+  .onboarding-card-enter {
+    opacity: 1;
+    animation: none;
+  }
+}

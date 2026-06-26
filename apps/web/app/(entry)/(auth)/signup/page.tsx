@@ -23,13 +23,9 @@ export default function SignupPage() {
     setBusy(true);
     try {
       const res = await authApi.signup({ email, password, name });
-      // Verify email before continuing (guideline flow). Dev returns a link; prod waits on email.
-      if (res.verifyUrl) {
-        const u = new URL(res.verifyUrl);
-        router.push(u.pathname + u.search);
-      } else {
-        router.push("/verify?pending=1");
-      }
+      sessionStorage.setItem("pendingEmail", email);
+      if (res.verifyCode) sessionStorage.setItem("pendingVerifyCode", res.verifyCode);
+      router.push("/verify?pending=1");
     } catch (err) {
       setError(err instanceof Error && err.message === "email_taken" ? "That email is already registered." : "Sign-up failed. Try again.");
       setBusy(false);

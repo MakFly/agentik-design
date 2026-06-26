@@ -88,6 +88,54 @@ const RETRYABLE: ReadonlySet<AppErrorKind> = new Set([
   "server",
 ]);
 
+/** Engine error codes → user-facing copy (settings + auth). */
+export const API_ERROR_MESSAGES: Record<string, string> = {
+  invalid_body: "Some fields need attention.",
+  invalid_name: "Name cannot be empty.",
+  invalid_slug: "Slug must use lowercase letters, numbers, and hyphens only.",
+  invalid_password: "Current password is incorrect.",
+  weak_password: "Password must be at least 8 characters.",
+  current_password_required: "Enter your current password to set a new one.",
+  slug_taken: "This workspace slug is already taken.",
+  forbidden: "You don't have permission to do that.",
+  not_found: "This resource doesn't exist or was deleted.",
+  last_owner: "You can't remove or demote the last workspace owner.",
+  invalid_key: "API key must be at least 8 characters.",
+  unsupported_provider: "Unknown provider.",
+  unauthenticated: "Your session has expired. Please sign in again.",
+  email_taken: "An account with this email already exists.",
+  invalid_credentials: "Invalid email or password.",
+  email_unverified: "Verify your email before continuing.",
+};
+
+type ZodIssueLike = { path?: unknown[]; message?: string };
+
+function zodIssuesToFields(detail: unknown): Record<string, string> | undefined {
+  if (!Array.isArray(detail)) return undefined;
+  const fields: Record<string, string> = {};
+  for (const raw of detail) {
+    if (!raw || typeof raw !== "object") continue;
+    const issue = raw as ZodIssueLike;
+    const path = Array.isArray(issue.path)
+      ? issue.path.map(String).filter(Boolean).join(".")
+      : "";
+    const key = path || "field";
+    if (issue.message) fields[key] = issue.message;
+  }
+  return Object.keys(fields).length ? fields : undefined;
+}
+
+function messageFromZodDetail(detail: unknown): string | undefined {
+  const fields = zodIssuesToFields(detail);
+  if (!fields) return undefined;
+  return Object.values(fields).join(" · ");
+}
+
+function messageFromErrorCode(code: string | undefined): string | undefined {
+  if (!code) return undefined;
+  return API_ERROR_MESSAGES[code] ?? code.replace(/_/g, " ");
+}
+
 /** Build an AppError from a failed Response (used by the api client). */
 export async function normalizeResponse(res: Response): Promise<AppError> {
   const kind = STATUS_TO_KIND[res.status] ?? (res.status >= 500 ? "server" : "unknown");
@@ -97,13 +145,20 @@ export async function normalizeResponse(res: Response): Promise<AppError> {
   } catch {
     /* non-JSON body */
   }
+  const errorCode = typeof body.error === "string" ? body.error : undefined;
+  const zodMessage = messageFromZodDetail(body.detail);
+  const codeMessage = messageFromErrorCode(errorCode);
   const retryAfter = res.headers.get("retry-after");
   return new AppError({
     kind,
     status: res.status,
-    message: (body.message as string) ?? DEFAULT_MESSAGES[kind],
-    detail: body.detail as string | undefined,
-    fields: body.fields as Record<string, string> | undefined,
+    message:
+      (body.message as string) ??
+      zodMessage ??
+      codeMessage ??
+      DEFAULT_MESSAGES[kind],
+    detail: typeof body.detail === "string" ? body.detail : undefined,
+    fields: zodIssuesToFields(body.detail),
     retryable: RETRYABLE.has(kind),
     retryAfterMs: retryAfter ? Number(retryAfter) * 1000 : undefined,
     traceId: (body.traceId as string) ?? res.headers.get("x-trace-id") ?? undefined,
@@ -124,4 +179,13 @@ export function toAppError(e: unknown): AppError {
     message: e instanceof Error ? e.message : DEFAULT_MESSAGES.unknown,
     retryable: false,
   });
+}
+
+/** Best user-facing string for any thrown value (AppError, Error, unknown). */
+export function apiErrorMessage(e: unknown): string {
+  const err = toAppError(e);
+  if (err.fields && Object.keys(err.fields).length > 0) {
+    return Object.values(err.fields).join(" · ");
+  }
+  return err.message;
 }

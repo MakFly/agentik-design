@@ -120,6 +120,27 @@
       "when": 1782425889788,
       "tag": "0016_flashy_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1782432000000,
+      "tag": "0017_verify_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1782435600000,
+      "tag": "0018_onboarding_completed",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1782439200000,
+      "tag": "0019_onboarding_questionnaire",
+      "breakpoints": true
     }
   ]
 }

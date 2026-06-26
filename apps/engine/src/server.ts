@@ -119,6 +119,29 @@ import {
 } from "./learning-repo";
 import type { RunReviewStatus } from "@agentik/workflow-schema";
 import { listTraces, getTrace } from "./observability-repo";
+import {
+  getProvidersSettings,
+  getWorkspaceSettings,
+  inviteTeamMember,
+  listTeamInvitations,
+  listTeamMembers,
+  removeTeamMember,
+  revokeTeamInvitation,
+  testProviderConnection,
+  updateProviderConfig,
+  updateProvidersPolicy,
+  updateTeamMemberRole,
+  updateWorkspaceSettings,
+} from "./settings-repo";
+import {
+  inviteMemberBody,
+  memberRoleBody,
+  providerKeyBody,
+  providerPatchBody,
+  providersPolicyBody,
+  workspaceBody,
+} from "./settings-schemas";
+import { jsonValidationError, parseJsonBody } from "./validation";
 
 type Vars = AuthVars;
 
@@ -794,6 +817,176 @@ api.get("/skills/:id/versions", requirePermission("skill:read"), async (c) => {
   return c.json({ items, total: items.length });
 });
 
+/* ── Workspace & team settings ───────────────────────────────────────── */
+
+api.get("/settings/workspace", requirePermission("settings:read"), async (c) => {
+  const ws = await getWorkspaceSettings(c.get("teamId"));
+  if (!ws) return c.json({ error: "not_found" }, 404);
+  return c.json(ws);
+});
+
+api.patch("/settings/workspace", requirePermission("settings:update"), async (c) => {
+  const parsed = parseJsonBody(
+    workspaceBody,
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await updateWorkspaceSettings(
+    c.get("teamId"),
+    c.get("auth").userId,
+    parsed.data,
+  );
+  if ("error" in res) {
+    const status =
+      res.error === "forbidden"
+        ? 403
+        : res.error === "slug_taken"
+          ? 409
+          : 400;
+    return c.json({ error: res.error }, status);
+  }
+  return c.json(res);
+});
+
+api.get("/settings/members", requirePermission("settings:read"), async (c) => {
+  const items = await listTeamMembers(c.get("teamId"));
+  return c.json({ items });
+});
+
+api.patch(
+  "/settings/members/:userId",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      memberRoleBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await updateTeamMemberRole(
+      c.get("teamId"),
+      c.get("auth").userId,
+      c.req.param("userId"),
+      parsed.data.role,
+    );
+    if ("error" in res) {
+      const status =
+        res.error === "forbidden"
+          ? 403
+          : res.error === "last_owner"
+            ? 409
+            : 404;
+      return c.json({ error: res.error }, status);
+    }
+    return c.json(res);
+  },
+);
+
+api.delete(
+  "/settings/members/:userId",
+  requirePermission("settings:update"),
+  async (c) => {
+    const res = await removeTeamMember(
+      c.get("teamId"),
+      c.get("auth").userId,
+      c.req.param("userId"),
+    );
+    if ("error" in res) {
+      const status =
+        res.error === "forbidden"
+          ? 403
+          : res.error === "last_owner"
+            ? 409
+            : 404;
+      return c.json({ error: res.error }, status);
+    }
+    return c.json(res);
+  },
+);
+
+api.get("/settings/invitations", requirePermission("settings:read"), async (c) => {
+  const items = await listTeamInvitations(c.get("teamId"));
+  return c.json({ items });
+});
+
+api.post("/settings/invitations", requirePermission("settings:update"), async (c) => {
+  const parsed = parseJsonBody(
+    inviteMemberBody,
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await inviteTeamMember(
+    c.get("teamId"),
+    c.get("auth").userId,
+    parsed.data.email,
+    parsed.data.role,
+  );
+  if ("error" in res) return c.json({ error: res.error }, 403);
+  const acceptUrl = `${env.WEB_PUBLIC_URL}/invite?token=${res.token}`;
+  return c.json({ id: res.id, expiresAt: res.expiresAt, acceptUrl }, 201);
+});
+
+api.delete(
+  "/settings/invitations/:id",
+  requirePermission("settings:update"),
+  async (c) => {
+    const res = await revokeTeamInvitation(
+      c.get("teamId"),
+      c.get("auth").userId,
+      c.req.param("id"),
+    );
+    if ("error" in res) return c.json({ error: res.error }, 404);
+    return c.json(res);
+  },
+);
+
+api.get("/settings/providers", requirePermission("settings:read"), async (c) => {
+  return c.json(await getProvidersSettings(c.get("teamId")));
+});
+
+api.patch(
+  "/settings/providers/:id",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      providerPatchBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await updateProviderConfig(
+      c.get("teamId"),
+      c.get("auth").userId,
+      c.req.param("id"),
+      parsed.data,
+    );
+    if ("error" in res) return c.json({ error: res.error }, 403);
+    return c.json(res);
+  },
+);
+
+api.patch("/settings/providers-policy", requirePermission("settings:update"), async (c) => {
+  const parsed = parseJsonBody(
+    providersPolicyBody,
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await updateProvidersPolicy(
+    c.get("teamId"),
+    c.get("auth").userId,
+    parsed.data,
+  );
+  if ("error" in res) return c.json({ error: res.error }, 403);
+  return c.json(res);
+});
+
+api.post(
+  "/settings/providers/:id/test",
+  requirePermission("settings:update"),
+  async (c) => {
+    const res = await testProviderConnection(c.get("teamId"), c.req.param("id"));
+    return c.json(res);
+  },
+);
+
 /* ── Runtime provider keys (managed from the web UI, injected into the daemon) ── */
 api.get(
   "/settings/provider-keys",
@@ -810,10 +1003,12 @@ api.put(
     const provider = c.req.param("provider");
     if (!isSupportedProvider(provider))
       return c.json({ error: "unsupported_provider" }, 400);
-    const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
-    const key = typeof body.key === "string" ? body.key.trim() : "";
-    if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
-    await setProviderKey(c.get("teamId"), provider, key);
+    const parsed = parseJsonBody(
+      providerKeyBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    await setProviderKey(c.get("teamId"), provider, parsed.data.key);
     return c.json({ ok: true });
   },
 );

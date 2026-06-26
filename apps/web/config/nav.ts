@@ -9,11 +9,18 @@ import {
   RadioTower,
   Settings,
   LayoutDashboard,
+  Monitor,
+  BookOpenText,
   type LucideIcon,
 } from "lucide-react";
 import type { Permission } from "./permissions";
 
-export type NavGroup = "control" | "build" | "knowledge" | "system";
+export type NavGroup =
+  | "control"
+  | "build"
+  | "knowledge"
+  | "system"
+  | "configure";
 
 export interface NavItem {
   key: string;
@@ -118,12 +125,31 @@ export const NAV_ITEMS: NavItem[] = [
     group: "system",
     hotkey: "o",
   },
+  // CONFIGURE (Multica-style: runtimes, skills, settings)
+  {
+    key: "runtimes",
+    label: "Runtimes",
+    segment: "runtimes",
+    icon: Monitor,
+    group: "configure",
+    hotkey: "u",
+    permission: "settings:read",
+  },
+  {
+    key: "skills",
+    label: "Skills",
+    segment: "skills",
+    icon: BookOpenText,
+    group: "configure",
+    hotkey: "k",
+    permission: "settings:read",
+  },
   {
     key: "settings",
     label: "Settings",
     segment: "settings",
     icon: Settings,
-    group: "system",
+    group: "configure",
     hotkey: "s",
     permission: "settings:read",
   },
@@ -134,6 +160,7 @@ export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
   build: "Builder",
   knowledge: "Knowledge",
   system: "System",
+  configure: "Configure",
 };
 
 /** Items shown in the mobile bottom tab bar (max 5; last is "More"). */

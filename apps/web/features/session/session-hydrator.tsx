@@ -5,9 +5,21 @@ import { useSessionStore } from "@/lib/stores/session.store";
 import { ROLE_PERMISSIONS, type Permission, type Role } from "@/config/permissions";
 import type { Session, TeamId, UserId } from "@/types/domain";
 
+import { usePreferencesStore } from "@/lib/stores/preferences.store";
+
 type Me = {
-  user: { userId: string; email: string; name: string };
-  orgs: { teamId: string; slug: string; name: string; role: string }[];
+  user: {
+    userId: string;
+    email: string;
+    name: string;
+    emailVerifiedAt?: string | null;
+    uiPreferences?: {
+      reduceMotion?: boolean;
+      submitMode?: "enter" | "ctrlEnter";
+      theme?: "light" | "dark" | "system";
+    };
+  };
+  orgs: { teamId: string; slug: string; name: string; role: string; onboardingCompleted: boolean }[];
   activeOrgId: string | null;
 };
 
@@ -47,8 +59,12 @@ export function SessionHydrator({ team }: { team: string }) {
           role,
           permissions: perms === "*" ? "*" : ([...perms] as Permission[]),
           teams: me.orgs.map((o) => ({ id: o.teamId as TeamId, slug: o.slug, name: o.name })),
+          onboardingCompleted: active.onboardingCompleted,
         };
         setSession(session);
+        if (me.user.uiPreferences) {
+          usePreferencesStore.getState().hydrateFromServer(me.user.uiPreferences);
+        }
       } catch {
         if (!cancelled) clearSession();
       }

@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Check, Loader2, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
+import { toastApiError, onMutationError } from "@/lib/api/toast-error";
 import { toast } from "sonner";
 
 interface ProviderKey {
@@ -57,7 +58,7 @@ export function ProviderKeysSection({ team }: { team: string }) {
       invalidate();
       toast.success(`${LABELS[v.provider] ?? v.provider} key saved`);
     },
-    onError: () => toast.error("Could not save key (need at least 8 chars)"),
+    onError: (e) => toastApiError(e, "Could not save key"),
   });
 
   const remove = useMutation({
@@ -70,6 +71,7 @@ export function ProviderKeysSection({ team }: { team: string }) {
       invalidate();
       toast.success("Key removed");
     },
+    onError: onMutationError("Could not remove key"),
   });
 
   return (
@@ -101,9 +103,9 @@ export function ProviderKeysSection({ team }: { team: string }) {
                 </div>
               </div>
 
-              <Input
-                type="password"
+              <PasswordInput
                 autoComplete="off"
+                wrapperClassName="flex-1"
                 placeholder={
                   p.hasKey
                     ? "•••••••••• (configured, type to replace)"
@@ -113,7 +115,6 @@ export function ProviderKeysSection({ team }: { team: string }) {
                 onChange={(e) =>
                   setDrafts((s) => ({ ...s, [p.provider]: e.target.value }))
                 }
-                className="flex-1"
               />
 
               <div className="flex items-center gap-2">

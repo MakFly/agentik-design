@@ -1,20 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   ArrowLeft,
   Bot,
   Circle,
-  Play,
   Clock,
   Cpu,
   History,
+  Play,
   RefreshCw,
   Tag,
-  Wifi,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
+import { CopyableValue } from "@/components/shared/copyable-value";
 import { ErrorState } from "@/components/shared/error-state";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -39,7 +39,16 @@ import {
 import { useAgent, useAgentTaskSnapshot } from "./api";
 import { useRuns } from "@/features/run-view/api";
 import { derivePresence } from "@/lib/agents/presence";
-import { formatCompactNumber, formatDuration, formatMoney, formatPercent, formatRelativeTime } from "@/lib/format";
+import {
+  formatCompactNumber,
+  formatDuration,
+  formatMoney,
+  formatPercent,
+  formatRelativeTime,
+  formatShortId,
+} from "@/lib/format";
+import { useSessionStore } from "@/lib/stores/session.store";
+import { cn } from "@/lib/utils";
 import type { Run } from "@/types/domain";
 import type { AgentRow } from "./types";
 
@@ -73,49 +82,60 @@ function runStartedAt(run: Run) {
   return formatRelativeTime(run.startedAt);
 }
 
-function AgentMetrics({ agent }: { agent: AgentRow }) {
+function MetaField({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Success rate (7d)</p>
-        <p className="mt-1 text-lg font-semibold tabular-nums">{formatPercent(agent.stats.successRate)}</p>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Avg. latency</p>
-        <p className="mt-1 text-lg font-semibold tabular-nums">{formatDuration(agent.stats.avgLatencyMs)}</p>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Avg. cost/run</p>
-        <p className="mt-1 text-lg font-semibold tabular-nums">{formatMoney(agent.stats.avgCost)}</p>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Runs / 24h</p>
-        <p className="mt-1 text-lg font-semibold tabular-nums">{formatCompactNumber(agent.stats.runs24h)}</p>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Last run</p>
-        <p className="mt-1 text-sm">
-          {agent.stats.lastRunAt ? formatRelativeTime(agent.stats.lastRunAt) : "—"}
-        </p>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <p className="text-xs text-muted-foreground">Model</p>
-        <p className="mt-1 text-sm tabular-nums">{agent.model}</p>
-      </div>
+    <div className={cn("min-w-0", className)}>
+      <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {label}
+      </dt>
+      <dd className="mt-1 min-w-0 text-sm text-foreground">{children}</dd>
     </div>
   );
 }
 
-function DetailField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function MetaGrid({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface/60 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-sm ${mono ? "font-mono" : ""}`}>{value}</p>
+    <dl className={cn("grid gap-x-4 gap-y-4 sm:grid-cols-2", className)}>{children}</dl>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex min-h-[4.75rem] flex-col justify-between rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+      <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {label}
+      </p>
+      <p className="text-lg font-semibold text-foreground tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function AgentMetrics({ agent }: { agent: AgentRow }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <MetricTile label="Success rate (7d)" value={formatPercent(agent.stats.successRate)} />
+      <MetricTile label="Avg. latency" value={formatDuration(agent.stats.avgLatencyMs)} />
+      <MetricTile label="Avg. cost/run" value={formatMoney(agent.stats.avgCost)} />
+      <MetricTile label="Runs / 24h" value={formatCompactNumber(agent.stats.runs24h)} />
+      <MetricTile
+        label="Last run"
+        value={agent.stats.lastRunAt ? formatRelativeTime(agent.stats.lastRunAt) : "—"}
+      />
+      <MetricTile label="Model" value={<span className="text-base font-medium">{agent.model}</span>} />
     </div>
   );
 }
 
 export function AgentDetailScreen({ team, agentId }: { team: string; agentId: string }) {
+  const session = useSessionStore((s) => s.session);
   const agentQuery = useAgent(team, agentId);
   const snapshotQuery = useAgentTaskSnapshot(team);
   const runsQuery = useRuns(team);
@@ -177,11 +197,13 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
     );
   }
 
+  const workspaceName = session?.team.name ?? team;
+
   return (
     <div className="flex min-h-[calc(100dvh-var(--navbar-h)-3rem)] flex-col gap-6 md:min-h-[calc(100dvh-var(--navbar-h)-4rem)]">
       <PageHeader
         title={agent.name}
-        description="Agent registry detail: identity, health, config, runs, and runtime status."
+        description="Identity, health, config, runs, and runtime status."
         back={{ href: `/${team}/agents`, label: "Agents" }}
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -193,7 +215,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link href={`/${team}/agents/new`}>
-                        <Play className="size-4" />
+                <Play className="size-4" />
                 New agent
               </Link>
             </Button>
@@ -208,7 +230,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               <Bot className="size-4 text-primary" />
               Agent profile
             </CardTitle>
-            <CardDescription>Identity, ownership, lifecycle, and runtime target.</CardDescription>
+            <CardDescription>Identity, ownership, and lifecycle.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -216,29 +238,31 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               <Badge variant="outline" className="rounded-full">
                 {presence ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <span className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`} />
+                    <span
+                      className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`}
+                    />
                     {presenceToLabel(presence.availability)}
                   </span>
                 ) : (
                   "Presence unknown"
                 )}
               </Badge>
-              <Badge variant="secondary" className="rounded-full">
-                {agent.stats.runs24h} runs/24h
+              <Badge variant="secondary" className="rounded-full tabular-nums">
+                {agent.stats.runs24h} runs / 24h
               </Badge>
             </div>
 
-            <p className="text-sm leading-6 text-muted-foreground">
-              <span className="font-medium text-foreground">Role:</span> {detailLabel(agent.role)}
-            </p>
-            <p className="text-sm leading-6 text-muted-foreground">
-              <span className="font-medium text-foreground">Goal:</span> {detailLabel(agent.goal)}
-            </p>
-            {agent.description ? (
-              <p className="text-sm leading-6 text-muted-foreground">
-                <span className="font-medium text-foreground">Description:</span> {agent.description}
-              </p>
-            ) : null}
+            <div className="grid gap-3 rounded-lg border border-border bg-surface/40 p-3">
+              <MetaField label="Role">{detailLabel(agent.role)}</MetaField>
+              <MetaField label="Goal">
+                <span className="leading-relaxed text-muted-foreground">{detailLabel(agent.goal)}</span>
+              </MetaField>
+              {agent.description ? (
+                <MetaField label="Description">
+                  <span className="leading-relaxed text-muted-foreground">{agent.description}</span>
+                </MetaField>
+              ) : null}
+            </div>
 
             <div className="flex flex-wrap items-center gap-2">
               {agent.tags.length ? (
@@ -253,59 +277,65 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               )}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <DetailField label="Agent ID" value={detailLabel(agent.id)} mono />
-              <DetailField label="Team" value={detailLabel(agent.teamId)} mono />
-              <DetailField label="Owner" value={detailLabel(agent.owner)} />
-              <DetailField label="Live version" value={detailLabel(agent.liveVersionId)} mono />
-              <DetailField label="Draft version" value={detailLabel(agent.draftVersionId)} mono />
-              <DetailField label="Created" value={normalizeTimestamp(agent.createdAt)} />
-            </div>
+            <MetaGrid>
+              <MetaField label="Agent ID">
+                <CopyableValue value={agent.id} />
+              </MetaField>
+              <MetaField label="Workspace">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span>{workspaceName}</span>
+                  <CopyableValue value={agent.teamId} className="text-muted-foreground" />
+                </div>
+              </MetaField>
+              <MetaField label="Owner">
+                <CopyableValue value={agent.owner} />
+              </MetaField>
+              <MetaField label="Created">{normalizeTimestamp(agent.createdAt)}</MetaField>
+            </MetaGrid>
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Cpu className="size-4 text-primary" />
-                Runtime & health
-              </CardTitle>
-              <CardDescription>Current model and current presence snapshot.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <DetailField label="Model" value={detailLabel(agent.model)} />
-              <DetailField label="Updated" value={normalizeTimestamp(agent.updatedAt)} />
-              <div className="flex items-center justify-between rounded-lg border border-border bg-surface/60 p-3">
-                <span className="text-sm text-muted-foreground">Workload</span>
-                <span className="inline-flex items-center gap-1.5 text-sm">
-                  {presence ? (
-                    <>
-                      <Circle className="size-3.5 text-muted-foreground" />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cpu className="size-4 text-primary" />
+              Runtime
+            </CardTitle>
+            <CardDescription>Model, workload, and version bindings.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MetaGrid>
+              <MetaField label="Model">{detailLabel(agent.model)}</MetaField>
+              <MetaField label="Updated">{normalizeTimestamp(agent.updatedAt)}</MetaField>
+              <MetaField label="Workload">
+                {presence ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Circle className="size-3.5 text-muted-foreground" />
+                    <span className="tabular-nums">
                       {presence.runningCount} running · {presence.queuedCount} queued
-                    </>
-                  ) : (
-                    <span>Waiting for snapshot…</span>
-                  )}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Wifi className="size-4 text-primary" />
-                Runtime identity
-              </CardTitle>
-              <CardDescription>Version binding and traceability.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <DetailField label="Agent config ID" value={detailLabel(agent.id)} />
-              <DetailField label="Traceability" value="Runs and steps are linked from run history." />
-            </CardContent>
-          </Card>
-        </div>
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Waiting for snapshot…</span>
+                )}
+              </MetaField>
+              <MetaField label="Live version">
+                {agent.liveVersionId ? (
+                  <CopyableValue value={agent.liveVersionId} />
+                ) : (
+                  "—"
+                )}
+              </MetaField>
+              <MetaField label="Draft version" className="sm:col-span-2">
+                {agent.draftVersionId ? (
+                  <CopyableValue value={agent.draftVersionId} />
+                ) : (
+                  "—"
+                )}
+              </MetaField>
+            </MetaGrid>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -337,8 +367,8 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
           ) : !agentRuns.length ? (
             <EmptyState
               icon={Clock}
-              title="No runs found"
-              description="There is no run history for this agent yet."
+              title="No runs yet"
+              description="Runs for this agent will show up here once executions start."
             />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
@@ -349,50 +379,52 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
                     <TableHead>Status</TableHead>
                     <TableHead>Trigger</TableHead>
                     <TableHead>Started</TableHead>
-                    <TableHead>Cost</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
                     <TableHead>Env</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {agentRuns.slice(0, 8).map((run) => (
                     <TableRow key={run.id}>
-                      <TableCell className="font-mono text-xs">{run.id}</TableCell>
+                      <TableCell>
+                        <Link
+                          href={`/${team}/runs/${run.id}`}
+                          className="font-mono text-xs hover:underline"
+                          title={run.id}
+                        >
+                          {formatShortId(run.id)}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <StatusBadge status={run.status} size="sm" />
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{run.trigger.kind}</Badge>
                       </TableCell>
-                      <TableCell title={normalizeTimestamp(run.startedAt)}>
+                      <TableCell
+                        className="text-muted-foreground"
+                        title={normalizeTimestamp(run.startedAt)}
+                      >
                         {runStartedAt(run)}
                       </TableCell>
-                      <TableCell className="tabular-nums">
+                      <TableCell className="text-right tabular-nums">
                         {formatMoney(run.cost.money)}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{run.env}</TableCell>
+                      <TableCell className="text-muted-foreground uppercase">{run.env}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
               {agentRuns.length > 8 ? (
                 <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                  Showing 8 of {formatCompactNumber(agentRuns.length)} runs.
+                  Showing 8 of {formatCompactNumber(agentRuns.length)} runs.{" "}
+                  <Link href={`/${team}/runs`} className="text-primary hover:underline">
+                    View all
+                  </Link>
                 </div>
               ) : null}
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Raw payload</CardTitle>
-          <CardDescription>Full JSON object returned by the agent endpoint.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <pre className="max-h-72 overflow-auto rounded-md border border-border bg-surface-2 p-3 text-xs">
-            {JSON.stringify(agent, null, 2)}
-          </pre>
         </CardContent>
       </Card>
     </div>

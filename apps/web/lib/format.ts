@@ -57,6 +57,14 @@ export function formatElapsed(ms: number): string {
   return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
+/** Shorten opaque IDs: agt_8a6ec338…b1508c */
+export function formatShortId(id: string, opts?: { head?: number; tail?: number }): string {
+  const head = opts?.head ?? 10;
+  const tail = opts?.tail ?? 6;
+  if (id.length <= head + tail + 1) return id;
+  return `${id.slice(0, head)}…${id.slice(-tail)}`;
+}
+
 const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ["year", 31_536_000_000],
   ["month", 2_592_000_000],

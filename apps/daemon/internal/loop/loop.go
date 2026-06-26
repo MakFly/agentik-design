@@ -15,6 +15,7 @@ import (
 	"agentik/daemon/internal/bundle"
 	"agentik/daemon/internal/client"
 	"agentik/daemon/internal/config"
+	"agentik/daemon/internal/identity"
 	"agentik/daemon/internal/probe"
 	"agentik/daemon/internal/protocol"
 	"agentik/daemon/internal/runtime"
@@ -96,6 +97,8 @@ func (l *Loop) meta() map[string]any {
 		"host":        probe.Host(),
 		"installable": bundle.Installable(),
 		"mode":        mode,
+		"deviceId":    l.cfg.Name,
+		"deviceName":  identity.DeviceName(),
 	}
 }
 
