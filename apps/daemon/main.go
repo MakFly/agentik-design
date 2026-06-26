@@ -42,7 +42,14 @@ func main() {
 
 func runCLI(args []string) error {
 	if len(args) == 1 {
-		return runDaemon(config.Options{})
+		// No command. The Docker/legacy entrypoint binary (agentik-daemon) starts
+		// the daemon; the human-facing `agentik` CLI prints help instead of silently
+		// launching a daemon. Run `agentik daemon run` to start it from a terminal.
+		if filepath.Base(args[0]) == "agentik-daemon" {
+			return runDaemon(config.Options{})
+		}
+		printHelp(os.Stdout)
+		return nil
 	}
 	if strings.HasPrefix(args[1], "agentik://") {
 		return runDeepLink(args[1])
@@ -106,7 +113,8 @@ Usage:
   agentik daemon stop
   agentik daemon status
 
-Running with no command starts the daemon, for Docker and legacy compatibility.`)
+With no command, agentik prints this help. The Docker entrypoint (agentik-daemon)
+starts the daemon instead; run "agentik daemon run" to start it yourself.`)
 }
 
 func runSetup(args []string) error {
