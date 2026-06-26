@@ -50,6 +50,23 @@ function auth(c: {
   return c.get("daemonAuth") ?? { kind: "legacy" };
 }
 
+/**
+ * Server-authoritative identity fields stamped onto a daemon's meta. Applied at BOTH
+ * register and meta-refresh so the periodic `/daemon/meta` (which carries only
+ * client-probed fields) can never wipe the `userId`/`mode` that personal-daemon
+ * offline-marking relies on.
+ */
+function withDaemonIdentity(
+  meta: Record<string, unknown> | undefined,
+  a: DaemonAuth,
+): Record<string, unknown> {
+  return {
+    ...(meta ?? {}),
+    mode: a.kind,
+    ...(a.kind === "personal" ? { userId: a.userId } : {}),
+  };
+}
+
 async function canAccessTeam(a: DaemonAuth, teamId: string): Promise<boolean> {
   if (a.kind === "legacy") return true;
   if (a.kind === "org") return a.teamId === teamId;
@@ -121,11 +138,7 @@ daemon.post("/register", async (c) => {
   if (!teamId && a.kind !== "legacy")
     return c.json({ error: "forbidden" }, 403);
   if (!teamId && !body.team) return c.json({ error: "invalid_body" }, 400);
-  const meta = {
-    ...(body.meta ?? {}),
-    mode: a.kind,
-    ...(a.kind === "personal" ? { userId: a.userId } : {}),
-  };
+  const meta = withDaemonIdentity(body.meta, a);
   const res = await registerDaemon({
     teamId: teamId ?? undefined,
     team: body.team,
@@ -150,7 +163,10 @@ daemon.post("/meta", async (c) => {
   if (!teamId) return c.json({ error: "not_found" }, 404);
   if (!(await canAccessTeam(auth(c), teamId)))
     return c.json({ error: "forbidden" }, 403);
-  const ok = await updateDaemonMeta(body.daemonId, body.meta);
+  const ok = await updateDaemonMeta(
+    body.daemonId,
+    withDaemonIdentity(body.meta, auth(c)),
+  );
   return c.json({ ok }, ok ? 200 : 404);
 });
 
