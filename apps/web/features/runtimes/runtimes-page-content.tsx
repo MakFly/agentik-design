@@ -91,7 +91,7 @@ export function RuntimesPageContent({ team }: { team: string }) {
           />
         ) : null}
 
-        {showThisMachine && capability !== "checking" ? (
+        {showThisMachine ? (
           <div id="this-machine-card">
             <ThisMachineCard team={team} system={system.data} />
           </div>
