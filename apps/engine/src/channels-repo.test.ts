@@ -10,11 +10,11 @@ import {
   formatTelegramHtmlMessages,
   formatTelegramText,
   handleTelegramWebhookSecret,
-  listChannelConnections,
   notifyRunTelegram,
   parseTelegramCommand,
   sendRunTelegramAction,
-} from "./domains/channels/repo";
+} from "./domains/channels/service";
+import { listChannelConnections } from "./domains/channels/repo";
 import { encryptJson } from "./infra/crypto";
 import { createProject } from "./domains/projects/repo";
 import { createAgent, publishAgent, requestRunApproval } from "./domains/runs";

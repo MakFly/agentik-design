@@ -24,7 +24,7 @@ import {
   searchChatMemory,
   setRunReviewStatus,
   updateMemory,
-} from "./domains/learning/repo";
+} from "./domains/learning/index";
 import { claimTask } from "./execution/daemon/repo";
 import { cancelRun, getRunDetail } from "./domains/runs";
 

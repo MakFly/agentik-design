@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../../../infra/db/client";
-import { listPollableConnections, pollTelegramConnection } from "../repo";
+import { listPollableConnections } from "../repo";
+import { pollTelegramConnection } from "../service";
 import { env } from "../../../infra/env";
 
 /**

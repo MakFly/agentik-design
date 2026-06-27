@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
-import { listMemory } from "../learning/repo";
+import { listMemory } from "../learning/memory/repo";
 import type { ProjectResourceType, ProjectTaskPriority, ProjectTaskStatus, ProjectType } from "../../infra/db/schema";
 
 const { projects, projectResources, projectTasks, projectTaskComments, projectWorkspaces, runs, agents } = schema;

@@ -8,7 +8,7 @@ import { db, schema } from "./infra/db/client";
 import { resolveTeam } from "./domains/workflows/repo";
 import { createAgent, getRunDetail, publishAgent } from "./domains/runs";
 import { addProjectResource, createProject, createProjectTask, runProjectTask } from "./domains/projects/repo";
-import { insertConfirmedMemory } from "./domains/learning/repo";
+import { insertConfirmedMemory } from "./domains/learning/memory/service";
 import { claimTask, registerDaemon } from "./execution/daemon/repo";
 
 let dbUp = false;

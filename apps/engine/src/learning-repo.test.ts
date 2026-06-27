@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { KnowledgeScope, MemoryPolicy, SkillPolicy } from "@agentik/workflow-schema";
 import {
   buildInjectionPreamble,
-  nextVersion,
   selectMemoriesForInjection,
   selectSkillsForInjection,
-} from "./domains/learning/repo";
+} from "./domains/learning/memory/injection";
+import { nextVersion } from "./domains/learning/shared";
 
 describe("nextVersion (monotonicity)", () => {
   test("starts at 1 with no prior versions", () => {

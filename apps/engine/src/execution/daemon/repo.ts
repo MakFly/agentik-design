@@ -8,11 +8,11 @@ import {
   ensureRunReview,
   resolveInjectionContext,
   type InjectionContext,
-} from "../../domains/learning/repo";
+} from "../../domains/learning/index";
 import { appendAssistantTurn } from "../../domains/chat/repo";
 import { resolveProviderEnv } from "../../domains/settings/providers-repo";
 import { liveRuntimeTools } from "../../domains/mcp/repo";
-import { notifyRunTelegram, startRunTelegramTypingHeartbeat } from "../../domains/channels/repo";
+import { notifyRunTelegram, startRunTelegramTypingHeartbeat } from "../../domains/channels/service";
 import type { RunMessageType, TaskErrorReason } from "../../infra/db/schema";
 import { runStatusToAgentTaskStatus } from "../../infra/db/schema";
 import type { RunStatus } from "@agentik/workflow-schema";
