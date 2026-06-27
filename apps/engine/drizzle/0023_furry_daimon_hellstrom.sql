@@ -1,0 +1,2 @@
+ALTER TABLE "agents" ADD COLUMN "preferred_daemon_id" text;--> statement-breakpoint
+ALTER TABLE "agents" ADD CONSTRAINT "agents_preferred_daemon_id_daemons_id_fk" FOREIGN KEY ("preferred_daemon_id") REFERENCES "public"."daemons"("id") ON DELETE set null ON UPDATE no action;

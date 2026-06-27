@@ -29,6 +29,10 @@ import {
   getBundleCommandTeamId,
   reportBundleStatus,
 } from "./bundle-repo";
+import { invokeMcpTool } from "./mcp-repo";
+import { getRunUnified, listAgentRows } from "./agents-repo";
+import { sendAgentChatTurn } from "./chat-repo";
+import { sendOrchestratedTurn } from "./orchestrator-repo";
 
 type DaemonAuth =
   | { kind: "org"; teamId: string }
@@ -84,6 +88,18 @@ async function resolveRegisterTeam(
   return null;
 }
 
+async function resolveDaemonTeam(
+  a: DaemonAuth,
+  teamId?: string,
+): Promise<string | null> {
+  if (a.kind === "org") return a.teamId;
+  if (!teamId) return null;
+  if (a.kind === "personal") {
+    return (await userCanRunDaemonForTeam(a.userId, teamId)) ? teamId : null;
+  }
+  return teamId;
+}
+
 daemon.use("*", async (c, next) => {
   if (!env.DAEMON_ENABLED) return c.json({ error: "daemon_disabled" }, 503);
   const token = (c.req.header("authorization") ?? "").replace(
@@ -116,10 +132,92 @@ daemon.get("/orgs", async (c) => {
   return c.json({ orgs });
 });
 
+daemon.post("/agents/list", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { teamId?: string };
+  const teamId = await resolveDaemonTeam(auth(c), body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  const agents = await listAgentRows(teamId);
+  return c.json({
+    agents: agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      goal: agent.goal,
+      health: agent.health,
+      runtimeKind: agent.runtimeKind ?? "echo",
+      model: agent.model,
+      published: Boolean(agent.liveVersionId),
+    })),
+  });
+});
+
+daemon.post("/agents/:id/run", async (c) => {
+  const a = auth(c);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    teamId?: string;
+    input?: string;
+  };
+  const teamId = await resolveDaemonTeam(a, body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  const agentId = c.req.param("id");
+  const creatorId =
+    a.kind === "personal"
+      ? `daemon:user:${a.userId}:team:${teamId}:agent:${agentId}`
+      : a.kind === "org"
+        ? `daemon:org:${teamId}:agent:${agentId}`
+        : `daemon:legacy:${teamId}:agent:${agentId}`;
+  const res = await sendAgentChatTurn(teamId, {
+    agentId,
+    content: body.input ?? "",
+    creatorId,
+    title: "Agentik TUI",
+  });
+  if ("error" in res) return c.json(res, 409);
+  return c.json(res, 202);
+});
+
+daemon.post("/orchestrator/turn", async (c) => {
+  const a = auth(c);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    teamId?: string;
+    input?: string;
+    agentHintId?: string | null;
+    threadKey?: string;
+  };
+  const teamId = await resolveDaemonTeam(a, body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  const actorId =
+    a.kind === "personal"
+      ? `user:${a.userId}`
+      : a.kind === "org"
+        ? `org:${teamId}`
+        : `legacy:${teamId}`;
+  const routed = await sendOrchestratedTurn({
+    teamId,
+    surface: "tui",
+    actorId,
+    threadKey: body.threadKey || actorId,
+    text: body.input ?? "",
+    agentHintId: body.agentHintId ?? null,
+  });
+  if (routed.kind === "error") return c.json(routed, 409);
+  return c.json(routed, routed.kind === "run" ? 202 : 200);
+});
+
+daemon.post("/runs/:id/detail", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { teamId?: string };
+  const teamId = await resolveDaemonTeam(auth(c), body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  const detail = await getRunUnified(teamId, c.req.param("id"));
+  if (!detail) return c.json({ error: "not_found" }, 404);
+  return c.json(detail);
+});
+
 daemon.post("/register", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     team?: string;
     name?: string;
+    legacyIds?: string[];
     meta?: Record<string, unknown>;
     runtimes?: Array<{
       kind: string;
@@ -139,13 +237,21 @@ daemon.post("/register", async (c) => {
     return c.json({ error: "forbidden" }, 403);
   if (!teamId && !body.team) return c.json({ error: "invalid_body" }, 400);
   const meta = withDaemonIdentity(body.meta, a);
+  // Personal daemons display as `<id> · <team>`; apply the same suffix to any
+  // legacy ids so the engine can adopt a row this machine registered under an
+  // older identity (hostname) instead of creating a duplicate.
+  const displayName = (raw: string) =>
+    a.kind === "personal" && body.team ? `${raw} · ${body.team}` : raw;
+  const legacyNames = (
+    Array.isArray(body.legacyIds) ? body.legacyIds : []
+  )
+    .filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    .map(displayName);
   const res = await registerDaemon({
     teamId: teamId ?? undefined,
     team: body.team,
-    name:
-      a.kind === "personal" && body.team
-        ? `${body.name} · ${body.team}`
-        : body.name,
+    name: displayName(body.name),
+    legacyNames,
     meta,
     runtimes: body.runtimes,
   });
@@ -234,6 +340,34 @@ daemon.post("/tasks/:id/messages", async (c) => {
     return c.json({ error: "forbidden" }, 403);
   const res = await appendMessages(taskId, body.messages);
   return c.json(res);
+});
+
+daemon.post("/tasks/:id/tools/invoke", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as {
+    toolId?: string;
+    arguments?: Record<string, unknown>;
+  } | null;
+  if (!body?.toolId) return c.json({ error: "invalid_body" }, 400);
+  const taskId = c.req.param("id");
+  const teamId = await getTaskTeamId(taskId);
+  if (!teamId) return c.json({ error: "not_found" }, 404);
+  if (!(await canAccessTeam(auth(c), teamId)))
+    return c.json({ error: "forbidden" }, 403);
+  const result = await invokeMcpTool(teamId, {
+    toolId: body.toolId,
+    arguments: body.arguments ?? {},
+    runId: taskId,
+  });
+  if ("error" in result) {
+    const status =
+      result.error === "tool_not_granted"
+        ? 403
+        : result.error === "tool_not_found"
+          ? 404
+          : 502;
+    return c.json(result, status);
+  }
+  return c.json(result);
 });
 
 daemon.post("/tasks/:id/complete", async (c) => {

@@ -7,14 +7,17 @@ import { eq, sql } from "drizzle-orm";
 import { db, schema } from "./db/client";
 import { resolveTeam } from "./repo";
 import {
+  formatTelegramHtmlMessages,
+  formatTelegramText,
   handleTelegramWebhookSecret,
   listChannelConnections,
   notifyRunTelegram,
   parseTelegramCommand,
+  sendRunTelegramAction,
 } from "./channels-repo";
 import { encryptJson } from "./crypto";
 import { createProject } from "./projects-repo";
-import { createAgent, requestAgentTaskApproval } from "./agents-repo";
+import { createAgent, publishAgent, requestAgentTaskApproval } from "./agents-repo";
 import { genId } from "./db/ids";
 
 let dbUp = false;
@@ -65,6 +68,10 @@ d("telegram channel control", () => {
     projectId = project.project!.id;
     const agent = await createAgent(teamId, { name: "Telegram Controller" });
     agentId = agent.id;
+    await publishAgent(teamId, agentId, {
+      instructions: "Handle Telegram operator requests.",
+      runtimeKind: "echo",
+    });
   });
 
   afterAll(async () => {
@@ -111,6 +118,18 @@ d("telegram channel control", () => {
       kind: "runAgentHandle",
       handle: "telegram_controller",
       input: "Inspect leads",
+    });
+    expect(parseTelegramCommand("/agent @telegram_controller")).toEqual({
+      kind: "agentMode",
+      handle: "telegram_controller",
+    });
+    expect(parseTelegramCommand("/agent off")).toEqual({
+      kind: "agentMode",
+      off: true,
+    });
+    expect(parseTelegramCommand("hello")).toEqual({
+      kind: "freeChat",
+      input: "hello",
     });
     expect(
       parseTelegramCommand('/run project:proj_1 agent:agt_1 "Fix checkout"'),
@@ -235,6 +254,183 @@ d("telegram channel control", () => {
     expect(res.reply).toContain(agentId);
   });
 
+  test("routes a free-form message to the single published agent", async () => {
+    const sender = async ({ text }: { text: string }) => {
+      sent.push(text);
+    };
+    const res = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 23,
+          text: "hello",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.reply).toContain("🧠 Telegram Controller is on it.");
+    expect(res.reply).toContain("I will send the result here.");
+    expect(res.reply).toContain("Track:");
+    expect(res.reply).toContain("Telegram Controller");
+    expect(res.reply).toContain(`/${teamSlug}/runs/`);
+  });
+
+  test("keeps an active Telegram agent so later messages do not need /run", async () => {
+    const second = await createAgent(teamId, { name: "Deep Researcher" });
+    await publishAgent(teamId, second.id, {
+      instructions: "Research deeply.",
+      runtimeKind: "echo",
+    });
+    const sender = async ({ text }: { text: string }) => {
+      sent.push(text);
+    };
+    await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 27,
+          text: `/start ${pairingCode}`,
+          chat: { id: 789 },
+          from: { id: 789, first_name: "Grace" },
+        },
+      },
+      sender,
+    );
+
+    const selected = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 24,
+          text: "/agent @deep_researcher",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+    expect(selected.ok).toBe(true);
+    expect(selected.reply).toContain("Agent mode enabled");
+    expect(selected.reply).toContain("@deep_researcher");
+
+    const res = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 25,
+          text: "cherche les dernières infos IA",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.reply).toContain("🧠 Deep Researcher is on it.");
+    expect(res.reply).toContain("Track:");
+    expect(res.reply).toContain(`/${teamSlug}/runs/`);
+    expect(res.runId).toBeTruthy();
+
+    const followUp = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 27,
+          text: "continue avec les sources importantes",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+    expect(followUp.ok).toBe(true);
+    expect(followUp.reply).toContain("🧠 Deep Researcher is on it.");
+    expect(followUp.runId).toBeTruthy();
+
+    const chatTasks = await db
+      .select({
+        id: schema.agentTasks.id,
+        kind: schema.agentTasks.kind,
+        chatSessionId: schema.agentTasks.chatSessionId,
+      })
+      .from(schema.agentTasks)
+      .where(eq(schema.agentTasks.teamId, teamId));
+    const firstTask = chatTasks.find((task) => task.id === res.runId);
+    const secondTask = chatTasks.find((task) => task.id === followUp.runId);
+    expect(firstTask?.kind).toBe("chat");
+    expect(secondTask?.kind).toBe("chat");
+    expect(firstTask?.chatSessionId).toBeTruthy();
+    expect(secondTask?.chatSessionId).toBe(firstTask?.chatSessionId);
+
+    const cleared = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 26,
+          text: "/agent off",
+          chat: { id: 456 },
+          from: { id: 123, first_name: "Ada" },
+        },
+      },
+      sender,
+    );
+    expect(cleared.ok).toBe(true);
+    expect(cleared.reply).toContain("Agent mode disabled");
+  });
+
+  test("routes natural web questions through the orchestrator instead of a pinned hint", async () => {
+    const coder = await createAgent(teamId, { name: "Backend Coder" });
+    await publishAgent(teamId, coder.id, {
+      instructions: "Fix code, tests, TypeScript, Go, and backend bugs.",
+      runtimeKind: "echo",
+    });
+    const web = await createAgent(teamId, { name: "Web Weather Researcher" });
+    await publishAgent(teamId, web.id, {
+      instructions: "Use web search, browser research, internet sources, weather and news.",
+      runtimeKind: "echo",
+    });
+    const sender = async ({ text }: { text: string }) => {
+      sent.push(text);
+    };
+
+    const selected = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 28,
+          text: "/agent @backend_coder",
+          chat: { id: 789 },
+          from: { id: 789, first_name: "Grace" },
+        },
+      },
+      sender,
+    );
+    expect(selected.ok).toBe(true);
+    expect(selected.reply).toContain("@backend_coder");
+
+    const routed = await handleTelegramWebhookSecret(
+      webhookSecret,
+      {
+        message: {
+          message_id: 29,
+          text: "Donne moi la météo au Havre",
+          chat: { id: 789 },
+          from: { id: 789, first_name: "Grace" },
+        },
+      },
+      sender,
+    );
+
+    expect(routed.ok).toBe(true);
+    expect(routed.reply).toContain("🧠 Web Weather Researcher is on it.");
+    expect(routed.reply).not.toContain("Backend Coder is on it.");
+    expect(routed.runId).toBeTruthy();
+  });
+
   test("saves confirmed project memory from /learn", async () => {
     const sender = async ({ text }: { text: string }) => {
       sent.push(text);
@@ -265,18 +461,113 @@ d("telegram channel control", () => {
   });
 
   test("sends compact run notifications with canonical web links", async () => {
-    const delivered: string[] = [];
+    const [connection] = await db
+      .select({ id: schema.channelConnections.id })
+      .from(schema.channelConnections)
+      .where(eq(schema.channelConnections.teamId, teamId))
+      .limit(1);
+    expect(connection).toBeTruthy();
+    const existingRecipients = await db
+      .select({ id: schema.channelIdentities.id })
+      .from(schema.channelIdentities)
+      .where(eq(schema.channelIdentities.teamId, teamId));
+    if (existingRecipients.length === 0) {
+      await db
+        .insert(schema.channelIdentities)
+        .values([
+          {
+            id: genId("chident"),
+            teamId,
+            connectionId: connection!.id,
+            externalUserId: "notify-user-1",
+            externalChatId: "notify-chat-1",
+            displayName: "Notify One",
+            role: "operator",
+          },
+          {
+            id: genId("chident"),
+            teamId,
+            connectionId: connection!.id,
+            externalUserId: "notify-user-2",
+            externalChatId: "notify-chat-2",
+            displayName: "Notify Two",
+            role: "operator",
+          },
+        ])
+        .onConflictDoNothing();
+    }
+    const delivered: Array<{ text: string; parseMode?: string }> = [];
+    const actions: string[] = [];
     const count = await notifyRunTelegram(
       teamId,
       "atask_notify",
       "Approval requested\nAllow deploy?",
-      async ({ text }) => {
-        delivered.push(text);
+      async ({ text, parseMode }) => {
+        delivered.push({ text, parseMode });
+      },
+      async ({ action }) => {
+        actions.push(action);
       },
     );
-    expect(count).toBe(1);
-    expect(delivered[0]).toContain("Approval requested");
-    expect(delivered[0]).toContain(`/${teamSlug}/runs/atask_notify`);
+    expect(count).toBeGreaterThanOrEqual(2);
+    expect(actions).toHaveLength(count);
+    expect(actions.every((action) => action === "typing")).toBe(true);
+    expect(delivered[0]?.text).toContain("Approval requested");
+    expect(delivered[0]?.text).toContain(`/${teamSlug}/runs/atask_notify`);
+    expect(delivered[0]?.parseMode).toBe("HTML");
+  });
+
+  test("formats markdown tables into Telegram-friendly compact text", () => {
+    const formatted = formatTelegramText(
+      [
+        "✅ Run completed",
+        "",
+        "| Donnée | Valeur |",
+        "|---|---|",
+        "| Température | 20 °C |",
+        "| Vent | 12 km/h |",
+      ].join("\n"),
+    );
+    expect(formatted).toContain("- Donnée: Température ; Valeur: 20 °C");
+    expect(formatted).toContain("- Donnée: Vent ; Valeur: 12 km/h");
+    expect(formatted).not.toContain("|---|");
+  });
+
+  test("formats long markdown notifications as Telegram HTML chunks", () => {
+    const parts = formatTelegramHtmlMessages(
+      [
+        "✅ Run completed",
+        "",
+        "## Result",
+        "",
+        "**Important**: keep `tokens` server-side.",
+        "",
+        "| Pattern | Verdict |",
+        "|---|---|",
+        "| BFF | Recommended |",
+        "",
+        "x".repeat(7_500),
+      ].join("\n"),
+    );
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => part.length <= 4096)).toBe(true);
+    expect(parts[0]).toContain("<b>Result</b>");
+    expect(parts[0]).toContain("<b>Important</b>");
+    expect(parts[0]).toContain("<code>tokens</code>");
+    expect(parts[0]).toContain("• Pattern: BFF ; Verdict: Recommended");
+  });
+
+  test("sends Telegram typing actions to paired chats without a message", async () => {
+    const actions: string[] = [];
+    const count = await sendRunTelegramAction(
+      teamId,
+      "typing",
+      async ({ action }) => {
+        actions.push(action);
+      },
+    );
+    expect(count).toBe(2);
+    expect(actions).toEqual(["typing", "typing"]);
   });
 
   test("checks status, pauses, resumes, approves, rejects, and kills runs from Telegram", async () => {

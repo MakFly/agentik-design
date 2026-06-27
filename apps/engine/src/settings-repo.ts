@@ -12,6 +12,7 @@ import {
   SUPPORTED_PROVIDERS,
   isSupportedProvider,
 } from "./providers-repo";
+import { PROVIDER_MODELS } from "@agentik/workflow-schema";
 
 const { appUsers, teams, orgMembers, orgInvitations } = schema;
 
@@ -49,8 +50,27 @@ type TeamProviderSettings = {
   defaultProvider?: string;
 };
 
+export type TeamEnvironmentColor =
+  | "success"
+  | "info"
+  | "warning"
+  | "danger"
+  | "muted";
+
+export type TeamEnvironment = {
+  id: string;
+  label: string;
+  color: TeamEnvironmentColor;
+};
+
+type TeamEnvironmentSettings = {
+  items?: TeamEnvironment[];
+  activeId?: string;
+};
+
 type TeamSettingsJson = {
   providers?: TeamProviderSettings;
+  environments?: TeamEnvironmentSettings;
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -60,21 +80,11 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
 };
 
-const PROVIDER_KINDS: Record<
-  string,
-  "anthropic" | "openai" | "self-hosted"
-> = {
+const PROVIDER_KINDS: Record<string, "anthropic" | "openai" | "self-hosted"> = {
   anthropic: "anthropic",
   openai: "openai",
   openrouter: "openai",
   google: "self-hosted",
-};
-
-const PROVIDER_MODELS: Record<string, string[]> = {
-  anthropic: ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4.5"],
-  openai: ["gpt-4o", "o4-mini"],
-  openrouter: ["openrouter/auto"],
-  google: ["gemini-2.0-flash"],
 };
 
 function providerId(key: string) {
@@ -109,6 +119,38 @@ async function getTeamSettings(teamId: string): Promise<TeamSettingsJson> {
 
 async function saveTeamSettings(teamId: string, settings: TeamSettingsJson) {
   await db.update(teams).set({ settings }).where(eq(teams.id, teamId));
+}
+
+const DEFAULT_ENVIRONMENTS: TeamEnvironment[] = [
+  { id: "dev", label: "Development", color: "success" },
+  { id: "staging", label: "Staging", color: "info" },
+  { id: "prod", label: "Production", color: "warning" },
+];
+
+function fallbackEnvironmentId() {
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv === "production") return "prod";
+  if (nodeEnv === "test") return "staging";
+  return "dev";
+}
+
+function normalizeEnvironments(raw?: TeamEnvironmentSettings) {
+  const items =
+    raw?.items?.filter((item) => item.id.trim() && item.label.trim()) ?? [];
+  const source = items.length > 0 ? "settings" : "node_env";
+  const normalizedItems = items.length > 0 ? items : DEFAULT_ENVIRONMENTS;
+  const activeId =
+    raw?.activeId && normalizedItems.some((item) => item.id === raw.activeId)
+      ? raw.activeId
+      : normalizedItems.some((item) => item.id === fallbackEnvironmentId())
+        ? fallbackEnvironmentId()
+        : normalizedItems[0]!.id;
+  return {
+    items: normalizedItems,
+    activeId,
+    source,
+    nodeEnv: process.env.NODE_ENV ?? "development",
+  };
 }
 
 function canManageMembers(role: OrgRole | null): boolean {
@@ -147,7 +189,9 @@ export async function updateUserProfile(userId: string, name: string) {
     .set({ name: trimmed })
     .where(eq(appUsers.id, userId))
     .returning({ name: appUsers.name });
-  return updated[0] ? { name: updated[0].name } : { error: "not_found" as const };
+  return updated[0]
+    ? { name: updated[0].name }
+    : { error: "not_found" as const };
 }
 
 export async function changeUserPassword(
@@ -244,6 +288,29 @@ export async function updateWorkspaceSettings(
     .where(eq(teams.id, teamId))
     .returning({ id: teams.id, slug: teams.slug, name: teams.name });
   return updated[0] ?? { error: "not_found" as const };
+}
+
+export async function getEnvironmentSettings(teamId: string) {
+  const settings = await getTeamSettings(teamId);
+  return normalizeEnvironments(settings.environments);
+}
+
+export async function updateEnvironmentSettings(
+  teamId: string,
+  input: { items: TeamEnvironment[]; activeId: string },
+) {
+  if (!input.items.some((item) => item.id === input.activeId)) {
+    return { error: "active_environment_missing" as const };
+  }
+  const seen = new Set<string>();
+  for (const item of input.items) {
+    if (seen.has(item.id)) return { error: "duplicate_environment" as const };
+    seen.add(item.id);
+  }
+  const settings = await getTeamSettings(teamId);
+  const environments = { items: input.items, activeId: input.activeId };
+  await saveTeamSettings(teamId, { ...settings, environments });
+  return normalizeEnvironments(environments);
 }
 
 /* ── Members & invitations ───────────────────────────────────────────── */
@@ -407,11 +474,9 @@ export async function getProvidersSettings(teamId: string) {
     providerCfg.defaultProvider &&
     isSupportedProvider(providerCfg.defaultProvider)
       ? providerCfg.defaultProvider
-      : SUPPORTED_PROVIDERS.find(
-          (p) =>
-            !disabled.has(p) &&
-            keys.find((k) => k.provider === p)?.hasKey,
-        ) ?? SUPPORTED_PROVIDERS[0];
+      : (SUPPORTED_PROVIDERS.find(
+          (p) => !disabled.has(p) && keys.find((k) => k.provider === p)?.hasKey,
+        ) ?? SUPPORTED_PROVIDERS[0]);
 
   const fallbackOrder =
     providerCfg.fallbackOrder?.filter((p) => isSupportedProvider(p)) ??
@@ -497,7 +562,10 @@ export async function updateProvidersPolicy(
   return getProvidersSettings(teamId);
 }
 
-export async function testProviderConnection(teamId: string, providerIdRaw: string) {
+export async function testProviderConnection(
+  teamId: string,
+  providerIdRaw: string,
+) {
   const key = providerKeyFromId(providerIdRaw);
   if (!key || !isSupportedProvider(key)) {
     return { ok: false, message: "Unknown provider" };

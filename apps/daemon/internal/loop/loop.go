@@ -104,14 +104,27 @@ func (l *Loop) meta() map[string]any {
 
 func (l *Loop) register(ctx context.Context) (*protocol.RegisterResponse, error) {
 	req := protocol.RegisterRequest{
-		Team: l.cfg.Team,
-		Name: l.cfg.Name,
-		Meta: l.meta(),
+		Team:      l.cfg.Team,
+		Name:      l.cfg.Name,
+		LegacyIds: legacyIdsExcept(l.cfg.Name),
+		Meta:      l.meta(),
 	}
 	for _, kind := range l.cfg.RuntimeKinds {
 		req.Runtimes = append(req.Runtimes, protocol.RegisterRuntime{Kind: kind})
 	}
 	return l.client.Register(ctx, req)
+}
+
+// legacyIdsExcept returns prior machine identities to reconcile at register,
+// dropping the current name so we never ask the engine to match this row to itself.
+func legacyIdsExcept(name string) []string {
+	out := []string{}
+	for _, id := range identity.LegacyDaemonIDs() {
+		if id != name {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // pollBundle claims one bundle command, runs it (when this host opted in), reports the
@@ -173,6 +186,21 @@ func (l *Loop) execute(ctx context.Context, task protocol.ClaimedTask, kind stri
 	if rt == nil {
 		_ = l.client.Fail(ctx, task.ID, "no runtime for kind "+kind)
 		return
+	}
+	if aware, ok := rt.(runtime.ToolAware); ok {
+		rt = aware.WithToolInvoker(func(ctx context.Context, taskID string, toolID string, args map[string]any) (any, error) {
+			res, err := l.client.InvokeTool(ctx, taskID, protocol.InvokeToolRequest{
+				ToolID:    toolID,
+				Arguments: args,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if res == nil || !res.OK {
+				return nil, nil
+			}
+			return res.Result, nil
+		})
 	}
 	log.Printf("task %s claimed (kind=%s)", task.ID, kind)
 

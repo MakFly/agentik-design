@@ -7,7 +7,10 @@ export const workspaceBody = z
       .string()
       .trim()
       .toLowerCase()
-      .regex(/^[a-z0-9-]+$/, "Slug must use lowercase letters, numbers, and hyphens")
+      .regex(
+        /^[a-z0-9-]+$/,
+        "Slug must use lowercase letters, numbers, and hyphens",
+      )
       .optional(),
   })
   .refine((d) => d.name !== undefined || d.slug !== undefined, {
@@ -16,14 +19,14 @@ export const workspaceBody = z
 
 export const memberRoleBody = z.object({
   role: z.enum(["owner", "admin", "engineer", "operator", "viewer"], {
-    errorMap: () => ({ message: "Invalid role" }),
+    error: "Invalid role",
   }),
 });
 
 export const inviteMemberBody = z.object({
   email: z.string().trim().email("Enter a valid email address"),
   role: z.enum(["owner", "admin", "engineer", "operator", "viewer"], {
-    errorMap: () => ({ message: "Invalid role" }),
+    error: "Invalid role",
   }),
 });
 
@@ -38,7 +41,7 @@ export const providerPatchBody = z
 
 export const providersPolicyBody = z.object({
   costCeilingPerDayCents: z
-    .number({ invalid_type_error: "Cost ceiling must be a number" })
+    .number({ error: "Cost ceiling must be a number" })
     .int("Cost ceiling must be a whole number")
     .min(0, "Cost ceiling cannot be negative")
     .optional(),
@@ -47,4 +50,37 @@ export const providersPolicyBody = z.object({
 
 export const providerKeyBody = z.object({
   key: z.string().trim().min(8, "API key must be at least 8 characters"),
+});
+
+export const environmentColorSchema = z.enum([
+  "success",
+  "info",
+  "warning",
+  "danger",
+  "muted",
+]);
+
+export const environmentIdSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(
+    /^[a-z0-9_-]+$/,
+    "Environment id must use letters, numbers, dashes, or underscores",
+  )
+  .min(1)
+  .max(32);
+
+export const environmentBody = z.object({
+  activeId: environmentIdSchema,
+  items: z
+    .array(
+      z.object({
+        id: environmentIdSchema,
+        label: z.string().trim().min(1).max(40),
+        color: environmentColorSchema.default("muted"),
+      }),
+    )
+    .min(1, "Add at least one environment")
+    .max(12, "Keep the environment list focused"),
 });

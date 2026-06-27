@@ -47,6 +47,16 @@ describe("runStreamReducer", () => {
     expect(call.response).toEqual({ ok: true });
   });
 
+  it("is idempotent on a duplicate tool_call.started (replay safety)", () => {
+    const started: RunEvent = { type: "tool_call.started", stepId: STEP, call: { id: "tc1", toolId: "t" as never, action: "search", request: { q: "x" } } };
+    const next = apply(emptyRunStreamState, [
+      [{ type: "step.started", step: { id: STEP, index: 0, actor: { kind: "agent", agentId: "a" as never, name: "A" }, summary: "" } }],
+      [started],
+      [started],
+    ]);
+    expect(next.steps[0].toolCalls).toHaveLength(1);
+  });
+
   it("marks a step failed with its error", () => {
     const next = apply(emptyRunStreamState, [
       [{ type: "step.started", step: { id: STEP, index: 0, actor: { kind: "tool", toolId: "t" as never, name: "search" }, summary: "" } }],

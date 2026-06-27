@@ -2,15 +2,15 @@
 
 import {
   MarkdownTextPrimitive,
-  type MarkdownTextPrimitiveProps,
 } from "@assistant-ui/react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 function cx(...classes: Array<string | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-const markdownComponents: MarkdownTextPrimitiveProps["components"] = {
+const markdownComponents = {
   p: ({ className, ...props }) => (
     <p className={cx("mb-2.5 last:mb-0", className)} {...props} />
   ),
@@ -80,7 +80,7 @@ const markdownComponents: MarkdownTextPrimitiveProps["components"] = {
   td: ({ className, ...props }) => (
     <td className={cx("border border-border px-2 py-1.5 text-left", className)} {...props} />
   ),
-};
+} satisfies NonNullable<Options["components"]>;
 
 export function MarkdownText() {
   return (
@@ -89,5 +89,21 @@ export function MarkdownText() {
       components={markdownComponents}
       className="aui-md max-w-[70ch] text-base leading-[1.625] text-foreground"
     />
+  );
+}
+
+export function MarkdownBlock({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <div className={cx("aui-md max-w-[70ch] text-base leading-[1.625] text-foreground", className)}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 }

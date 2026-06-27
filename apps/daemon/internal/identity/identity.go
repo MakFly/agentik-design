@@ -57,3 +57,34 @@ func DeviceName() string {
 	}
 	return h
 }
+
+// LegacyDaemonIDs returns identifiers a previous daemon version may have
+// registered this machine under, before the stable UUID in daemon.id became the
+// identity. Pre-UUID builds used the OS hostname as the register name; the engine
+// matches these so a host that upgrades is adopted in place instead of spawning a
+// duplicate row (hostname → UUID transition). Best-effort: empty on hostname error.
+func LegacyDaemonIDs() []string {
+	h, err := os.Hostname()
+	if err != nil {
+		return []string{}
+	}
+	return legacyFormsOf(h)
+}
+
+// legacyFormsOf returns the distinct, non-empty prior register names derivable
+// from a hostname: the raw value and its mDNS ".local"-stripped form.
+func legacyFormsOf(host string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	add(host)
+	add(strings.TrimSuffix(host, ".local"))
+	return out
+}

@@ -93,7 +93,9 @@ export async function sendChatMessage(
     .limit(1);
   if (!session) return null;
 
-  await db.insert(chatMessages).values({ id: genId("cmsg"), chatSessionId: sessionId, role: "user", content });
+  const userMessageId = genId("cmsg");
+  await db.insert(chatMessages).values({ id: userMessageId, chatSessionId: sessionId, role: "user", content });
+  const prompt = await buildChatPrompt(sessionId, userMessageId, content);
 
   const taskId = genId("atask");
   await db.insert(agentTasks).values({
@@ -103,11 +105,103 @@ export async function sendChatMessage(
     status: "queued",
     kind: "chat",
     chatSessionId: sessionId,
-    input: { prompt: content },
+    input: { prompt, rawPrompt: content },
   });
   await db.update(chatSessions).set({ updatedAt: sql`now()` }).where(eq(chatSessions.id, sessionId));
   hub.publish(teamId, { kind: "run", action: "created", runId: taskId });
   return { taskId };
+}
+
+async function buildChatPrompt(
+  sessionId: string,
+  currentMessageId: string,
+  currentContent: string,
+) {
+  const prior = (
+    await db
+      .select({
+        id: chatMessages.id,
+        role: chatMessages.role,
+        content: chatMessages.content,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.chatSessionId, sessionId))
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(14)
+  )
+    .filter((message) => message.id !== currentMessageId)
+    .reverse();
+
+  if (!prior.length) return currentContent;
+
+  const lines = [
+    "# Conversation context",
+    "Use this recent session history to resolve follow-ups, pronouns, locations, user preferences, and prior constraints. Do not repeat the history unless it is useful.",
+    "",
+  ];
+  for (const message of prior) {
+    const role = message.role === "assistant" ? "Assistant" : "User";
+    lines.push(`${role}: ${compactPromptText(message.content, 1_500)}`);
+  }
+  lines.push("", "---", "", "# Current request", currentContent);
+  return lines.join("\n");
+}
+
+function compactPromptText(value: string, max: number) {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max - 1)}…`;
+}
+
+export async function sendAgentChatTurn(
+  teamId: string,
+  input: { agentId: string; content: string; creatorId: string; title?: string },
+): Promise<
+  | { runId: string; chatSessionId: string }
+  | { error: "not_found" | "not_published" | "empty_input" }
+> {
+  const content = input.content.trim();
+  if (!content) return { error: "empty_input" };
+  const [agent] = await db
+    .select({ id: agents.id, liveVersionId: agents.liveVersionId })
+    .from(agents)
+    .where(and(eq(agents.id, input.agentId), eq(agents.teamId, teamId)))
+    .limit(1);
+  if (!agent) return { error: "not_found" };
+  if (!agent.liveVersionId) return { error: "not_published" };
+
+  const creatorId = input.creatorId.trim();
+  const [existing] = await db
+    .select({ id: chatSessions.id })
+    .from(chatSessions)
+    .where(
+      and(
+        eq(chatSessions.teamId, teamId),
+        eq(chatSessions.agentId, input.agentId),
+        eq(chatSessions.creatorId, creatorId),
+        eq(chatSessions.status, "active"),
+      ),
+    )
+    .orderBy(desc(chatSessions.updatedAt))
+    .limit(1);
+  let chatSessionId = existing?.id;
+  if (!chatSessionId) {
+    const [created] = await db
+      .insert(chatSessions)
+      .values({
+        id: genId("chat"),
+        teamId,
+        agentId: input.agentId,
+        creatorId,
+        title: input.title?.trim() || content.slice(0, 80),
+      })
+      .returning({ id: chatSessions.id });
+    chatSessionId = created!.id;
+  }
+
+  const sent = await sendChatMessage(teamId, chatSessionId, content);
+  if (!sent) return { error: "not_found" };
+  return { runId: sent.taskId, chatSessionId };
 }
 
 /**

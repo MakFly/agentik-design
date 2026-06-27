@@ -21,12 +21,12 @@ interface Seed {
 }
 
 const SEED: Seed[] = [
-  { id: "agt_triage", name: "Triage Agent", role: "Tier-1 triage", goal: "Classify & route tickets", model: "claude-opus-4", health: "healthy", owner: "alice", tags: ["support"], lastRunAt: "2026-05-31T14:22:00Z", successRate: 0.982, avgLatencyMs: 3100, avgCostCents: 4, runs24h: 210 },
-  { id: "agt_resolve", name: "Resolve Agent", role: "Resolution", goal: "Resolve billing issues", model: "claude-opus-4", health: "healthy", owner: "alice", tags: ["support", "billing"], lastRunAt: "2026-05-31T14:22:00Z", successRate: 0.96, avgLatencyMs: 5400, avgCostCents: 11, runs24h: 142 },
-  { id: "agt_scraper", name: "Scraper", role: "Data collection", goal: "Crawl & extract", model: "claude-sonnet-4", health: "degraded", owner: "bob", tags: ["data"], lastRunAt: "2026-05-31T14:18:00Z", successRate: 0.713, avgLatencyMs: 2200, avgCostCents: 2, runs24h: 88 },
-  { id: "agt_invoice", name: "Invoice Agent", role: "Finance ops", goal: "Generate & send invoices", model: "claude-haiku-4.5", health: "idle", owner: "carol", tags: ["finance"], lastRunAt: "2026-05-31T13:10:00Z", successRate: 0.991, avgLatencyMs: 1200, avgCostCents: 1, runs24h: 30 },
-  { id: "agt_classifier", name: "Old Classifier", role: "Legacy", goal: "Classify intents", model: "gpt-4o", health: "error", owner: "bob", tags: ["legacy"], lastRunAt: "2026-05-31T11:30:00Z", successRate: 0.42, avgLatencyMs: 0, avgCostCents: 0, runs24h: 3 },
-  { id: "agt_summarizer", name: "Summarizer", role: "Content", goal: "Summarize long threads", model: "claude-sonnet-4", health: "healthy", owner: "carol", tags: ["content"], lastRunAt: "2026-05-31T14:05:00Z", successRate: 0.95, avgLatencyMs: 2800, avgCostCents: 3, runs24h: 64 },
+  { id: "agt_triage", name: "Triage Agent", role: "Tier-1 triage", goal: "Classify & route tickets", model: "claude-fable-5", health: "healthy", owner: "alice", tags: ["support"], lastRunAt: "2026-05-31T14:22:00Z", successRate: 0.982, avgLatencyMs: 3100, avgCostCents: 4, runs24h: 210 },
+  { id: "agt_resolve", name: "Resolve Agent", role: "Resolution", goal: "Resolve billing issues", model: "claude-opus-4-8", health: "healthy", owner: "alice", tags: ["support", "billing"], lastRunAt: "2026-05-31T14:22:00Z", successRate: 0.96, avgLatencyMs: 5400, avgCostCents: 11, runs24h: 142 },
+  { id: "agt_scraper", name: "Scraper", role: "Data collection", goal: "Crawl & extract", model: "claude-sonnet-4-6", health: "degraded", owner: "bob", tags: ["data"], lastRunAt: "2026-05-31T14:18:00Z", successRate: 0.713, avgLatencyMs: 2200, avgCostCents: 2, runs24h: 88 },
+  { id: "agt_invoice", name: "Invoice Agent", role: "Finance ops", goal: "Generate & send invoices", model: "claude-haiku-4-5", health: "idle", owner: "carol", tags: ["finance"], lastRunAt: "2026-05-31T13:10:00Z", successRate: 0.991, avgLatencyMs: 1200, avgCostCents: 1, runs24h: 30 },
+  { id: "agt_classifier", name: "Old Classifier", role: "Legacy", goal: "Classify intents", model: "gpt-5.4-mini", health: "error", owner: "bob", tags: ["legacy"], lastRunAt: "2026-05-31T11:30:00Z", successRate: 0.42, avgLatencyMs: 0, avgCostCents: 0, runs24h: 3 },
+  { id: "agt_summarizer", name: "Summarizer", role: "Content", goal: "Summarize long threads", model: "claude-sonnet-4-6", health: "healthy", owner: "carol", tags: ["content"], lastRunAt: "2026-05-31T14:05:00Z", successRate: 0.95, avgLatencyMs: 2800, avgCostCents: 3, runs24h: 64 },
 ];
 
 export const agents: AgentRow[] = SEED.map((s) => ({

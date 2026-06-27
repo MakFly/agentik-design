@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -69,10 +70,8 @@ func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (a
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// `-o` captures only Codex's final assistant message (clean result, no transcript
-	// noise). `--skip-git-repo-check` lets it run in the throwaway work dir; the
-	// `danger-full-access` sandbox is required because Codex's own bubblewrap sandbox
-	// fails in a headless service context (the daemon already isolates the work dir).
+	// `-o` captures Codex's final assistant message without truncation while `--json`
+	// streams progress events we can persist as the run timeline.
 	lastMsgFile, err := os.CreateTemp("", "agentik-codex-last-message-*")
 	if err != nil {
 		return nil, fmt.Errorf("codex output file: %w", err)
@@ -80,7 +79,7 @@ func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (a
 	lastMsg := lastMsgFile.Name()
 	_ = lastMsgFile.Close()
 	defer os.Remove(lastMsg)
-	args := []string{"exec", "--sandbox", "danger-full-access", "--skip-git-repo-check", "--color", "never", "-o", lastMsg}
+	args := []string{"exec", "--sandbox", "danger-full-access", "--skip-git-repo-check", "--color", "never", "--json", "-o", lastMsg}
 	if m := pick(in.Model, c.Model); m != "" {
 		args = append(args, "-m", m)
 	}
@@ -98,12 +97,37 @@ func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (a
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	runErr := cmd.Run()
-	out := strings.TrimSpace(readFileOr(lastMsg, stdout.String()))
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("spawn codex: %w", err)
+	}
+
+	var stdoutFallback bytes.Buffer
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		stdoutFallback.WriteString(line)
+		stdoutFallback.WriteByte('\n')
+		emitCodexEvent(line, emit)
+	}
+	if err := sc.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("read codex output: %w", err)
+	}
+
+	runErr := cmd.Wait()
+	out := strings.TrimSpace(readFileOr(lastMsg, stdoutFallback.String()))
 	if runErr != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("codex timed out after %s", timeout)
@@ -122,6 +146,77 @@ func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (a
 		emit(protocol.TaskMessage{Type: "text", Content: out})
 	}
 	return map[string]any{"result": out}, nil
+}
+
+func emitCodexEvent(line string, emit Emit) {
+	var ev map[string]any
+	if json.Unmarshal([]byte(line), &ev) != nil {
+		emit(protocol.TaskMessage{Type: "thinking", Content: truncateCodexLine(line, 2_000)})
+		return
+	}
+	typ, _ := ev["type"].(string)
+	if typ == "" {
+		return
+	}
+	lower := strings.ToLower(typ)
+	switch {
+	case strings.Contains(lower, "exec") && (strings.Contains(lower, "begin") || strings.Contains(lower, "start")):
+		emit(protocol.TaskMessage{Type: "tool_use", Tool: "shell", Input: codexEventPayload(ev)})
+	case strings.Contains(lower, "exec") && (strings.Contains(lower, "end") || strings.Contains(lower, "complete")):
+		emit(protocol.TaskMessage{Type: "tool_result", Tool: "shell", Output: codexEventPayload(ev)})
+	case strings.Contains(lower, "error"):
+		emit(protocol.TaskMessage{Type: "error", Content: codexEventText(ev, typ)})
+	case strings.Contains(lower, "turn") || strings.Contains(lower, "task") || strings.Contains(lower, "session"):
+		emit(protocol.TaskMessage{Type: "thinking", Content: codexEventText(ev, typ)})
+	}
+}
+
+func codexEventPayload(ev map[string]any) any {
+	if cmd, ok := findString(ev, "command", "cmd"); ok {
+		return map[string]any{"command": cmd}
+	}
+	return ev
+}
+
+func codexEventText(ev map[string]any, fallback string) string {
+	if text, ok := findString(ev, "message", "text", "summary", "status"); ok {
+		return truncateCodexLine(text, 2_000)
+	}
+	if b, err := json.Marshal(ev); err == nil {
+		return truncateCodexLine(string(b), 2_000)
+	}
+	return fallback
+}
+
+func findString(v any, keys ...string) (string, bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, key := range keys {
+			if s, ok := x[key].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s), true
+			}
+		}
+		for _, child := range x {
+			if s, ok := findString(child, keys...); ok {
+				return s, true
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if s, ok := findString(child, keys...); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+func truncateCodexLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // readFileOr returns the trimmed file contents, or the fallback when the file is

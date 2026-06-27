@@ -183,30 +183,45 @@ async function runAgentik(args: string[]): Promise<CommandResult> {
 }
 
 export async function getLocalDaemonStatus(): Promise<LocalDaemonStatus> {
-  const orchestratorAvailable = await isOrchestratorAvailable();
-  const health = await pollDaemonHealth();
-  const [result, installed] = await Promise.all([
-    orchestratorAvailable
-      ? runAgentik(["daemon", "status"])
-      : Promise.resolve({
-          ok: false,
-          command: "agentik",
-          stdout: "",
-          stderr: "Local orchestrator unavailable on this host.",
-        }),
+  const [orchestratorAvailable, health, installed] = await Promise.all([
+    isOrchestratorAvailable(),
+    pollDaemonHealth(),
     configExists(),
   ]);
-  const running =
-    Boolean(health?.running) || result.stdout.includes("running pid=");
+
+  // Fast path: a live /health response is authoritative for running/pid/device.
+  // This endpoint is polled every few seconds on every page, so when the daemon
+  // is up we skip spawning the `agentik daemon status` subprocess entirely.
+  if (health?.running) {
+    return {
+      ok: true,
+      orchestratorAvailable,
+      installed,
+      running: true,
+      status: health.deviceName
+        ? `Daemon running on ${health.deviceName}`
+        : "Daemon running on this machine",
+      configPath: defaultConfigPath(),
+      health,
+    };
+  }
+
+  // Daemon not answering /health → fall back to the CLI to tell installed-but-
+  // stopped from not-installed and to surface its status message.
+  const result = orchestratorAvailable
+    ? await runAgentik(["daemon", "status"])
+    : {
+        ok: false,
+        command: "agentik",
+        stdout: "",
+        stderr: "Local orchestrator unavailable on this host.",
+      };
   return {
     ok: orchestratorAvailable ? result.ok : false,
     orchestratorAvailable,
     installed,
-    running,
-    status:
-      health?.deviceName && running
-        ? `Daemon running on ${health.deviceName}`
-        : result.stdout.trim() || result.stderr.trim(),
+    running: result.stdout.includes("running pid="),
+    status: result.stdout.trim() || result.stderr.trim(),
     command: result.command,
     configPath: defaultConfigPath(),
     health: health ?? undefined,

@@ -14,6 +14,7 @@ export function ConfigPreview({ config }: { config: AgentConfig }) {
       <KeyValueList
         items={[
           { label: "Runtime", value: config.runtimeKind ?? "echo" },
+          { label: "Computer", value: config.runtimeBinding?.daemonId ?? "any compatible" },
           { label: "Model", value: meta?.label ?? config.model.model },
           { label: "Temperature", value: config.model.temperature },
           { label: "Tools", value: config.tools.length },

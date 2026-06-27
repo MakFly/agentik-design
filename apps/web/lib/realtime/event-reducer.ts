@@ -112,6 +112,10 @@ export function runStreamReducer(state: RunStreamState, event: RunEvent, ts = ""
     case "tool_call.started": {
       const step = state.steps.find((s) => s.id === event.stepId);
       if (!step) return state;
+      // Idempotent on replay: a Last-Event-ID gap recovery can re-deliver a
+      // tool_call.started we already applied. Appending blindly would duplicate
+      // the call id and break React keys, so skip if it's already present.
+      if (step.toolCalls.some((c) => c.id === event.call.id)) return state;
       const call = { ...event.call, status: "running" as const };
       return {
         ...state,

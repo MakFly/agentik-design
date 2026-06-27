@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bot, Clock, Coins, FolderKanban, GitBranch, ListTodo, TerminalSquare, Workflow } from "lucide-react";
-import { useRun } from "./api";
+import { useRun, type RunDetail } from "./api";
 import { Timeline } from "./timeline";
 import { StepFocusPanel } from "./step-focus-panel";
 import { RunSummary } from "./run-summary";
@@ -109,7 +109,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
 
   return (
     <div className="flex min-h-[calc(100dvh-var(--navbar-h)-3rem)] flex-col md:min-h-[calc(100dvh-var(--navbar-h)-4rem)]">
-      <RunDetailHeader team={team} run={run} steps={steps} isLive={isLive} connection={connection} />
+      <RunDetailHeader team={team} run={run} steps={steps} placement={data.placement} isLive={isLive} connection={connection} />
 
       {data.projectContext ? <ProjectContextStrip team={team} context={data.projectContext} /> : null}
 
@@ -152,17 +152,28 @@ function RunDetailHeader({
   team,
   run,
   steps,
+  placement,
   isLive,
   connection,
 }: {
   team: string;
   run: Run;
   steps: Step[];
+  placement?: RunDetail["placement"];
   isLive: boolean;
   connection: ReturnType<typeof useRunConnection>;
 }) {
   const SubjectIcon = run.subject.kind === "agent" ? Bot : Workflow;
   const succeeded = steps.filter((step) => step.status === "succeeded").length;
+  const placementLabel = placement
+    ? [
+        placement.runtimeKind,
+        placement.daemonName ?? placement.daemonId ?? "any compatible computer",
+        placement.pinned ? "pinned" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
   return (
     <header className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
       <div className="flex min-w-0 items-center gap-2">
@@ -185,6 +196,12 @@ function RunDetailHeader({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        {placementLabel ? (
+          <span className="inline-flex h-8 max-w-[280px] items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-muted-foreground">
+            <TerminalSquare className="size-3.5 shrink-0" />
+            <span className="truncate">{placementLabel}</span>
+          </span>
+        ) : null}
         <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-muted-foreground">
           <ListTodo className="size-3.5" />
           <span className="tabular-nums">{succeeded}/{run.stepCount}</span>

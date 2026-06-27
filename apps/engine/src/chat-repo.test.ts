@@ -81,6 +81,26 @@ d("chat-spawns-task", () => {
     expect(view?.messages[1]).toMatchObject({ role: "assistant", content: "pong", taskId });
   });
 
+  test("later turns include recent conversation context in the runtime prompt", async () => {
+    const s = (await createChatSession(teamId, { agentId }))!;
+    const first = (await sendChatMessage(teamId, s.id, "Donne moi la météo au Havre"))!;
+    expect(await startTask(first.taskId)).toBe(true);
+    expect(await completeTask(first.taskId, { result: "Il fait 20 °C au Havre." })).toBe(true);
+
+    const second = (await sendChatMessage(teamId, s.id, "Et demain ?"))!;
+    const [task] = await db
+      .select({ input: agentTasks.input })
+      .from(agentTasks)
+      .where(eq(agentTasks.id, second.taskId))
+      .limit(1);
+
+    const prompt = (task?.input as { prompt: string } | undefined)?.prompt ?? "";
+    expect(prompt).toContain("# Conversation context");
+    expect(prompt).toContain("User: Donne moi la météo au Havre");
+    expect(prompt).toContain("Assistant: Il fait 20 °C au Havre.");
+    expect(prompt).toContain("# Current request\nEt demain ?");
+  });
+
   test("sending to a session outside the team is rejected", async () => {
     const other = await resolveTeam(`itest-chat-other-${Date.now()}`);
     const foreignAgent = genId("agt");

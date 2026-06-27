@@ -11,8 +11,13 @@ import {
 } from "./learning-repo";
 import { appendAssistantTurn } from "./chat-repo";
 import { resolveProviderEnv } from "./providers-repo";
-import { notifyRunTelegram } from "./channels-repo";
-import type { TaskErrorReason, TaskMessageType } from "./db/schema";
+import { liveRuntimeTools } from "./mcp-repo";
+import { notifyRunTelegram, startRunTelegramTypingHeartbeat } from "./channels-repo";
+import type {
+  AgentTaskStatus,
+  TaskErrorReason,
+  TaskMessageType,
+} from "./db/schema";
 
 const {
   daemons,
@@ -33,6 +38,9 @@ export interface RegisterInput {
   /** Team resolved server-side from an org-scoped daemon token (preferred). */
   teamId?: string;
   name: string;
+  /** Prior display-names this machine may already be registered under (hostname →
+   *  UUID transition). Matched when neither deviceId nor the current name hits. */
+  legacyNames?: string[];
   meta?: Record<string, unknown>;
   runtimes: Array<{
     kind: string;
@@ -40,59 +48,169 @@ export interface RegisterInput {
   }>;
 }
 
+/** Keep a previously-stored deviceId when a re-register payload omits it, so a
+ *  transient meta-less check-in can't strip the dedup key off an existing row. */
+function preserveDeviceId(
+  next: Record<string, unknown> | null,
+  prev: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const prevId = (prev as { deviceId?: string } | null)?.deviceId;
+  if (!next || (next as { deviceId?: string }).deviceId || !prevId) return next;
+  return { ...next, deviceId: prevId };
+}
+
 export async function registerDaemon(input: RegisterInput) {
   const teamId =
     input.teamId ?? (input.team ? await resolveTeam(input.team) : null);
   if (!teamId) throw new Error("register: no team resolved");
 
-  const [existing] = await db
-    .select()
-    .from(daemons)
-    .where(and(eq(daemons.teamId, teamId), eq(daemons.name, input.name)))
-    .limit(1);
+  const deviceId =
+    (input.meta as { deviceId?: string } | null)?.deviceId ?? null;
 
-  let daemonId: string;
-  if (existing) {
-    daemonId = existing.id;
-    await db
-      .update(daemons)
-      .set({
-        status: "online",
-        lastHeartbeatAt: sql`now()`,
-        meta: input.meta ?? null,
-      })
-      .where(eq(daemons.id, daemonId));
-    await db.delete(runtimes).where(eq(runtimes.daemonId, daemonId));
-  } else {
-    daemonId = genId("daemon");
-    await db
-      .insert(daemons)
-      .values({
-        id: daemonId,
+  // The whole register is atomic: matching, the daemon upsert, and the
+  // delete+reinsert of runtimes must not interleave with a concurrent register.
+  const { daemonId, created } = await db.transaction(async (tx) => {
+    // Dedup on the stable machine identity (deviceId) when present — the display
+    // `name` changes across daemon versions (hostname → persistent UUID). Fall
+    // back to `name` so a legacy row (registered before deviceId existed) is
+    // adopted and backfilled here instead of spawning a duplicate on the first
+    // post-upgrade re-register.
+    let existing =
+      deviceId != null
+        ? (
+            await tx
+              .select()
+              .from(daemons)
+              .where(
+                and(
+                  eq(daemons.teamId, teamId),
+                  eq(sql`${daemons.meta}->>'deviceId'`, deviceId),
+                ),
+              )
+              .limit(1)
+          )[0]
+        : undefined;
+    if (!existing) {
+      // Match the current name plus any legacy identities (e.g. the pre-UUID
+      // hostname), so a host that upgraded its identity adopts its old row.
+      const names = [input.name, ...(input.legacyNames ?? [])];
+      existing = (
+        await tx
+          .select()
+          .from(daemons)
+          .where(and(eq(daemons.teamId, teamId), inArray(daemons.name, names)))
+          .limit(1)
+      )[0];
+    }
+
+    let id: string;
+    if (existing) {
+      id = existing.id;
+      await tx
+        .update(daemons)
+        .set({
+          name: input.name,
+          status: "online",
+          lastHeartbeatAt: sql`now()`,
+          meta: preserveDeviceId(input.meta ?? null, existing.meta),
+        })
+        .where(eq(daemons.id, id));
+      await tx.delete(runtimes).where(eq(runtimes.daemonId, id));
+    } else {
+      id = genId("daemon");
+      await tx.insert(daemons).values({
+        id,
         teamId,
         name: input.name,
         status: "online",
         lastHeartbeatAt: sql`now()`,
         meta: input.meta ?? null,
       });
-  }
+    }
 
-  const created = await db
-    .insert(runtimes)
-    .values(
-      input.runtimes.map((r) => ({
-        id: genId("runtime"),
-        daemonId,
-        teamId,
-        kind: r.kind,
-        status: "online" as const,
-        capabilities: r.capabilities ?? null,
-      })),
-    )
-    .returning({ id: runtimes.id, kind: runtimes.kind });
+    const rows = await tx
+      .insert(runtimes)
+      .values(
+        input.runtimes.map((r) => ({
+          id: genId("runtime"),
+          daemonId: id,
+          teamId,
+          kind: r.kind,
+          status: "online" as const,
+          capabilities: r.capabilities ?? null,
+        })),
+      )
+      .returning({ id: runtimes.id, kind: runtimes.kind });
+
+    return { daemonId: id, created: rows };
+  });
 
   hub.publish(teamId, { kind: "presence" });
   return { daemonId, teamId, runtimes: created };
+}
+
+/** In-flight task statuses that block forgetting a daemon (would dangle their refs). */
+const ACTIVE_TASK_STATUS: AgentTaskStatus[] = [
+  "dispatched",
+  "running",
+  "paused",
+  "waiting_approval",
+];
+/** A daemon is only "forgettable" once it has been silent past the online-flap
+ *  window (engine marks offline at 15s); 120s also covers a few missed beats. */
+const DELETE_MIN_OFFLINE_MS = 120_000;
+
+export type DeleteDaemonResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" | "online" | "busy" };
+
+/**
+ * Forget a daemon from a team. Cascades remove its runtimes and bundle commands;
+ * project workspaces null out their daemon link (agent_tasks keep informational,
+ * FK-less refs). Scoped by teamId so a workspace can only drop its own machines.
+ * Refuses a still-beating daemon or one with in-flight tasks — mirrors the UI's
+ * offline-only affordance server-side so a brief blip can't zombie a live machine.
+ */
+export async function deleteDaemon(
+  teamId: string,
+  daemonId: string,
+): Promise<DeleteDaemonResult> {
+  const [row] = await db
+    .select({ lastHeartbeatAt: daemons.lastHeartbeatAt })
+    .from(daemons)
+    .where(and(eq(daemons.id, daemonId), eq(daemons.teamId, teamId)))
+    .limit(1);
+  if (!row) return { ok: false, reason: "not_found" };
+
+  if (row.lastHeartbeatAt) {
+    // Postgres emits a 2-digit offset ("+00"); Date.parse needs "+00:00".
+    const ts = Date.parse(
+      String(row.lastHeartbeatAt)
+        .replace(" ", "T")
+        .replace(/([+-]\d{2})$/, "$1:00"),
+    );
+    if (!Number.isNaN(ts) && Date.now() - ts < DELETE_MIN_OFFLINE_MS) {
+      return { ok: false, reason: "online" };
+    }
+  }
+
+  const [busy] = await db
+    .select({ id: agentTasks.id })
+    .from(agentTasks)
+    .where(
+      and(
+        eq(agentTasks.daemonId, daemonId),
+        inArray(agentTasks.status, ACTIVE_TASK_STATUS),
+      ),
+    )
+    .limit(1);
+  if (busy) return { ok: false, reason: "busy" };
+
+  await db
+    .delete(daemons)
+    .where(and(eq(daemons.id, daemonId), eq(daemons.teamId, teamId)));
+  hub.publish(teamId, { kind: "presence" });
+  return { ok: true };
 }
 
 export async function getDaemonTeamId(
@@ -290,7 +408,10 @@ export async function claimTask(
       SELECT at.id
       FROM ${agentTasks} at
       JOIN ${schema.agents} a ON a.id = at.agent_id
-      WHERE at.team_id = ${rt.teamId} AND at.status = 'queued' AND a.runtime_kind = ${rt.kind}
+      WHERE at.team_id = ${rt.teamId}
+        AND at.status = 'queued'
+        AND a.runtime_kind = ${rt.kind}
+        AND (a.preferred_daemon_id IS NULL OR a.preferred_daemon_id = ${rt.daemonId})
       ORDER BY at.priority DESC, at.created_at ASC
       FOR UPDATE OF at SKIP LOCKED
       LIMIT 1
@@ -333,6 +454,7 @@ export async function claimTask(
       prompt: preamble + prompt,
       ...(ctx.systemPrompt ? { systemPrompt: ctx.systemPrompt } : {}),
       ...(ctx.model ? { model: ctx.model } : {}),
+      tools: await liveRuntimeTools(task.teamId, task.agentId),
     };
     task.context = ctx;
     // Inject the org's runtime provider keys so the runtime (hermes/claude…)
@@ -400,6 +522,7 @@ export async function startTask(taskId: string): Promise<boolean> {
     action: "running",
     runId: taskId,
   });
+  startRunTelegramTypingHeartbeat(updated[0].teamId, taskId);
   return true;
 }
 
@@ -617,7 +740,10 @@ export async function completeTask(
   await notifyRunTelegram(
     updated[0].teamId,
     taskId,
-    `Run completed\n${resultText(result).slice(0, 500)}`,
+    `✅ Run completed\n\n${resultText(result)}`,
+    undefined,
+    undefined,
+    { includeLink: false },
   ).catch(() => undefined);
   // Moat: kick off the propose-only review as soon as the run finishes (best-effort;
   // never let a review hiccup fail task completion). Idempotent per run.
@@ -685,7 +811,10 @@ export async function failTask(
   await notifyRunTelegram(
     updated[0].teamId,
     taskId,
-    `Run failed\n${error}`,
+    `❌ Run failed\n\n${error}`,
+    undefined,
+    undefined,
+    { includeLink: false },
   ).catch(() => undefined);
   // A failed run is exactly when the reviewer proposes a lesson — trigger it too.
   await ensureRunReview(updated[0].teamId, taskId).catch(() => undefined);

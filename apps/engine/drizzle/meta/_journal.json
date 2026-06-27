@@ -141,6 +141,48 @@
       "when": 1782439200000,
       "tag": "0019_onboarding_questionnaire",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1782442500000,
+      "tag": "0020_user_team_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1782489345162,
+      "tag": "0021_mcp_remote_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1782489675278,
+      "tag": "0022_misty_trish_tilby",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1782491567121,
+      "tag": "0023_furry_daimon_hellstrom",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1782493320173,
+      "tag": "0024_strong_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1782511200000,
+      "tag": "0025_memory_cockpit",
+      "breakpoints": true
     }
   ]
 }

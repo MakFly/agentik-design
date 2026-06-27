@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/queryKeys";
 import type { AgentConfig, AgentId, RunId } from "@/types/domain";
 import type { DraftIdentity } from "./validation";
+import type { SystemInfo } from "@/features/runtimes/types";
 
 /** Runtimes selectable for a new agent — wired on a connected daemon with the CLI present. */
 export function useAvailableRuntimes(team: string) {
@@ -12,6 +13,14 @@ export function useAvailableRuntimes(team: string) {
     queryKey: ["team", team, "system"],
     queryFn: ({ signal }) => apiFetch<{ availableRuntimes?: string[] }>("/system", { team, signal }),
     select: (d) => d.availableRuntimes ?? [],
+    staleTime: 5_000,
+  });
+}
+
+export function useRuntimeSystem(team: string) {
+  return useQuery({
+    queryKey: ["team", team, "system"],
+    queryFn: ({ signal }) => apiFetch<SystemInfo>("/system", { team, signal }),
     staleTime: 5_000,
   });
 }

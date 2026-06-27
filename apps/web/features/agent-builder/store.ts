@@ -19,6 +19,7 @@ interface BuilderState {
 
   patchIdentity: (patch: Partial<DraftIdentity>) => void;
   setRuntimeKind: (runtimeKind: RuntimeKind) => void;
+  setRuntimeBinding: (daemonId: string | null) => void;
   patchModel: (patch: Partial<ModelConfig>) => void;
   patchLimits: (patch: Partial<AgentLimits>) => void;
   patchRetry: (patch: Partial<RetryPolicy>) => void;
@@ -52,7 +53,21 @@ export const useBuilderStore = create<BuilderState>((set) => ({
   patchIdentity: (patch) =>
     set((s) => ({ identity: { ...s.identity, ...patch }, rev: s.rev + 1, saveState: "dirty" })),
   setRuntimeKind: (runtimeKind) =>
-    set((s) => ({ config: { ...s.config, runtimeKind }, rev: s.rev + 1, saveState: "dirty" })),
+    set((s) => ({
+      config: {
+        ...s.config,
+        runtimeKind,
+        runtimeBinding: { daemonId: null },
+      },
+      rev: s.rev + 1,
+      saveState: "dirty",
+    })),
+  setRuntimeBinding: (daemonId) =>
+    set((s) => ({
+      config: { ...s.config, runtimeBinding: { daemonId } },
+      rev: s.rev + 1,
+      saveState: "dirty",
+    })),
   patchModel: (patch) =>
     set((s) => ({ config: { ...s.config, model: { ...s.config.model, ...patch } }, rev: s.rev + 1, saveState: "dirty" })),
   patchLimits: (patch) =>

@@ -53,10 +53,21 @@ env: ## Seed local env files from examples (never overwrites an existing one)
 
 # ── Development ──────────────────────────────────────────────────────────────
 
-.PHONY: dev dev/web dev/engine dev/worker
+.PHONY: dev dev/web dev/engine dev/worker dev/check-engine-port dev/down
 dev: ## Start web + engine API + worker in parallel (auto-picks a free web port). Daemon: make daemon/start | make daemon/down.
 	@printf "$(B)$(G)Starting dev servers...$(N)\n"
+	@$(MAKE) dev/check-engine-port
 	@$(MAKE) -j3 dev/web dev/engine dev/worker
+
+dev/check-engine-port:
+	@if lsof -nP -iTCP:$(ENGINE_PORT) -sTCP:LISTEN >/tmp/agentik-engine-port.$$$$ 2>/dev/null; then \
+		printf "$(R)✗ Engine port $(ENGINE_PORT) is already in use.$(N)\n"; \
+		cat /tmp/agentik-engine-port.$$$$; \
+		rm -f /tmp/agentik-engine-port.$$$$; \
+		printf "$(Y)Stop the existing process, or run: make dev ENGINE_PORT=8788 API_URL=http://localhost:8788$(N)\n"; \
+		exit 1; \
+	fi; \
+	rm -f /tmp/agentik-engine-port.$$$$
 
 dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT=4000)
 	@PORT="$(WEB_PORT)"; \
@@ -69,13 +80,23 @@ dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT
 	printf "$(C)→ Next.js on http://localhost:$$PORT  (API → $(API_URL))$(N)\n"; \
 	cd $(WEB) && PORT=$$PORT API_URL=$(API_URL) NEXT_PUBLIC_ENGINE_URL=$(API_URL) bun run dev
 
-dev/engine: ## Start workflow engine API (:8787)
+dev/engine: dev/check-engine-port ## Start workflow engine API (:8787)
 	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
 	@cd $(ENGINE) && bun run dev
 
 dev/worker: ## Start the BullMQ run worker
 	@printf "$(C)→ Run worker$(N)\n"
 	@cd $(ENGINE) && bun run worker:dev
+
+dev/down: ## Stop local web/engine/worker dev processes for this checkout
+	@pids="$$(lsof -tiTCP:$(ENGINE_PORT) -sTCP:LISTEN 2>/dev/null || true)"; \
+	if [ -n "$$pids" ]; then kill $$pids 2>/dev/null || true; fi
+	@pkill -f "cd apps/engine && [b]un run dev" 2>/dev/null || true
+	@pkill -f "cd apps/engine && [b]un run worker:dev" 2>/dev/null || true
+	@pkill -f "[b]un run --watch src/main.ts" 2>/dev/null || true
+	@pkill -f "[b]un run --watch src/worker.ts" 2>/dev/null || true
+	@pkill -f "$(abspath $(WEB))/node_modules/.bin/[n]ext dev" 2>/dev/null || true
+	@printf "$(G)✓ stopped local dev processes for this checkout$(N)\n"
 
 # ── Agent daemon ─────────────────────────────────────────────────────────────
 # Two entry points:

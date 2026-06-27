@@ -61,6 +61,7 @@ import {
 } from "./agents-repo";
 import type { SSEStreamingApi } from "hono/streaming";
 import { daemon } from "./daemon-routes";
+import { deleteDaemon } from "./daemon-repo";
 import {
   listProviderKeys,
   setProviderKey,
@@ -105,21 +106,29 @@ import { withAuth, requirePermission, type AuthVars } from "./auth";
 import { createAgentVersionInput } from "@agentik/workflow-schema";
 import {
   applyRunReview,
+  archiveMemory,
+  createMemory,
   createAgentVersion,
   generateRunReview,
   getRunReview,
   getRunReviewByRunId,
   listAgentVersions,
+  listMemoryEvents,
   listMemory,
   listRunReviews,
   listSkills,
   listSkillVersions,
+  resolveMemoryInjectionPreview,
   reviewChangeIds,
+  restoreMemory,
+  searchChatMemory,
   setRunReviewStatus,
+  updateMemory,
 } from "./learning-repo";
-import type { RunReviewStatus } from "@agentik/workflow-schema";
+import type { KnowledgeScope, RunReviewStatus } from "@agentik/workflow-schema";
 import { listTraces, getTrace } from "./observability-repo";
 import {
+  getEnvironmentSettings,
   getProvidersSettings,
   getWorkspaceSettings,
   inviteTeamMember,
@@ -128,12 +137,14 @@ import {
   removeTeamMember,
   revokeTeamInvitation,
   testProviderConnection,
+  updateEnvironmentSettings,
   updateProviderConfig,
   updateProvidersPolicy,
   updateTeamMemberRole,
   updateWorkspaceSettings,
 } from "./settings-repo";
 import {
+  environmentBody,
   inviteMemberBody,
   memberRoleBody,
   providerKeyBody,
@@ -141,6 +152,22 @@ import {
   providersPolicyBody,
   workspaceBody,
 } from "./settings-schemas";
+import {
+  createMcpServerBody,
+  invokeToolBody,
+  updateMcpServerBody,
+} from "./mcp-schemas";
+import {
+  createMcpServer,
+  deleteMcpServer,
+  getMcpServer,
+  invokeMcpTool,
+  listMcpServers,
+  listToolCatalog,
+  syncMcpServer,
+  testMcpServer,
+  updateMcpServer,
+} from "./mcp-repo";
 import { jsonValidationError, parseJsonBody } from "./validation";
 
 type Vars = AuthVars;
@@ -566,6 +593,14 @@ api.get("/system", async (c) => {
   });
 });
 
+/** Forget a daemon from this workspace (e.g. a stale or duplicate machine). */
+api.delete("/daemons/:id", requirePermission("settings:update"), async (c) => {
+  const res = await deleteDaemon(c.get("teamId"), c.req.param("id"));
+  if (res.ok) return c.json({ ok: true });
+  const status = res.reason === "not_found" ? 404 : 409;
+  return c.json({ ok: false, reason: res.reason }, status);
+});
+
 /** A user's personal daemon token status. The token itself is never returned here. */
 api.get("/me/daemon-token", async (c) => {
   const [status, orgs] = await Promise.all([
@@ -651,6 +686,101 @@ api.post("/bundles", requirePermission("settings:update"), async (c) => {
   return c.json(res.command, 202);
 });
 
+api.get("/mcp-servers", requirePermission("settings:read"), async (c) => {
+  const items = await listMcpServers(c.get("teamId"));
+  return c.json({ items, nextCursor: null, total: items.length });
+});
+
+api.post("/mcp-servers", requirePermission("settings:update"), async (c) => {
+  const parsed = parseJsonBody(
+    createMcpServerBody,
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const server = await createMcpServer(c.get("teamId"), parsed.data);
+  return c.json(server, 201);
+});
+
+api.get("/mcp-servers/:id", requirePermission("settings:read"), async (c) => {
+  const server = await getMcpServer(c.get("teamId"), c.req.param("id"));
+  if (!server) return c.json({ error: "not_found" }, 404);
+  return c.json(server);
+});
+
+api.patch(
+  "/mcp-servers/:id",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      updateMcpServerBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const server = await updateMcpServer(
+      c.get("teamId"),
+      c.req.param("id"),
+      parsed.data,
+    );
+    if (!server) return c.json({ error: "not_found" }, 404);
+    return c.json(server);
+  },
+);
+
+api.delete(
+  "/mcp-servers/:id",
+  requirePermission("settings:update"),
+  async (c) => {
+    const ok = await deleteMcpServer(c.get("teamId"), c.req.param("id"));
+    if (!ok) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
+  },
+);
+
+api.post(
+  "/mcp-servers/:id/test",
+  requirePermission("settings:update"),
+  async (c) => {
+    const result = await testMcpServer(c.get("teamId"), c.req.param("id"));
+    if (!result) return c.json({ error: "not_found" }, 404);
+    return c.json(result, result.ok ? 200 : 409);
+  },
+);
+
+api.post(
+  "/mcp-servers/:id/sync",
+  requirePermission("settings:update"),
+  async (c) => {
+    const result = await syncMcpServer(c.get("teamId"), c.req.param("id"));
+    if (!result) return c.json({ error: "not_found" }, 404);
+    if ("error" in result) return c.json(result, 409);
+    return c.json(result);
+  },
+);
+
+api.get("/tools/catalog", requirePermission("agent:read"), async (c) => {
+  const items = await listToolCatalog(c.get("teamId"));
+  return c.json({ items, nextCursor: null, total: items.length });
+});
+
+api.post("/tools/invoke", requirePermission("run:run"), async (c) => {
+  const parsed = parseJsonBody(
+    invokeToolBody,
+    await c.req.json().catch(() => null),
+  );
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const result = await invokeMcpTool(c.get("teamId"), parsed.data);
+  if ("error" in result) {
+    const status =
+      result.error === "tool_not_granted"
+        ? 403
+        : result.error === "tool_not_found"
+          ? 404
+          : 502;
+    return c.json(result, status);
+  }
+  return c.json(result);
+});
+
 api.post("/agents", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     name?: string;
@@ -680,6 +810,9 @@ api.post("/agents/:id/publish", async (c) => {
     body.changelog,
   );
   if (!res) return c.json({ error: "not_found" }, 404);
+  if ("error" in res) {
+    return c.json({ error: res.error }, res.error === "daemon_not_found" ? 404 : 409);
+  }
   return c.json(res);
 });
 
@@ -800,7 +933,85 @@ api.get("/memory", requirePermission("memory:read"), async (c) => {
   const items = await listMemory(c.get("teamId"), {
     scope: (c.req.query("scope") as never) || undefined,
     targetId: c.req.query("targetId") ?? undefined,
+    createdBy: (c.req.query("createdBy") as never) || undefined,
+    q: c.req.query("q") ?? undefined,
+    includeArchived: c.req.query("includeArchived") === "true",
+    limit: Number(c.req.query("limit") ?? 200),
   });
+  return c.json({ items, total: items.length });
+});
+
+api.post("/memory", requirePermission("memory:create"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    scope?: KnowledgeScope;
+    targetId?: string | null;
+    content?: string;
+    confidence?: number;
+  };
+  const res = await createMemory({
+    teamId: c.get("teamId"),
+    scope: body.scope ?? "team",
+    targetId: body.targetId ?? null,
+    content: body.content ?? "",
+    confidence: body.confidence,
+    actorId: c.get("auth").userId,
+    createdBy: "user",
+  });
+  if ("error" in res) return c.json(res, res.error === "target_not_found" ? 404 : 400);
+  return c.json(res.memory, 201);
+});
+
+api.patch("/memory/:id", requirePermission("memory:update"), async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    scope?: KnowledgeScope;
+    targetId?: string | null;
+    content?: string;
+    confidence?: number;
+  };
+  const res = await updateMemory({
+    teamId: c.get("teamId"),
+    memoryId: c.req.param("id"),
+    actorId: c.get("auth").userId,
+    scope: body.scope,
+    targetId: body.targetId,
+    content: body.content,
+    confidence: body.confidence,
+  });
+  if ("error" in res) return c.json(res, res.error === "not_found" || res.error === "target_not_found" ? 404 : 400);
+  return c.json(res.memory);
+});
+
+api.delete("/memory/:id", requirePermission("memory:delete"), async (c) => {
+  const res = await archiveMemory(c.get("teamId"), c.req.param("id"), c.get("auth").userId);
+  if ("error" in res) return c.json(res, 404);
+  return c.json(res.memory);
+});
+
+api.post("/memory/:id/restore", requirePermission("memory:update"), async (c) => {
+  const res = await restoreMemory(c.get("teamId"), c.req.param("id"), c.get("auth").userId);
+  if ("error" in res) return c.json(res, 404);
+  return c.json(res.memory);
+});
+
+api.get("/memory/events", requirePermission("memory:read"), async (c) => {
+  const items = await listMemoryEvents(c.get("teamId"), c.req.query("memoryId") ?? undefined);
+  return c.json({ items, total: items.length });
+});
+
+api.get("/memory/injection-preview", requirePermission("memory:read"), async (c) => {
+  const agentId = c.req.query("agentId");
+  if (!agentId) return c.json({ error: "agent_required" }, 400);
+  const preview = await resolveMemoryInjectionPreview(c.get("teamId"), agentId);
+  if (!preview) return c.json({ error: "not_found" }, 404);
+  return c.json(preview);
+});
+
+api.get("/memory/session-search", requirePermission("memory:read"), async (c) => {
+  const items = await searchChatMemory(
+    c.get("teamId"),
+    c.req.query("q") ?? "",
+    Number(c.req.query("limit") ?? 30),
+  );
   return c.json({ items, total: items.length });
 });
 
@@ -819,34 +1030,67 @@ api.get("/skills/:id/versions", requirePermission("skill:read"), async (c) => {
 
 /* ── Workspace & team settings ───────────────────────────────────────── */
 
-api.get("/settings/workspace", requirePermission("settings:read"), async (c) => {
-  const ws = await getWorkspaceSettings(c.get("teamId"));
-  if (!ws) return c.json({ error: "not_found" }, 404);
-  return c.json(ws);
-});
+api.get(
+  "/settings/workspace",
+  requirePermission("settings:read"),
+  async (c) => {
+    const ws = await getWorkspaceSettings(c.get("teamId"));
+    if (!ws) return c.json({ error: "not_found" }, 404);
+    return c.json(ws);
+  },
+);
 
-api.patch("/settings/workspace", requirePermission("settings:update"), async (c) => {
-  const parsed = parseJsonBody(
-    workspaceBody,
-    await c.req.json().catch(() => null),
-  );
-  if (!parsed.success) return jsonValidationError(c, parsed.error);
-  const res = await updateWorkspaceSettings(
-    c.get("teamId"),
-    c.get("auth").userId,
-    parsed.data,
-  );
-  if ("error" in res) {
-    const status =
-      res.error === "forbidden"
-        ? 403
-        : res.error === "slug_taken"
-          ? 409
-          : 400;
-    return c.json({ error: res.error }, status);
-  }
-  return c.json(res);
-});
+api.patch(
+  "/settings/workspace",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      workspaceBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await updateWorkspaceSettings(
+      c.get("teamId"),
+      c.get("auth").userId,
+      parsed.data,
+    );
+    if ("error" in res) {
+      const status =
+        res.error === "forbidden"
+          ? 403
+          : res.error === "slug_taken"
+            ? 409
+            : 400;
+      return c.json({ error: res.error }, status);
+    }
+    return c.json(res);
+  },
+);
+
+api.get(
+  "/settings/environments",
+  requirePermission("settings:read"),
+  async (c) => {
+    return c.json(await getEnvironmentSettings(c.get("teamId")));
+  },
+);
+
+api.patch(
+  "/settings/environments",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      environmentBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await updateEnvironmentSettings(c.get("teamId"), parsed.data);
+    if ("error" in res) {
+      return c.json({ error: res.error }, 400);
+    }
+    return c.json(res);
+  },
+);
 
 api.get("/settings/members", requirePermission("settings:read"), async (c) => {
   const items = await listTeamMembers(c.get("teamId"));
@@ -903,27 +1147,35 @@ api.delete(
   },
 );
 
-api.get("/settings/invitations", requirePermission("settings:read"), async (c) => {
-  const items = await listTeamInvitations(c.get("teamId"));
-  return c.json({ items });
-});
+api.get(
+  "/settings/invitations",
+  requirePermission("settings:read"),
+  async (c) => {
+    const items = await listTeamInvitations(c.get("teamId"));
+    return c.json({ items });
+  },
+);
 
-api.post("/settings/invitations", requirePermission("settings:update"), async (c) => {
-  const parsed = parseJsonBody(
-    inviteMemberBody,
-    await c.req.json().catch(() => null),
-  );
-  if (!parsed.success) return jsonValidationError(c, parsed.error);
-  const res = await inviteTeamMember(
-    c.get("teamId"),
-    c.get("auth").userId,
-    parsed.data.email,
-    parsed.data.role,
-  );
-  if ("error" in res) return c.json({ error: res.error }, 403);
-  const acceptUrl = `${env.WEB_PUBLIC_URL}/invite?token=${res.token}`;
-  return c.json({ id: res.id, expiresAt: res.expiresAt, acceptUrl }, 201);
-});
+api.post(
+  "/settings/invitations",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      inviteMemberBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await inviteTeamMember(
+      c.get("teamId"),
+      c.get("auth").userId,
+      parsed.data.email,
+      parsed.data.role,
+    );
+    if ("error" in res) return c.json({ error: res.error }, 403);
+    const acceptUrl = `${env.WEB_PUBLIC_URL}/invite?token=${res.token}`;
+    return c.json({ id: res.id, expiresAt: res.expiresAt, acceptUrl }, 201);
+  },
+);
 
 api.delete(
   "/settings/invitations/:id",
@@ -939,9 +1191,13 @@ api.delete(
   },
 );
 
-api.get("/settings/providers", requirePermission("settings:read"), async (c) => {
-  return c.json(await getProvidersSettings(c.get("teamId")));
-});
+api.get(
+  "/settings/providers",
+  requirePermission("settings:read"),
+  async (c) => {
+    return c.json(await getProvidersSettings(c.get("teamId")));
+  },
+);
 
 api.patch(
   "/settings/providers/:id",
@@ -963,26 +1219,33 @@ api.patch(
   },
 );
 
-api.patch("/settings/providers-policy", requirePermission("settings:update"), async (c) => {
-  const parsed = parseJsonBody(
-    providersPolicyBody,
-    await c.req.json().catch(() => null),
-  );
-  if (!parsed.success) return jsonValidationError(c, parsed.error);
-  const res = await updateProvidersPolicy(
-    c.get("teamId"),
-    c.get("auth").userId,
-    parsed.data,
-  );
-  if ("error" in res) return c.json({ error: res.error }, 403);
-  return c.json(res);
-});
+api.patch(
+  "/settings/providers-policy",
+  requirePermission("settings:update"),
+  async (c) => {
+    const parsed = parseJsonBody(
+      providersPolicyBody,
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
+    const res = await updateProvidersPolicy(
+      c.get("teamId"),
+      c.get("auth").userId,
+      parsed.data,
+    );
+    if ("error" in res) return c.json({ error: res.error }, 403);
+    return c.json(res);
+  },
+);
 
 api.post(
   "/settings/providers/:id/test",
   requirePermission("settings:update"),
   async (c) => {
-    const res = await testProviderConnection(c.get("teamId"), c.req.param("id"));
+    const res = await testProviderConnection(
+      c.get("teamId"),
+      c.req.param("id"),
+    );
     return c.json(res);
   },
 );

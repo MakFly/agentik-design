@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api/client";
 import { normalizeResponse } from "@/lib/api/errors";
 import { qk } from "@/lib/api/queryKeys";
 import type { Role } from "@/config/permissions";
+import type { EnvironmentSettings, ManagedEnvironment } from "@/types/domain";
 
 export type UiPreferences = {
   reduceMotion?: boolean;
@@ -45,9 +46,12 @@ export interface TeamInvitation {
 }
 
 const accountKey = ["account", "settings"] as const;
-const workspaceKey = (team: string) => ["team", team, "settings", "workspace"] as const;
-const membersKey = (team: string) => ["team", team, "settings", "members"] as const;
-const invitationsKey = (team: string) => ["team", team, "settings", "invitations"] as const;
+const workspaceKey = (team: string) =>
+  ["team", team, "settings", "workspace"] as const;
+const membersKey = (team: string) =>
+  ["team", team, "settings", "members"] as const;
+const invitationsKey = (team: string) =>
+  ["team", team, "settings", "invitations"] as const;
 
 async function patchAuth<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`/api/v1/auth/${path}`, {
@@ -62,8 +66,15 @@ async function patchAuth<T>(path: string, body: unknown): Promise<T> {
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; currentPassword?: string; newPassword?: string }) =>
-      patchAuth<{ ok: boolean; user: { name: string; email: string } }>("me", body),
+    mutationFn: (body: {
+      name?: string;
+      currentPassword?: string;
+      newPassword?: string;
+    }) =>
+      patchAuth<{ ok: boolean; user: { name: string; email: string } }>(
+        "me",
+        body,
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: accountKey }),
   });
 }
@@ -103,6 +114,32 @@ export function useUpdateWorkspace(team: string) {
         body,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: workspaceKey(team) }),
+  });
+}
+
+export function useEnvironmentSettings(team: string) {
+  return useQuery({
+    queryKey: qk.settings.environments(team),
+    queryFn: ({ signal }) =>
+      apiFetch<EnvironmentSettings>("/settings/environments", {
+        team,
+        signal,
+      }),
+  });
+}
+
+export function useUpdateEnvironmentSettings(team: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { items: ManagedEnvironment[]; activeId: string }) =>
+      apiFetch<EnvironmentSettings>("/settings/environments", {
+        method: "PATCH",
+        team,
+        body,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.settings.environments(team) });
+    },
   });
 }
 
@@ -171,7 +208,10 @@ export function useRevokeInvitation(team: string) {
 export function useUpdateProvidersPolicy(team: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { costCeilingPerDayCents?: number; fallbackOrder?: string[] }) =>
+    mutationFn: (body: {
+      costCeilingPerDayCents?: number;
+      fallbackOrder?: string[];
+    }) =>
       apiFetch("/settings/providers-policy", { method: "PATCH", team, body }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.settings.providers(team) });

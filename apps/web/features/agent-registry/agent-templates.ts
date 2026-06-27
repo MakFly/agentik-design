@@ -95,9 +95,18 @@ export const TIER_LABEL: Record<ModelTier, string> = {
 
 /** Map (provider, tier) → a model id from the catalog (config/models.ts). */
 export function modelForTier(provider: string, tier: ModelTier): string {
-  if (provider === "openai") return tier === "fast" ? "o4-mini" : "gpt-4o";
+  if (provider === "openai")
+    return tier === "frontier"
+      ? "gpt-5.5"
+      : tier === "fast"
+        ? "gpt-5.4-nano"
+        : "gpt-5.4-mini";
   // anthropic (claude-code, byok) and any other → Claude catalog
-  return tier === "frontier" ? "claude-opus-4" : tier === "fast" ? "claude-haiku-4.5" : "claude-sonnet-4";
+  return tier === "frontier"
+    ? "claude-fable-5"
+    : tier === "fast"
+      ? "claude-haiku-4-5"
+      : "claude-sonnet-4-6";
 }
 
 export type TemplateCategory = "Engineering" | "Customer" | "Data" | "Content" | "Growth" | "Research";

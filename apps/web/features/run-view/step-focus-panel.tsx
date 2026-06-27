@@ -1,10 +1,12 @@
 "use client";
 
 import type { Step } from "@/types/domain";
+import { MessageSquareText } from "lucide-react";
 import { ReasoningStream } from "@/components/shared/reasoning-stream";
 import { ToolCallRecord } from "@/components/shared/tool-call-record";
 import { LogStream, type LogLineItem } from "@/components/shared/log-stream";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { MarkdownBlock } from "@/components/assistant-ui/markdown-text";
 import { ApprovalCard } from "./approval-card";
 import { ActorIcon } from "./actor-icon";
 
@@ -22,6 +24,10 @@ export function StepFocusPanel({
 }) {
   const running = step.status === "running";
   const reasoning = liveReasoning ?? step.reasoning;
+  const agentOutput =
+    step.actor.kind === "agent" && !reasoning && !step.error && step.summary
+      ? step.summary
+      : "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -46,6 +52,19 @@ export function StepFocusPanel({
       {step.approval ? <ApprovalCard approval={step.approval} onDecide={onDecide} /> : null}
 
       {reasoning || running ? <ReasoningStream text={reasoning} streaming={running} /> : null}
+
+      {agentOutput ? (
+        <section className="rounded-md border border-border bg-surface-2/60 p-3" aria-label="Agent output">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <MessageSquareText className="size-3.5" aria-hidden="true" />
+            Output
+          </div>
+          <MarkdownBlock
+            text={agentOutput}
+            className="max-h-[60vh] max-w-none overflow-y-auto text-sm leading-relaxed"
+          />
+        </section>
+      ) : null}
 
       {step.toolCalls.length > 0 ? (
         <section>

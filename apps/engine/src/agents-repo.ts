@@ -12,6 +12,7 @@ import {
   runtimeKindSchema,
 } from "@agentik/workflow-schema";
 import type { AgentTaskStatus } from "./db/schema";
+import type { RuntimeKind, ToolGrant } from "@agentik/workflow-schema";
 
 const {
   agents,
@@ -226,6 +227,41 @@ export function taskMessageToStep(msg: MsgRowDb, agentName?: string) {
   };
 }
 
+function fallbackResultStep(task: TaskRowDb, agentName?: string) {
+  const summary = resultSummary(task.result) || task.error || "";
+  if (!summary) return null;
+  const ts = task.endedAt ?? task.startedAt ?? task.createdAt;
+  return {
+    id: `${task.id}:result`,
+    runId: task.id,
+    index: 0,
+    actor: {
+      kind: "agent" as const,
+      agentId: "agt",
+      name: agentName ?? "Agent",
+    },
+    status:
+      task.status === "failed" ? ("failed" as const) : ("succeeded" as const),
+    summary,
+    toolCalls: [],
+    startedAt: ts,
+    endedAt: task.endedAt ?? ts,
+    durationMs: task.durationMs ?? 0,
+    cost: costFromTaskResult(task.result),
+    attempt: 1,
+    ...(task.status === "failed"
+      ? {
+          error: {
+            kind: "unknown" as const,
+            code: "error",
+            message: summary,
+            retryable: false,
+          },
+        }
+      : {}),
+  };
+}
+
 function workflowRunToRun(r: RunRowDb, wfName?: string) {
   return {
     id: r.id,
@@ -363,6 +399,81 @@ function artifactsFromTask(task: TaskRowDb) {
     fileChanges,
     tests,
   };
+}
+
+function daemonDisplayName(
+  daemon: Pick<typeof daemons.$inferSelect, "id" | "name" | "meta"> | null | undefined,
+) {
+  const meta = (daemon?.meta ?? {}) as {
+    deviceName?: string;
+    host?: { host?: string };
+  };
+  return meta.deviceName ?? meta.host?.host ?? daemon?.name ?? daemon?.id ?? null;
+}
+
+async function placementForTask(task: TaskRowDb) {
+  const [agent] = await db
+    .select({
+      runtimeKind: agents.runtimeKind,
+      preferredDaemonId: agents.preferredDaemonId,
+    })
+    .from(agents)
+    .where(and(eq(agents.teamId, task.teamId), eq(agents.id, task.agentId)))
+    .limit(1);
+  const daemonId = task.daemonId ?? agent?.preferredDaemonId ?? null;
+  if (!daemonId && !task.runtimeId && !agent?.runtimeKind) return undefined;
+  const [daemon] = daemonId
+    ? await db
+        .select({
+          id: daemons.id,
+          name: daemons.name,
+          status: daemons.status,
+          lastHeartbeatAt: daemons.lastHeartbeatAt,
+          meta: daemons.meta,
+        })
+        .from(daemons)
+        .where(and(eq(daemons.teamId, task.teamId), eq(daemons.id, daemonId)))
+        .limit(1)
+    : [];
+  const [runtime] = task.runtimeId
+    ? await db
+        .select({ id: runtimes.id, kind: runtimes.kind })
+        .from(runtimes)
+        .where(and(eq(runtimes.teamId, task.teamId), eq(runtimes.id, task.runtimeId)))
+        .limit(1)
+    : [];
+  return {
+    runtimeKind: runtime?.kind ?? agent?.runtimeKind ?? "echo",
+    runtimeId: task.runtimeId ?? null,
+    daemonId,
+    daemonName: daemonDisplayName(daemon),
+    pinned: Boolean(agent?.preferredDaemonId),
+  };
+}
+
+export async function getAgentPlacementLabel(teamId: string, agentId: string) {
+  const [agent] = await db
+    .select({
+      runtimeKind: agents.runtimeKind,
+      preferredDaemonId: agents.preferredDaemonId,
+    })
+    .from(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
+    .limit(1);
+  if (!agent) return null;
+  if (!agent.preferredDaemonId) {
+    return `${agent.runtimeKind} · any compatible computer`;
+  }
+  const [daemon] = await db
+    .select({
+      id: daemons.id,
+      name: daemons.name,
+      meta: daemons.meta,
+    })
+    .from(daemons)
+    .where(and(eq(daemons.teamId, teamId), eq(daemons.id, agent.preferredDaemonId)))
+    .limit(1);
+  return `${agent.runtimeKind} · ${daemonDisplayName(daemon) ?? agent.preferredDaemonId} · pinned`;
 }
 
 function nodeActor(nodeType: string, nodeId: string, label: string) {
@@ -782,6 +893,8 @@ function toAgentRow(a: AgentRowDb, tasks: AgentStatsTaskRow[]) {
     tags: a.tags,
     owner: "usr_system",
     health: a.health,
+    runtimeKind: a.runtimeKind,
+    preferredDaemonId: a.preferredDaemonId,
     liveVersionId: a.liveVersionId,
     draftVersionId: a.draftVersionId,
     stats: {
@@ -932,12 +1045,12 @@ export async function getSystemInfo(teamId: string) {
       .filter((d) => liveStatus(d.lastHeartbeatAt) === "online")
       .map((d) => d.id),
   );
-  const toolsByDaemon = new Map<string, Map<string, boolean>>();
+  const toolsByDaemon = new Map<string, Map<string, { available: boolean; authenticated?: boolean }>>();
   for (const d of daemonRows) {
     const tools =
-      (d.meta as { tools?: Array<{ name: string; available: boolean }> } | null)
+      (d.meta as { tools?: Array<{ name: string; available: boolean; authenticated?: boolean }> } | null)
         ?.tools ?? [];
-    toolsByDaemon.set(d.id, new Map(tools.map((t) => [t.name, t.available])));
+    toolsByDaemon.set(d.id, new Map(tools.map((t) => [t.name, { available: t.available, authenticated: t.authenticated }])));
   }
   const availableRuntimes = [
     ...new Set(
@@ -945,11 +1058,40 @@ export async function getSystemInfo(teamId: string) {
         .filter((rt) => {
           if (!onlineDaemonIds.has(rt.daemonId)) return false;
           const probed = toolsByDaemon.get(rt.daemonId)?.get(rt.kind);
-          return rt.kind === "echo" || probed === undefined || probed === true;
+          return rt.kind === "echo" || probed === undefined || probed.available === true;
         })
         .map((rt) => rt.kind),
     ),
   ].sort();
+  const daemonById = new Map(daemonRows.map((d) => [d.id, d]));
+  const runnableTargets = runtimeRows
+    .map((rt) => {
+      const daemon = daemonById.get(rt.daemonId);
+      const daemonStatus = daemon ? liveStatus(daemon.lastHeartbeatAt) : "offline";
+      const probed = toolsByDaemon.get(rt.daemonId)?.get(rt.kind);
+      const cliAvailable = rt.kind === "echo" || probed === undefined || probed.available;
+      const authenticated = rt.kind === "echo" || probed === undefined || Boolean(probed.authenticated);
+      const available = daemonStatus === "online" && Boolean(cliAvailable);
+      const reason =
+        daemonStatus !== "online"
+          ? "daemon_offline"
+          : !cliAvailable
+            ? "cli_missing"
+            : !authenticated
+              ? "auth_required"
+              : null;
+      return {
+        daemonId: rt.daemonId,
+        daemonName: daemonDisplayName(daemon),
+        runtimeId: rt.id,
+        runtimeKind: rt.kind,
+        status: daemonStatus,
+        available,
+        authenticated,
+        reason,
+      };
+    })
+    .sort((a, b) => `${a.runtimeKind}:${a.daemonName}`.localeCompare(`${b.runtimeKind}:${b.daemonName}`));
 
   return {
     daemons: daemonRows.map((d) => ({
@@ -965,6 +1107,7 @@ export async function getSystemInfo(teamId: string) {
     })),
     runtimes: runtimeRows,
     availableRuntimes,
+    runnableTargets,
   };
 }
 
@@ -1027,10 +1170,14 @@ export async function getRunUnified(teamId: string, id: string) {
     const name = names.get(task.agentId);
     const projectContext = await projectContextForTask(task);
     const artifacts = artifactsFromTask(task);
+    const placement = await placementForTask(task);
+    const steps = msgs.map((m) => taskMessageToStep(m, name));
+    const fallback = steps.length === 0 ? fallbackResultStep(task, name) : null;
     return {
       run: agentTaskToRun(task, name),
-      steps: msgs.map((m) => taskMessageToStep(m, name)),
+      steps: fallback ? [fallback] : steps,
       ...(artifacts ? { artifacts } : {}),
+      ...(placement ? { placement } : {}),
       ...(projectContext ? { projectContext } : {}),
     };
   }
@@ -1149,6 +1296,24 @@ function configToVersionInput(
         ? (m as { model: string }).model
         : undefined;
   const rk = runtimeKindSchema.safeParse(cfg.runtimeKind ?? fallbackRuntime);
+  const rawTools = Array.isArray(cfg.tools) ? cfg.tools : [];
+  const toolGrants: ToolGrant[] = rawTools.flatMap((tool) => {
+    if (typeof tool === "string") return [{ toolId: tool, scopes: ["read"] }];
+    if (!tool || typeof tool !== "object") return [];
+    const grant = tool as Record<string, unknown>;
+    if (typeof grant.toolId !== "string" || !grant.toolId.trim()) return [];
+    const scopes = Array.isArray(grant.scopes)
+      ? grant.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
+      : ["read"];
+    return [
+      {
+        toolId: grant.toolId,
+        scopes: scopes.length ? scopes : ["read"],
+        ...(typeof grant.rateCapPerMin === "number" ? { rateCapPerMin: grant.rateCapPerMin } : {}),
+        ...(typeof grant.requireApproval === "boolean" ? { requireApproval: grant.requireApproval } : {}),
+      },
+    ];
+  });
   return {
     model,
     // The web builder stores the agent's system prompt as `systemPrompt`; older/direct
@@ -1161,14 +1326,48 @@ function configToVersionInput(
         : typeof cfg.instructions === "string"
           ? cfg.instructions
           : "",
-    tools: Array.isArray(cfg.tools)
-      ? cfg.tools.filter((t): t is string => typeof t === "string")
-      : [],
+    tools: toolGrants.map((grant) => grant.toolId),
+    toolGrants,
     runtimeKind: rk.success ? rk.data : "echo",
     memoryPolicy: DEFAULT_MEMORY_POLICY,
     skillPolicy: DEFAULT_SKILL_POLICY,
     createdBy: "user",
   };
+}
+
+function preferredDaemonIdFromConfig(config: unknown): string | null {
+  const cfg = (config && typeof config === "object" ? config : {}) as Record<string, unknown>;
+  const binding = cfg.runtimeBinding;
+  if (!binding || typeof binding !== "object") return null;
+  const daemonId = (binding as Record<string, unknown>).daemonId;
+  return typeof daemonId === "string" && daemonId.trim() ? daemonId.trim() : null;
+}
+
+async function validateDaemonBinding(
+  teamId: string,
+  daemonId: string | null,
+  runtimeKind: RuntimeKind,
+) {
+  if (!daemonId) return { ok: true as const };
+  const [daemon] = await db
+    .select({ id: daemons.id })
+    .from(daemons)
+    .where(and(eq(daemons.teamId, teamId), eq(daemons.id, daemonId)))
+    .limit(1);
+  if (!daemon) return { ok: false as const, error: "daemon_not_found" as const };
+  const [runtime] = await db
+    .select({ id: runtimes.id })
+    .from(runtimes)
+    .where(
+      and(
+        eq(runtimes.teamId, teamId),
+        eq(runtimes.daemonId, daemonId),
+        eq(runtimes.kind, runtimeKind),
+      ),
+    )
+    .limit(1);
+  if (!runtime) return { ok: false as const, error: "daemon_missing_runtime" as const };
+  return { ok: true as const };
 }
 
 /** Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId. */
@@ -1185,6 +1384,9 @@ export async function publishAgent(
     .limit(1);
   if (!agent) return null;
   const versionInput = configToVersionInput(config, agent.runtimeKind);
+  const preferredDaemonId = preferredDaemonIdFromConfig(config);
+  const binding = await validateDaemonBinding(teamId, preferredDaemonId, versionInput.runtimeKind);
+  if (!binding.ok) return { error: binding.error };
   const created = await createAgentVersion(teamId, agentId, {
     ...versionInput,
     changelog,
@@ -1198,6 +1400,7 @@ export async function publishAgent(
     .set({
       liveVersionId: created.id,
       runtimeKind: versionInput.runtimeKind,
+      preferredDaemonId,
       config: (config ?? {}) as Record<string, unknown>,
       health: "healthy",
       updatedAt: sql`now()`,

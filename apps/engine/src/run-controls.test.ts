@@ -162,4 +162,44 @@ d("agent run controls", () => {
     detail = await getRunUnified(teamId, runId);
     expect(detail?.run.status).toBe("queued");
   });
+
+  test("agent daemon pin only lets the selected daemon claim its queued runs", async () => {
+    await db
+      .update(schema.agentTasks)
+      .set({ status: "cancelled" })
+      .where(and(eq(schema.agentTasks.teamId, teamId), eq(schema.agentTasks.status, "queued")));
+
+    const first = await registerDaemon({
+      teamId,
+      name: "pinned-daemon-a",
+      runtimes: [{ kind: "echo" }],
+    });
+    const second = await registerDaemon({
+      teamId,
+      name: "pinned-daemon-b",
+      runtimes: [{ kind: "echo" }],
+    });
+    await db
+      .update(schema.agents)
+      .set({ preferredDaemonId: first.daemonId, runtimeKind: "echo" })
+      .where(and(eq(schema.agents.teamId, teamId), eq(schema.agents.id, agentId)));
+
+    const runId = await queuedTask("must run on daemon a");
+    const secondEcho = second.runtimes.find((runtime) => runtime.kind === "echo");
+    const firstEcho = first.runtimes.find((runtime) => runtime.kind === "echo");
+    expect(secondEcho).toBeDefined();
+    expect(firstEcho).toBeDefined();
+
+    expect(await claimTask(secondEcho!.id)).toBeNull();
+    const claimed = await claimTask(firstEcho!.id);
+    expect(claimed?.id).toBe(runId);
+
+    const detail = await getRunUnified(teamId, runId);
+    expect(detail?.placement).toMatchObject({
+      runtimeKind: "echo",
+      daemonId: first.daemonId,
+      daemonName: "pinned-daemon-a",
+      pinned: true,
+    });
+  });
 });

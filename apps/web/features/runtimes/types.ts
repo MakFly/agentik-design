@@ -42,6 +42,16 @@ export interface SystemInfo {
     status: string;
   }>;
   availableRuntimes: string[];
+  runnableTargets: Array<{
+    daemonId: string;
+    daemonName: string | null;
+    runtimeId: string;
+    runtimeKind: string;
+    status: "online" | "offline";
+    available: boolean;
+    authenticated: boolean;
+    reason: "daemon_offline" | "cli_missing" | "auth_required" | null;
+  }>;
 }
 
 export interface LocalDaemonStatus {

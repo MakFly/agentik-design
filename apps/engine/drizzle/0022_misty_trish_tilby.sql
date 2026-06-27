@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "daemons_team_device_unique" ON "daemons" USING btree ("team_id",("meta" ->> 'deviceId')) WHERE "daemons"."meta" ->> 'deviceId' is not null;

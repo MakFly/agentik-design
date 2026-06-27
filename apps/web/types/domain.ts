@@ -23,6 +23,25 @@ export type JsonSchema = Record<string, unknown>;
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type IOMap = Record<string, string>;
 export type Env = "dev" | "staging" | "prod";
+export type EnvironmentColor =
+  | "success"
+  | "info"
+  | "warning"
+  | "danger"
+  | "muted";
+
+export interface ManagedEnvironment {
+  id: string;
+  label: string;
+  color: EnvironmentColor;
+}
+
+export interface EnvironmentSettings {
+  items: ManagedEnvironment[];
+  activeId: string;
+  source: "settings" | "node_env";
+  nodeEnv: string;
+}
 
 export interface Money {
   amountCents: Cents;
@@ -59,9 +78,28 @@ export type RunStatus =
   | "failed"
   | "cancelled"
   | "timed_out";
-export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "skipped" | "retrying";
-export type AgentHealth = "healthy" | "degraded" | "error" | "idle" | "disabled";
-export type ToolStatus = "connected" | "degraded" | "disconnected" | "auth_expired" | "testing";
+export type StepStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "retrying";
+export type AgentHealth =
+  | "healthy"
+  | "degraded"
+  | "error"
+  | "idle"
+  | "disabled";
+export type ToolStatus =
+  | "connected"
+  | "degraded"
+  | "disconnected"
+  | "auth_expired"
+  | "testing";
+export type McpTransport = "streamable_http" | "sse";
+export type McpServerStatus = "unknown" | "online" | "error";
+export type McpToolStatus = "available" | "unavailable";
 
 export type AppErrorKind =
   | "network"
@@ -98,6 +136,8 @@ export interface Agent extends Audited {
   tags: string[];
   owner: UserId;
   health: AgentHealth;
+  runtimeKind?: RuntimeKind;
+  preferredDaemonId?: string | null;
   liveVersionId: VersionId | null;
   draftVersionId: VersionId | null;
   stats: AgentStats;
@@ -126,6 +166,48 @@ export interface ToolGrant {
   scopes: string[];
   rateCapPerMin?: number;
   requireApproval?: boolean;
+}
+
+export interface ToolCatalogItem {
+  toolId: ToolId;
+  name: string;
+  label: string;
+  description: string;
+  source: "built-in" | "http" | "mcp";
+  serverId?: string;
+  serverName?: string;
+  inputSchema?: JsonSchema;
+  scopes: string[];
+  status: "available" | "unavailable";
+}
+
+export interface McpTool {
+  id: string;
+  teamId: TeamId;
+  serverId: string;
+  toolId: ToolId;
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  status: McpToolStatus;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+export interface McpServer {
+  id: string;
+  teamId: TeamId;
+  name: string;
+  transport: McpTransport;
+  url: string;
+  credentialId: string | null;
+  status: McpServerStatus;
+  lastError: string | null;
+  lastSyncAt: ISODate | null;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+  toolCount?: number;
+  tools?: McpTool[];
 }
 
 export interface MemoryBinding {
@@ -159,9 +241,15 @@ export interface Guardrails {
   contentFilters: Array<"toxicity" | "secrets" | "prompt_injection">;
 }
 
+export interface RuntimeBinding {
+  /** Machine pin for this agent. Null means any connected daemon with the runtime may claim it. */
+  daemonId: string | null;
+}
+
 export interface AgentConfig {
   /** Which daemon runtime executes this agent (echo/claude/hermes/…). Defaults to echo. */
   runtimeKind?: RuntimeKind;
+  runtimeBinding?: RuntimeBinding;
   model: ModelConfig;
   systemPrompt: string;
   promptVariables: PromptVariable[];
@@ -216,17 +304,71 @@ export type NodeErrorPolicy = {
 };
 
 export type NodeConfig =
-  | { type: "trigger"; trigger: "manual" | "webhook" | "schedule" | "event"; schema?: JsonSchema; cron?: string }
-  | { type: "agent"; agentId?: AgentId; versionId?: VersionId | "live"; model?: string; instructions?: string; prompt?: string; inputMap: IOMap; onError?: NodeErrorPolicy; timeoutMs: number }
-  | { type: "tool"; toolId: ToolId; action: string; argsMap: IOMap; scopes: string[] }
-  | { type: "api"; method: HttpMethod; url: string; headers?: Record<string, string>; bodyMap?: IOMap; auth?: string; credentialId?: string; timeoutMs: number }
-  | { type: "decision"; branches: Array<{ label: string; expression: string }>; default: string }
-  | { type: "approval"; approverRole: string; message: string; timeoutMs: number; onTimeout: "approve" | "reject" }
+  | {
+      type: "trigger";
+      trigger: "manual" | "webhook" | "schedule" | "event";
+      schema?: JsonSchema;
+      cron?: string;
+    }
+  | {
+      type: "agent";
+      agentId?: AgentId;
+      versionId?: VersionId | "live";
+      model?: string;
+      instructions?: string;
+      prompt?: string;
+      inputMap: IOMap;
+      onError?: NodeErrorPolicy;
+      timeoutMs: number;
+    }
+  | {
+      type: "tool";
+      toolId: ToolId;
+      action: string;
+      argsMap: IOMap;
+      scopes: string[];
+    }
+  | {
+      type: "api";
+      method: HttpMethod;
+      url: string;
+      headers?: Record<string, string>;
+      bodyMap?: IOMap;
+      auth?: string;
+      credentialId?: string;
+      timeoutMs: number;
+    }
+  | {
+      type: "decision";
+      branches: Array<{ label: string; expression: string }>;
+      default: string;
+    }
+  | {
+      type: "approval";
+      approverRole: string;
+      message: string;
+      timeoutMs: number;
+      onTimeout: "approve" | "reject";
+    }
   | { type: "code"; language: "js"; source: string; mode?: "all" | "each" }
-  | { type: "loop"; collection: string; concurrency: number; maxIterations: number }
-  | { type: "subflow"; workflowId: WorkflowId; versionId: VersionId | "live"; inputMap: IOMap }
+  | {
+      type: "loop";
+      collection: string;
+      concurrency: number;
+      maxIterations: number;
+    }
+  | {
+      type: "subflow";
+      workflowId: WorkflowId;
+      versionId: VersionId | "live";
+      inputMap: IOMap;
+    }
   | { type: "end"; outputSchema?: JsonSchema }
-  | { type: "set"; assignments: Array<{ name: string; value: string }>; keepOnlySet?: boolean }
+  | {
+      type: "set";
+      assignments: Array<{ name: string; value: string }>;
+      keepOnlySet?: boolean;
+    }
   | { type: "filter"; condition: string }
   | { type: "limit"; maxItems: number; keep?: "first" | "last" }
   | { type: "merge"; mode?: "append" }
@@ -236,9 +378,29 @@ export type NodeConfig =
   | { type: "splitOut"; field: string }
   | { type: "removeDuplicates"; field?: string }
   | { type: "renameKeys"; renames: Array<{ from: string; to: string }> }
-  | { type: "crypto"; action?: "hash" | "hmac"; algorithm?: "sha256" | "sha512" | "md5"; value: string; secret?: string; field?: string }
-  | { type: "dateTime"; action?: "format" | "add"; sourceField?: string; outputField?: string; format?: string; amount?: number; unit?: "days" | "hours" | "minutes" | "months" | "years" }
-  | { type: "summarize"; groupBy: string; operation?: "count" | "sum"; field?: string }
+  | {
+      type: "crypto";
+      action?: "hash" | "hmac";
+      algorithm?: "sha256" | "sha512" | "md5";
+      value: string;
+      secret?: string;
+      field?: string;
+    }
+  | {
+      type: "dateTime";
+      action?: "format" | "add";
+      sourceField?: string;
+      outputField?: string;
+      format?: string;
+      amount?: number;
+      unit?: "days" | "hours" | "minutes" | "months" | "years";
+    }
+  | {
+      type: "summarize";
+      groupBy: string;
+      operation?: "count" | "sum";
+      field?: string;
+    }
   | { type: "slack"; credentialId: string; channel: string; text: string };
 
 export interface WorkflowNode {
@@ -357,7 +519,11 @@ export interface Run {
   env: Env;
   subject: RunSubject;
   status: RunStatus;
-  trigger: { kind: "manual" | "webhook" | "schedule" | "api"; by?: UserId; payloadRef?: string };
+  trigger: {
+    kind: "manual" | "webhook" | "schedule" | "api";
+    by?: UserId;
+    payloadRef?: string;
+  };
   startedAt: ISODate;
   endedAt: ISODate | null;
   durationMs: number | null;
@@ -381,7 +547,13 @@ export interface ToolScope {
 export interface ToolTestResult {
   at: ISODate;
   ok: boolean;
-  checks: Array<{ name: string; ok: boolean; latencyMs?: number; error?: string; remedy?: string }>;
+  checks: Array<{
+    name: string;
+    ok: boolean;
+    latencyMs?: number;
+    error?: string;
+    remedy?: string;
+  }>;
 }
 export interface Tool extends Audited {
   id: ToolId;
@@ -414,7 +586,13 @@ export interface MemoryDocument {
   storeId: StoreId;
   name: string;
   source: "upload" | "crawl" | "connector" | "api";
-  status: "queued" | "extracting" | "chunking" | "embedding" | "indexed" | "failed";
+  status:
+    | "queued"
+    | "extracting"
+    | "chunking"
+    | "embedding"
+    | "indexed"
+    | "failed";
   chunks: number;
   updatedAt: ISODate;
 }

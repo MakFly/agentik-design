@@ -24,9 +24,12 @@ export type IdPrefix =
   | "chmsg"
   | "daemon"
   | "runtime"
+  | "mcp"
+  | "mtool"
   // learning loop
   | "aver"
   | "mem"
+  | "mevt"
   | "skill"
   | "sver"
   | "rev"

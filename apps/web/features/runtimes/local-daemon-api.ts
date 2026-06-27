@@ -66,6 +66,21 @@ export function useUninstallLocalDaemon(team: string) {
   });
 }
 
+/** Forget a daemon from the workspace (stale/duplicate machine in Connected computers). */
+export function useForgetDaemon(team: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (daemonId: string) =>
+      apiFetch<{ ok: boolean }>(`/daemons/${daemonId}`, {
+        method: "DELETE",
+        team,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.settings.system(team) });
+    },
+  });
+}
+
 export function streamInstallJob(
   jobId: string,
   onEvent: (event: InstallEvent) => void,

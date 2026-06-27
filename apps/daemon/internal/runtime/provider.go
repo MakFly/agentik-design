@@ -15,29 +15,58 @@ import (
 // Provider runs a BYOK hosted model directly through its HTTP API. It is the
 // normalized non-CLI adapter for OpenAI-compatible providers and Anthropic.
 type Provider struct {
-	KindName  string
-	WorkRoot  string
-	Model     string
-	BaseURL   string
-	TimeoutMs int
-	Client    *http.Client
+	KindName   string
+	WorkRoot   string
+	Model      string
+	BaseURL    string
+	TimeoutMs  int
+	Client     *http.Client
+	InvokeTool ToolInvokerFunc
 }
 
 func (p Provider) Kind() string { return p.KindName }
 
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+func (p Provider) WithToolInvoker(invoke ToolInvokerFunc) Runtime {
+	next := p
+	next.InvokeTool = invoke
+	return next
+}
+
+type openAIChatMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+}
+
+type openAIToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type openAITool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string         `json:"name"`
+		Description string         `json:"description,omitempty"`
+		Parameters  map[string]any `json:"parameters,omitempty"`
+	} `json:"function"`
 }
 
 type openAIRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
+	Model      string              `json:"model"`
+	Messages   []openAIChatMessage `json:"messages"`
+	Tools      []openAITool        `json:"tools,omitempty"`
+	ToolChoice string              `json:"tool_choice,omitempty"`
 }
 
 type openAIResponse struct {
 	Choices []struct {
-		Message chatMessage `json:"message"`
+		Message openAIChatMessage `json:"message"`
 	} `json:"choices"`
 	Usage map[string]any `json:"usage,omitempty"`
 	Error *struct {
@@ -46,19 +75,42 @@ type openAIResponse struct {
 }
 
 type anthropicRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	System    string        `json:"system,omitempty"`
-	Messages  []chatMessage `json:"messages"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
+	Messages  []anthropicMessage `json:"messages"`
+	Tools     []anthropicTool    `json:"tools,omitempty"`
+}
+
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type anthropicTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema,omitempty"`
+}
+
+type anthropicContentBlock struct {
+	Type  string         `json:"type"`
+	Text  string         `json:"text,omitempty"`
+	ID    string         `json:"id,omitempty"`
+	Name  string         `json:"name,omitempty"`
+	Input map[string]any `json:"input,omitempty"`
+}
+
+type anthropicToolResultBlock struct {
+	Type      string `json:"type"`
+	ToolUseID string `json:"tool_use_id"`
+	Content   string `json:"content"`
 }
 
 type anthropicResponse struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	Usage map[string]any `json:"usage,omitempty"`
-	Error *struct {
+	Content []anthropicContentBlock `json:"content"`
+	Usage   map[string]any          `json:"usage,omitempty"`
+	Error   *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 }
@@ -96,26 +148,63 @@ func (p Provider) runOpenAICompatible(ctx context.Context, task protocol.Claimed
 	if err != nil {
 		return nil, err
 	}
-	messages := []chatMessage{}
+	messages := []openAIChatMessage{}
 	if sp := strings.TrimSpace(in.SystemPrompt); sp != "" {
-		messages = append(messages, chatMessage{Role: "system", Content: sp})
+		messages = append(messages, openAIChatMessage{Role: "system", Content: sp})
 	}
-	messages = append(messages, chatMessage{Role: "user", Content: prompt})
-	var res openAIResponse
-	if err := p.postJSON(ctx, baseURL+"/chat/completions", key, openAIRequest{Model: model, Messages: messages}, &res); err != nil {
-		return nil, err
+	messages = append(messages, openAIChatMessage{Role: "user", Content: prompt})
+
+	tools, byName := openAITools(in.Tools)
+	var usage map[string]any
+	for step := 0; step < 8; step++ {
+		req := openAIRequest{Model: model, Messages: messages, Tools: tools}
+		if len(tools) > 0 {
+			req.ToolChoice = "auto"
+		}
+		var res openAIResponse
+		if err := p.postJSON(ctx, baseURL+"/chat/completions", key, req, &res); err != nil {
+			return nil, err
+		}
+		if res.Error != nil && res.Error.Message != "" {
+			return nil, fmt.Errorf("%s runtime: %s", p.KindName, res.Error.Message)
+		}
+		usage = res.Usage
+		if len(res.Choices) == 0 {
+			return nil, fmt.Errorf("%s runtime returned no choices", p.KindName)
+		}
+		msg := res.Choices[0].Message
+		if len(msg.ToolCalls) == 0 {
+			out := strings.TrimSpace(msg.Content)
+			if out != "" {
+				emit(protocol.TaskMessage{Type: "text", Content: out})
+			}
+			return map[string]any{"result": out, "usage": usage, "provider": p.KindName, "model": model}, nil
+		}
+		if p.InvokeTool == nil {
+			return nil, fmt.Errorf("%s runtime returned tool calls but no tool invoker is configured", p.KindName)
+		}
+		messages = append(messages, msg)
+		for _, call := range msg.ToolCalls {
+			tool, ok := byName[call.Function.Name]
+			if !ok {
+				return nil, fmt.Errorf("%s runtime requested unknown tool %q", p.KindName, call.Function.Name)
+			}
+			args, err := parseToolArgs(call.Function.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			result, err := p.invokeRuntimeTool(ctx, task.ID, tool, args, emit)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, openAIChatMessage{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Content:    toolResultContent(result),
+			})
+		}
 	}
-	if res.Error != nil && res.Error.Message != "" {
-		return nil, fmt.Errorf("%s runtime: %s", p.KindName, res.Error.Message)
-	}
-	out := ""
-	if len(res.Choices) > 0 {
-		out = strings.TrimSpace(res.Choices[0].Message.Content)
-	}
-	if out != "" {
-		emit(protocol.TaskMessage{Type: "text", Content: out})
-	}
-	return map[string]any{"result": out, "usage": res.Usage, "provider": p.KindName, "model": model}, nil
+	return nil, fmt.Errorf("%s runtime exceeded tool-call loop limit", p.KindName)
 }
 
 func (p Provider) runAnthropic(ctx context.Context, task protocol.ClaimedTask, in protocol.TaskInput, prompt string, emit Emit) (any, error) {
@@ -124,31 +213,152 @@ func (p Provider) runAnthropic(ctx context.Context, task protocol.ClaimedTask, i
 		return nil, fmt.Errorf("anthropic runtime requires ANTHROPIC_API_KEY")
 	}
 	baseURL := strings.TrimRight(pick(p.BaseURL, task.Env["ANTHROPIC_BASE_URL"], "https://api.anthropic.com/v1"), "/")
-	model := pick(in.Model, p.Model, "claude-3-5-sonnet-latest")
+	model := pick(in.Model, p.Model, "claude-sonnet-4-6")
 	req := anthropicRequest{
 		Model:     model,
 		MaxTokens: 4096,
 		System:    strings.TrimSpace(in.SystemPrompt),
-		Messages:  []chatMessage{{Role: "user", Content: prompt}},
+		Messages:  []anthropicMessage{{Role: "user", Content: prompt}},
+		Tools:     anthropicTools(in.Tools),
 	}
-	var res anthropicResponse
-	if err := p.postAnthropic(ctx, baseURL+"/messages", key, req, &res); err != nil {
+	_, byName := runtimeToolsByCallName(in.Tools)
+	var usage map[string]any
+	for step := 0; step < 8; step++ {
+		var res anthropicResponse
+		if err := p.postAnthropic(ctx, baseURL+"/messages", key, req, &res); err != nil {
+			return nil, err
+		}
+		if res.Error != nil && res.Error.Message != "" {
+			return nil, fmt.Errorf("anthropic runtime: %s", res.Error.Message)
+		}
+		usage = res.Usage
+		var parts []string
+		var toolResults []anthropicToolResultBlock
+		for _, block := range res.Content {
+			switch block.Type {
+			case "text":
+				if strings.TrimSpace(block.Text) != "" {
+					parts = append(parts, strings.TrimSpace(block.Text))
+				}
+			case "tool_use":
+				if p.InvokeTool == nil {
+					return nil, fmt.Errorf("anthropic runtime returned tool calls but no tool invoker is configured")
+				}
+				tool, ok := byName[block.Name]
+				if !ok {
+					return nil, fmt.Errorf("anthropic runtime requested unknown tool %q", block.Name)
+				}
+				result, err := p.invokeRuntimeTool(ctx, task.ID, tool, block.Input, emit)
+				if err != nil {
+					return nil, err
+				}
+				toolResults = append(toolResults, anthropicToolResultBlock{
+					Type:      "tool_result",
+					ToolUseID: block.ID,
+					Content:   toolResultContent(result),
+				})
+			}
+		}
+		if len(toolResults) == 0 {
+			out := strings.Join(parts, "\n\n")
+			if out != "" {
+				emit(protocol.TaskMessage{Type: "text", Content: out})
+			}
+			return map[string]any{"result": out, "usage": usage, "provider": "anthropic", "model": model}, nil
+		}
+		req.Messages = append(req.Messages,
+			anthropicMessage{Role: "assistant", Content: res.Content},
+			anthropicMessage{Role: "user", Content: toolResults},
+		)
+	}
+	return nil, fmt.Errorf("anthropic runtime exceeded tool-call loop limit")
+}
+
+func (p Provider) invokeRuntimeTool(ctx context.Context, taskID string, tool protocol.RuntimeTool, args map[string]any, emit Emit) (any, error) {
+	if tool.RequireApproval {
+		err := fmt.Errorf("tool %s requires approval before use", tool.ToolID)
+		emit(protocol.TaskMessage{Type: "error", Tool: tool.ToolID, Content: err.Error()})
 		return nil, err
 	}
-	if res.Error != nil && res.Error.Message != "" {
-		return nil, fmt.Errorf("anthropic runtime: %s", res.Error.Message)
+	emit(protocol.TaskMessage{Type: "tool_use", Tool: tool.ToolID, Input: args})
+	result, err := p.InvokeTool(ctx, taskID, tool.ToolID, args)
+	if err != nil {
+		emit(protocol.TaskMessage{Type: "error", Tool: tool.ToolID, Content: err.Error()})
+		return nil, err
 	}
-	var parts []string
-	for _, block := range res.Content {
-		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-			parts = append(parts, strings.TrimSpace(block.Text))
+	emit(protocol.TaskMessage{Type: "tool_result", Tool: tool.ToolID, Output: result})
+	return result, nil
+}
+
+func runtimeToolsByCallName(tools []protocol.RuntimeTool) ([]protocol.RuntimeTool, map[string]protocol.RuntimeTool) {
+	if len(tools) == 0 {
+		return nil, map[string]protocol.RuntimeTool{}
+	}
+	usable := make([]protocol.RuntimeTool, 0, len(tools))
+	byName := make(map[string]protocol.RuntimeTool, len(tools))
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.CallName) == "" || strings.TrimSpace(tool.ToolID) == "" {
+			continue
 		}
+		usable = append(usable, tool)
+		byName[tool.CallName] = tool
 	}
-	out := strings.Join(parts, "\n\n")
-	if out != "" {
-		emit(protocol.TaskMessage{Type: "text", Content: out})
+	return usable, byName
+}
+
+func openAITools(tools []protocol.RuntimeTool) ([]openAITool, map[string]protocol.RuntimeTool) {
+	usable, byName := runtimeToolsByCallName(tools)
+	if len(usable) == 0 {
+		return nil, byName
 	}
-	return map[string]any{"result": out, "usage": res.Usage, "provider": "anthropic", "model": model}, nil
+	out := make([]openAITool, 0, len(usable))
+	for _, tool := range usable {
+		def := openAITool{Type: "function"}
+		def.Function.Name = tool.CallName
+		def.Function.Description = tool.Description
+		def.Function.Parameters = tool.InputSchema
+		out = append(out, def)
+	}
+	return out, byName
+}
+
+func anthropicTools(tools []protocol.RuntimeTool) []anthropicTool {
+	usable, _ := runtimeToolsByCallName(tools)
+	if len(usable) == 0 {
+		return nil
+	}
+	out := make([]anthropicTool, 0, len(usable))
+	for _, tool := range usable {
+		out = append(out, anthropicTool{
+			Name:        tool.CallName,
+			Description: tool.Description,
+			InputSchema: tool.InputSchema,
+		})
+	}
+	return out
+}
+
+func parseToolArgs(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{}, nil
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return nil, fmt.Errorf("invalid tool arguments: %w", err)
+	}
+	return args, nil
+}
+
+func toolResultContent(result any) string {
+	if result == nil {
+		return "null"
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Sprint(result)
+	}
+	return string(b)
 }
 
 func (p Provider) openAIConfig(env map[string]string, inputModel string) (key, baseURL, model string, err error) {
@@ -156,15 +366,15 @@ func (p Provider) openAIConfig(env map[string]string, inputModel string) (key, b
 	case "openai":
 		key = strings.TrimSpace(env["OPENAI_API_KEY"])
 		baseURL = pick(p.BaseURL, env["OPENAI_BASE_URL"], "https://api.openai.com/v1")
-		model = pick(inputModel, p.Model, "gpt-4o-mini")
+		model = pick(inputModel, p.Model, "gpt-5.4-mini")
 	case "openrouter":
 		key = strings.TrimSpace(env["OPENROUTER_API_KEY"])
 		baseURL = pick(p.BaseURL, env["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
-		model = pick(inputModel, p.Model, "openai/gpt-4o-mini")
+		model = pick(inputModel, p.Model, "openrouter/auto")
 	case "custom":
 		key = strings.TrimSpace(pick(env["CUSTOM_API_KEY"], env["OPENROUTER_API_KEY"], env["OPENAI_API_KEY"]))
 		baseURL = pick(p.BaseURL, env["CUSTOM_BASE_URL"], env["OPENAI_BASE_URL"], env["OPENROUTER_BASE_URL"])
-		model = pick(inputModel, p.Model, "gpt-4o-mini")
+		model = pick(inputModel, p.Model, "gpt-5.4-mini")
 	default:
 		return "", "", "", fmt.Errorf("unsupported provider runtime %q", p.KindName)
 	}

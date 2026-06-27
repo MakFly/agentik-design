@@ -50,11 +50,11 @@ func stripHermesNotices(s string) string {
 func hermesProvider(env map[string]string) (provider, baseURL, model, key string, ok bool) {
 	switch {
 	case env["OPENAI_API_KEY"] != "":
-		return "custom", "https://api.openai.com/v1", "gpt-4o-mini", env["OPENAI_API_KEY"], true
+		return "custom", "https://api.openai.com/v1", "gpt-5.4-mini", env["OPENAI_API_KEY"], true
 	case env["OPENROUTER_API_KEY"] != "":
-		return "openrouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", env["OPENROUTER_API_KEY"], true
+		return "openrouter", "https://openrouter.ai/api/v1", "openrouter/auto", env["OPENROUTER_API_KEY"], true
 	case env["ANTHROPIC_API_KEY"] != "":
-		return "anthropic", "", "claude-3-5-sonnet-latest", env["ANTHROPIC_API_KEY"], true
+		return "anthropic", "", "claude-sonnet-4-6", env["ANTHROPIC_API_KEY"], true
 	case env["GOOGLE_API_KEY"] != "" || env["GEMINI_API_KEY"] != "":
 		k := env["GOOGLE_API_KEY"]
 		if k == "" {
@@ -85,8 +85,8 @@ func writeHermesHome(dir string, env map[string]string) (string, string, error) 
 	}
 	fmt.Fprintf(&b, "  default: %s\n", model)
 	fmt.Fprintf(&b, "  api_key: %q\n", key)
-	// Disable reasoning: encrypted reasoning items aren't supported by non-reasoning
-	// models (e.g. gpt-4o-mini) and trip "Encrypted content is not supported".
+	// Disable reasoning: encrypted reasoning items aren't supported by some routed
+	// models and can trip "Encrypted content is not supported".
 	b.WriteString("agent:\n  reasoning_effort: \"none\"\n")
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(b.String()), 0o600); err != nil {
 		return "", "", err

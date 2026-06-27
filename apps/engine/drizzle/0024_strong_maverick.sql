@@ -1,0 +1,2 @@
+ALTER TABLE "channel_identities" ADD COLUMN "active_agent_id" text;--> statement-breakpoint
+ALTER TABLE "channel_identities" ADD CONSTRAINT "channel_identities_active_agent_id_agents_id_fk" FOREIGN KEY ("active_agent_id") REFERENCES "public"."agents"("id") ON DELETE set null ON UPDATE no action;

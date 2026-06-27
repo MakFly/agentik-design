@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -62,6 +64,8 @@ func runCLI(args []string) error {
 		return runDisconnect(args[2:])
 	case "doctor":
 		return runDoctor(args[2:])
+	case "tui":
+		return runTUI(args[2:])
 	case "daemon":
 		return runDaemonCommand(args[2:])
 	case "help", "-h", "--help":
@@ -108,13 +112,285 @@ Usage:
   agentik setup --url http://localhost:8787 --token dtkn_... --start
   agentik 'agentik://setup?url=http%3A%2F%2Flocalhost%3A8787&token=dtkn_...&start=1'
   agentik disconnect
-  agentik doctor
+  agentik doctor [--json]
+  agentik tui
   agentik daemon start [--background]
   agentik daemon stop
-  agentik daemon status
+  agentik daemon status [--json]
 
 With no command, agentik prints this help. The Docker entrypoint (agentik-daemon)
 starts the daemon instead; run "agentik daemon run" to start it yourself.`)
+}
+
+func runTUI(args []string) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", config.DefaultConfigPath(), "config file path")
+	teamFlag := fs.String("team", "", "team id to use when the token can access multiple teams")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	cfg, err := config.LoadWithOptions(config.Options{ConfigPath: *configPath})
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg.EngineURL, cfg.UserToken)
+	ctx := context.Background()
+	orgs, err := c.DiscoverOrgs(ctx)
+	if err != nil {
+		return fmt.Errorf("discover orgs: %w", err)
+	}
+	if len(orgs) == 0 {
+		return fmt.Errorf("no org available for this daemon token")
+	}
+	org, err := chooseOrg(os.Stdin, os.Stdout, orgs, *teamFlag)
+	if err != nil {
+		return err
+	}
+	agents, err := c.ListAgents(ctx, org.TeamID)
+	if err != nil {
+		return err
+	}
+	active := firstPublishedAgent(agents)
+	fmt.Fprintf(os.Stdout, "\nAgentik TUI — %s\n", org.Name)
+	printTUIHelp(os.Stdout)
+	if active.ID != "" {
+		fmt.Fprintf(os.Stdout, "Active agent: %s (%s)\n\n", active.Name, active.RuntimeKind)
+	} else {
+		fmt.Fprintln(os.Stdout, "No published agent selected. Use /agents then /agent <number>.")
+		fmt.Fprintln(os.Stdout)
+	}
+	sc := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Fprint(os.Stdout, "agentik> ")
+		if !sc.Scan() {
+			break
+		}
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		switch {
+		case line == "/exit" || line == "/quit":
+			return nil
+		case line == "/help":
+			printTUIHelp(os.Stdout)
+			continue
+		case line == "/agents":
+			agents, err = c.ListAgents(ctx, org.TeamID)
+			if err != nil {
+				fmt.Fprintf(os.Stdout, "agents: %v\n", err)
+				continue
+			}
+			printAgents(os.Stdout, agents)
+			continue
+		case strings.HasPrefix(line, "/agent "):
+			pick := strings.TrimSpace(strings.TrimPrefix(line, "/agent "))
+			next, ok := resolveTUIAgent(agents, pick)
+			if !ok {
+				fmt.Fprintln(os.Stdout, "Agent not found. Run /agents and use a number, id, or @handle.")
+				continue
+			}
+			if !next.Published {
+				fmt.Fprintf(os.Stdout, "%s is not published yet.\n", next.Name)
+				continue
+			}
+			active = next
+			fmt.Fprintf(os.Stdout, "Active agent: %s (%s)\n", active.Name, active.RuntimeKind)
+			continue
+		}
+		if pick, prompt, ok := parseDirectTUIAgentPrompt(line); ok {
+			next, found := resolveTUIAgent(agents, pick)
+			if !found {
+				fmt.Fprintln(os.Stdout, "Agent not found. Run /agents and use @handle, number, or id.")
+				continue
+			}
+			if !next.Published {
+				fmt.Fprintf(os.Stdout, "%s is not published yet.\n", next.Name)
+				continue
+			}
+			active = next
+			line = prompt
+			fmt.Fprintf(os.Stdout, "Active agent: %s (%s)\n", active.Name, active.RuntimeKind)
+			run, err := c.RunAgent(ctx, org.TeamID, active.ID, line)
+			if err != nil {
+				fmt.Fprintf(os.Stdout, "run: %v\n", err)
+				continue
+			}
+			fmt.Fprintf(os.Stdout, "%s is on it. Run: %s\n", active.Name, run.RunID)
+			if err := watchRun(ctx, c, org.TeamID, run.RunID); err != nil {
+				fmt.Fprintf(os.Stdout, "watch: %v\n", err)
+			}
+			continue
+		}
+		routed, err := c.OrchestratorTurn(ctx, protocol.OrchestratorTurnRequest{
+			TeamID:      org.TeamID,
+			Input:       line,
+			AgentHintID: active.ID,
+			ThreadKey:   "tui:" + org.TeamID,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "run: %v\n", err)
+			continue
+		}
+		switch routed.Kind {
+		case "run":
+			active = routed.Agent
+			fmt.Fprintf(os.Stdout, "%s is on it. Run: %s\n", routed.Agent.Name, routed.RunID)
+			if err := watchRun(ctx, c, org.TeamID, routed.RunID); err != nil {
+				fmt.Fprintf(os.Stdout, "watch: %v\n", err)
+			}
+		case "clarify":
+			fmt.Fprintln(os.Stdout, routed.Question)
+			for _, choice := range routed.Choices {
+				fmt.Fprintf(os.Stdout, "  @%s  %s\n", choice.Handle, choice.Label)
+			}
+		default:
+			fmt.Fprintf(os.Stdout, "run: %s\n", routed.Error)
+		}
+	}
+	return sc.Err()
+}
+
+func printTUIHelp(w io.Writer) {
+	fmt.Fprintln(w, "Commands: /agents, /agent <number|id|@handle>, @handle prompt, /help, /exit")
+}
+
+func chooseOrg(in *os.File, out io.Writer, orgs []protocol.OrgRef, preferred string) (protocol.OrgRef, error) {
+	if preferred != "" {
+		for _, org := range orgs {
+			if org.TeamID == preferred || org.Slug == preferred {
+				return org, nil
+			}
+		}
+		return protocol.OrgRef{}, fmt.Errorf("team %q is not available to this token", preferred)
+	}
+	if len(orgs) == 1 {
+		return orgs[0], nil
+	}
+	fmt.Fprintln(out, "Choose org:")
+	for i, org := range orgs {
+		fmt.Fprintf(out, "  %d. %s (%s)\n", i+1, org.Name, org.Slug)
+	}
+	sc := bufio.NewScanner(in)
+	for {
+		fmt.Fprint(out, "org> ")
+		if !sc.Scan() {
+			break
+		}
+		raw := strings.TrimSpace(sc.Text())
+		for i, org := range orgs {
+			if raw == fmt.Sprint(i+1) || raw == org.TeamID || raw == org.Slug {
+				return org, nil
+			}
+		}
+		fmt.Fprintln(out, "Unknown org.")
+	}
+	return protocol.OrgRef{}, sc.Err()
+}
+
+func firstPublishedAgent(agents []protocol.AgentSummary) protocol.AgentSummary {
+	for _, agent := range agents {
+		if agent.Published {
+			return agent
+		}
+	}
+	return protocol.AgentSummary{}
+}
+
+func printAgents(w io.Writer, agents []protocol.AgentSummary) {
+	for i, agent := range agents {
+		status := "draft"
+		if agent.Published {
+			status = "published"
+		}
+		fmt.Fprintf(w, "%2d. %-28s @%s  %s  %s/%s\n", i+1, agent.Name, tuiHandle(agent.Name), status, agent.RuntimeKind, agent.Model)
+	}
+}
+
+func tuiHandle(name string) string {
+	return strings.Trim(strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + 32
+		default:
+			return '_'
+		}
+	}, name), "_")
+}
+
+func resolveTUIAgent(agents []protocol.AgentSummary, pick string) (protocol.AgentSummary, bool) {
+	for i, agent := range agents {
+		if pick == fmt.Sprint(i+1) || pick == agent.ID || strings.TrimPrefix(pick, "@") == tuiHandle(agent.Name) {
+			return agent, true
+		}
+	}
+	return protocol.AgentSummary{}, false
+}
+
+func parseDirectTUIAgentPrompt(line string) (pick string, prompt string, ok bool) {
+	if !strings.HasPrefix(line, "@") {
+		return "", "", false
+	}
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	return parts[0], strings.TrimSpace(strings.TrimPrefix(line, parts[0])), true
+}
+
+func watchRun(ctx context.Context, c *client.Client, teamID, runID string) error {
+	var lastStatus string
+	seenSteps := map[string]bool{}
+	for {
+		detail, err := c.RunDetail(ctx, teamID, runID)
+		if err != nil {
+			return err
+		}
+		if detail.Run.Status != lastStatus {
+			fmt.Printf("Status: %s (%d/%d steps)\n", detail.Run.Status, detail.Run.CompletedSteps, detail.Run.StepCount)
+			lastStatus = detail.Run.Status
+		}
+		for _, step := range detail.Steps {
+			if step.ID == "" || seenSteps[step.ID] || strings.TrimSpace(step.Summary) == "" {
+				continue
+			}
+			seenSteps[step.ID] = true
+			fmt.Fprintf(os.Stdout, "• %s\n", compactLine(step.Summary, 280))
+		}
+		switch detail.Run.Status {
+		case "completed", "succeeded":
+			if detail.Artifacts != nil && strings.TrimSpace(detail.Artifacts.Summary) != "" {
+				fmt.Println(detail.Artifacts.Summary)
+			} else if len(detail.Steps) > 0 && len(seenSteps) == 0 {
+				fmt.Println(detail.Steps[len(detail.Steps)-1].Summary)
+			}
+			return nil
+		case "failed", "cancelled", "timed_out":
+			if len(detail.Steps) > 0 {
+				fmt.Println(detail.Steps[len(detail.Steps)-1].Summary)
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func compactLine(value string, max int) string {
+	clean := strings.Join(strings.Fields(value), " ")
+	if max <= 0 || len(clean) <= max {
+		return clean
+	}
+	return clean[:max-1] + "…"
 }
 
 func runSetup(args []string) error {
@@ -185,6 +461,7 @@ func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", config.DefaultConfigPath(), "config file path")
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -192,22 +469,40 @@ func runDoctor(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Config: %s\n", *configPath)
-	fmt.Printf("Engine: %s\n", cfg.EngineURL)
-	fmt.Printf("Runtimes: %v\n", cfg.RuntimeKinds)
+	tools := probe.Tools()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	token := map[string]any{"mode": "legacy", "status": "legacy"}
 	if cfg.UserToken != "" {
 		orgs, err := client.New(cfg.EngineURL, cfg.UserToken).DiscoverOrgs(ctx)
 		if err != nil {
-			fmt.Printf("Token: invalid or engine unreachable (%v)\n", err)
+			token = map[string]any{"mode": "personal", "status": "error", "error": err.Error()}
 		} else {
-			fmt.Printf("Token: ok, %d eligible org(s)\n", len(orgs))
+			token = map[string]any{"mode": "personal", "status": "ok", "eligibleOrgs": len(orgs)}
+		}
+	}
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"configPath": *configPath,
+			"engineUrl":  cfg.EngineURL,
+			"runtimes":   cfg.RuntimeKinds,
+			"token":      token,
+			"tools":      tools,
+		})
+	}
+	fmt.Printf("Config: %s\n", *configPath)
+	fmt.Printf("Engine: %s\n", cfg.EngineURL)
+	fmt.Printf("Runtimes: %v\n", cfg.RuntimeKinds)
+	if cfg.UserToken != "" {
+		if token["status"] == "error" {
+			fmt.Printf("Token: invalid or engine unreachable (%v)\n", token["error"])
+		} else {
+			fmt.Printf("Token: ok, %d eligible org(s)\n", token["eligibleOrgs"])
 		}
 	} else {
 		fmt.Println("Token: legacy DAEMON_AUTH_TOKEN mode")
 	}
-	for _, t := range probe.Tools() {
+	for _, t := range tools {
 		status := "missing"
 		if t.Available && t.Authenticated {
 			status = "ready"
@@ -233,12 +528,22 @@ func runDaemonCommand(args []string) error {
 	case "stop":
 		return stopBackgroundDaemon()
 	case "status":
-		return daemonStatus()
+		return runDaemonStatus(args[1:])
 	case "logs":
 		return daemonLogs()
 	default:
 		return fmt.Errorf("unknown daemon command %q", args[0])
 	}
+}
+
+func runDaemonStatus(args []string) error {
+	fs := flag.NewFlagSet("daemon status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return daemonStatus(*jsonOut)
 }
 
 func runDaemonStart(args []string, forceForeground bool) error {
@@ -424,19 +729,42 @@ func stopBackgroundDaemon() error {
 	return nil
 }
 
-func daemonStatus() error {
-	pid, err := readPID()
-	if err != nil {
+func daemonStatus(jsonOut bool) error {
+	status := backgroundDaemonStatus()
+	if jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(status)
+	}
+	if !status.Running {
 		fmt.Println("Daemon background process: not running")
 		return nil
+	}
+	fmt.Printf("Daemon background process: running pid=%d\n", status.PID)
+	return nil
+}
+
+type daemonStatusReport struct {
+	Running bool   `json:"running"`
+	PID     int    `json:"pid,omitempty"`
+	PIDPath string `json:"pidPath"`
+	LogPath string `json:"logPath"`
+}
+
+func backgroundDaemonStatus() daemonStatusReport {
+	report := daemonStatusReport{
+		PIDPath: defaultPIDPath(),
+		LogPath: defaultLogPath(),
+	}
+	pid, err := readPID()
+	if err != nil {
+		return report
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil || proc.Signal(syscall.Signal(0)) != nil {
-		fmt.Println("Daemon background process: not running")
-		return nil
+		return report
 	}
-	fmt.Printf("Daemon background process: running pid=%d\n", pid)
-	return nil
+	report.Running = true
+	report.PID = pid
+	return report
 }
 
 func daemonLogs() error {

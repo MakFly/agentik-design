@@ -6,13 +6,15 @@ import { genId } from "./db/ids";
 import {
   approveAgentTask,
   cancelAgentTask,
+  getAgentPlacementLabel,
   getRunUnified,
   listAgentRows,
   pauseAgentTask,
   rejectAgentTask,
   resumeAgentTask,
-  runAgent,
 } from "./agents-repo";
+import { sendAgentChatTurn } from "./chat-repo";
+import { sendOrchestratedTurn } from "./orchestrator-repo";
 import {
   createProjectTask,
   getProject,
@@ -23,6 +25,13 @@ import { insertConfirmedMemory } from "./learning-repo";
 import { env } from "./env";
 
 const { channelConnections, channelIdentities, channelMessages } = schema;
+const TELEGRAM_TYPING_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+const telegramTypingHeartbeats = new Set<string>();
 
 type ChannelConnectionRow = typeof channelConnections.$inferSelect;
 type ChannelIdentityRow = typeof channelIdentities.$inferSelect;
@@ -57,9 +66,11 @@ export type TelegramCommand =
   | { kind: "agents" }
   | { kind: "projects" }
   | { kind: "tasks"; projectId?: string }
+  | { kind: "agentMode"; handle?: string; agentId?: string; off?: boolean }
   | { kind: "run"; projectId: string; agentId?: string; title: string }
   | { kind: "runAgent"; agentId: string; input: string }
   | { kind: "runAgentHandle"; handle: string; input: string }
+  | { kind: "freeChat"; input: string }
   | { kind: "runTask"; taskId: string; instruction?: string }
   | { kind: "runHelp"; text?: string }
   | { kind: "status"; runId: string }
@@ -83,6 +94,13 @@ export type TelegramSender = (input: {
   connection: ChannelConnectionRow;
   chatId: string;
   text: string;
+  parseMode?: "HTML";
+}) => Promise<void>;
+
+export type TelegramActionSender = (input: {
+  connection: ChannelConnectionRow;
+  chatId: string;
+  action: "typing";
 }) => Promise<void>;
 
 function randomToken(bytes = 18) {
@@ -125,6 +143,14 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   if (start) return { kind: "pair", code: (start[1] ?? "").trim() };
   if (clean === "/projects") return { kind: "projects" };
   if (clean === "/agents") return { kind: "agents" };
+  if (clean === "/agent") return { kind: "agentMode" };
+  if (/^\/agent\s+(off|stop|none)$/i.test(clean)) return { kind: "agentMode", off: true };
+  const agentModeHandle = clean.match(/^\/agent\s+@([a-zA-Z0-9_]+)$/);
+  if (agentModeHandle?.[1]) {
+    return { kind: "agentMode", handle: normalizeAgentHandle(agentModeHandle[1]) };
+  }
+  const agentModeId = clean.match(/^\/agent\s+agent:([^\s]+)$/);
+  if (agentModeId?.[1]) return { kind: "agentMode", agentId: agentModeId[1] };
   const tasks = clean.match(/^\/tasks(?:\s+project:([^\s]+))?$/);
   if (tasks) return { kind: "tasks", projectId: tasks[1] };
   if (clean === "/run") return { kind: "runHelp" };
@@ -212,6 +238,9 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   }
   if (/\b(agent|agents|lance|lancer|lances|run|ex[eé]cute|start)\b/i.test(clean)) {
     return { kind: "runHelp", text: clean };
+  }
+  if (!clean.startsWith("/")) {
+    return { kind: "freeChat", input: clean };
   }
   return { kind: "unknown", text: clean };
 }
@@ -495,6 +524,8 @@ function helpText(connection: ChannelConnectionRow) {
     "/tasks project:<projectId>",
     '/run task:<taskId> ["extra instruction"]',
     '/run @agent_handle "Prompt"',
+    "/agent @agent_handle",
+    "/agent off",
     '/run agent:<agentId> "Prompt"',
     '/run project:<projectId> [agent:<agentId>] "Task title"',
     "/status <runId>",
@@ -513,11 +544,13 @@ async function runHelpText(teamId: string, intro?: string) {
     listProjects(teamId),
   ]);
   const lines = [
-    intro ?? "I can start an existing project task or a published agent.",
+    intro ?? "I can start an existing project task, route a free-form message, or run a published agent.",
     "",
     "Fast paths:",
     '/run task:<taskId> "optional extra instruction"',
     '/run @agent_handle "what should the agent do?"',
+    "/agent @agent_handle",
+    "/agent off",
     '/run agent:<agentId> "what should the agent do?"',
     '/run project:<projectId> "new task title"',
   ];
@@ -562,6 +595,19 @@ async function resolveAgentHandle(
   return { error: "not_found" as const, agents };
 }
 
+async function setActiveAgent(identityId: string, agentId: string | null) {
+  await db
+    .update(channelIdentities)
+    .set({ activeAgentId: agentId, updatedAt: sql`now()` })
+    .where(eq(channelIdentities.id, identityId));
+}
+
+async function activeAgentRow(teamId: string, identity: ChannelIdentityRow) {
+  if (!identity.activeAgentId) return null;
+  const agents = await listAgentRows(teamId);
+  return agents.find((agent) => agent.id === identity.activeAgentId) ?? null;
+}
+
 async function webRunUrl(teamId: string, runId: string) {
   const [team] = await db
     .select({ slug: schema.teams.slug })
@@ -570,6 +616,20 @@ async function webRunUrl(teamId: string, runId: string) {
     .limit(1);
   const teamSegment = encodeURIComponent(team?.slug ?? teamId);
   return `${env.WEB_PUBLIC_URL.replace(/\/$/, "")}/${teamSegment}/runs/${encodeURIComponent(runId)}`;
+}
+
+async function sendTelegramAgentTurn(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+  agent: Pick<AgentListRow, "id" | "name">,
+  input: string,
+) {
+  return sendAgentChatTurn(connection.teamId, {
+    agentId: agent.id,
+    content: input,
+    creatorId: `telegram:${identity.id}:agent:${agent.id}`,
+    title: `Telegram · ${identity.displayName || identity.externalUserId} · ${agent.name}`,
+  });
 }
 
 async function executeCommand(
@@ -636,6 +696,58 @@ async function executeCommand(
           .join("\n\n"),
       };
     }
+    case "agentMode": {
+      if (command.off) {
+        await setActiveAgent(identity.id, null);
+        return {
+          ok: true,
+          reply: "Agent mode disabled. Use /agent @agent_handle to pick one again.",
+        };
+      }
+      if (!command.handle && !command.agentId) {
+        const current = await activeAgentRow(connection.teamId, identity);
+        return {
+          ok: true,
+          reply: await runHelpText(
+            connection.teamId,
+            current
+              ? `Current agent: @${agentHandle(current)} (${current.name}).`
+              : "No active agent for this chat yet.",
+          ),
+        };
+      }
+      let resolved: { agent: AgentListRow } | { error: "ambiguous" | "not_found"; agents: AgentListRow[] };
+      if (command.agentId) {
+        const agents = await listAgentRows(connection.teamId);
+        const agent = agents.find((item) => item.id === command.agentId);
+        resolved = agent ? { agent } : { error: "not_found", agents };
+      } else {
+        resolved = await resolveAgentHandle(connection.teamId, command.handle!);
+      }
+      if ("error" in resolved) {
+        return {
+          ok: false,
+          reply:
+            resolved.error === "ambiguous"
+              ? [
+                  "Several agents match. Use one id explicitly:",
+                  ...resolved.agents.map((agent) => `${agent.name} · ${agent.id}`),
+                ].join("\n")
+              : "Agent not found. Use /agents to list available handles.",
+        };
+      }
+      if (!resolved.agent.liveVersionId) {
+        return {
+          ok: false,
+          reply: `${resolved.agent.name} is not published yet. Publish it before using it from Telegram.`,
+        };
+      }
+      await setActiveAgent(identity.id, resolved.agent.id);
+      return {
+        ok: true,
+        reply: `Agent mode enabled: @${agentHandle(resolved.agent)} (${resolved.agent.name}).\nNow send messages directly, without /run.`,
+      };
+    }
     case "run": {
       if (!command.title)
         return {
@@ -692,19 +804,25 @@ async function executeCommand(
           ok: false,
           reply: 'Usage: /run agent:<agentId> "what should the agent do?"',
         };
-      const run = await runAgent(connection.teamId, command.agentId, command.input);
-      if (!run) return { ok: false, reply: "Agent not found." };
+      const agents = await listAgentRows(connection.teamId);
+      const agent = agents.find((item) => item.id === command.agentId);
+      if (!agent) return { ok: false, reply: "Agent not found." };
+      const run = await sendTelegramAgentTurn(connection, identity, agent, command.input);
       if ("error" in run)
         return {
           ok: false,
           reply:
             run.error === "not_published"
               ? "This agent is not published yet."
+              : run.error === "empty_input"
+                ? 'Usage: /run agent:<agentId> "what should the agent do?"'
               : `Could not start agent: ${run.error}`,
         };
+      await setActiveAgent(identity.id, command.agentId);
+      const placement = await getAgentPlacementLabel(connection.teamId, command.agentId);
       return {
         ok: true,
-        reply: `Agent run started\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        reply: startRunReply(agent?.name ?? command.agentId, placement, await webRunUrl(connection.teamId, run.runId)),
         runId: run.runId,
       };
     }
@@ -730,20 +848,52 @@ async function executeCommand(
           reply: `No agent found for @${command.handle}.\nUse /agents to list available handles.`,
         };
       }
-      const run = await runAgent(connection.teamId, resolved.agent.id, command.input);
-      if (!run) return { ok: false, reply: "Agent not found." };
+      const run = await sendTelegramAgentTurn(connection, identity, resolved.agent, command.input);
       if ("error" in run)
         return {
           ok: false,
           reply:
             run.error === "not_published"
               ? "This agent is not published yet."
+              : run.error === "empty_input"
+                ? 'Usage: /run @agent_handle "what should the agent do?"'
               : `Could not start agent: ${run.error}`,
         };
+      await setActiveAgent(identity.id, resolved.agent.id);
+      const placement = await getAgentPlacementLabel(connection.teamId, resolved.agent.id);
       return {
         ok: true,
-        reply: `Agent run started\nAgent: ${resolved.agent.name}\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        reply: startRunReply(resolved.agent.name, placement, await webRunUrl(connection.teamId, run.runId)),
         runId: run.runId,
+      };
+    }
+    case "freeChat": {
+      const routed = await sendOrchestratedTurn({
+        teamId: connection.teamId,
+        surface: "telegram",
+        actorId: identity.externalUserId,
+        threadKey: `${connection.id}:${identity.externalChatId}:${identity.externalUserId}`,
+        text: command.input,
+        agentHintId: identity.activeAgentId,
+      });
+      if (routed.kind === "run") {
+        await setActiveAgent(identity.id, routed.agent.id);
+        const placement = await getAgentPlacementLabel(connection.teamId, routed.agent.id);
+        return {
+          ok: true,
+          reply: startRunReply(routed.agent.name, placement, await webRunUrl(connection.teamId, routed.runId)),
+          runId: routed.runId,
+        };
+      }
+      if (routed.kind === "clarify") {
+        return { ok: true, reply: clarifyAgentReply(routed.question, routed.choices) };
+      }
+      return {
+        ok: false,
+        reply:
+          routed.error === "no_published_agents"
+            ? "No published agent is available yet."
+            : "Could not start an agent for this message.",
       };
     }
     case "runTask": {
@@ -780,9 +930,18 @@ async function executeCommand(
       const detail = await getRunUnified(connection.teamId, command.runId);
       if (!detail)
         return { ok: false, reply: "Run not found.", runId: command.runId };
+      const placement = detail.placement
+        ? [
+            detail.placement.runtimeKind,
+            detail.placement.daemonName ?? detail.placement.daemonId ?? "any compatible computer",
+            detail.placement.pinned ? "pinned" : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : null;
       return {
         ok: true,
-        reply: `Run ${detail.run.id}\nStatus: ${detail.run.status}\nSteps: ${detail.run.completedSteps}/${detail.run.stepCount}\nOpen: ${await webRunUrl(connection.teamId, command.runId)}`,
+        reply: `Run ${detail.run.id}\nStatus: ${detail.run.status}${placement ? `\nTarget: ${placement}` : ""}\nSteps: ${detail.run.completedSteps}/${detail.run.stepCount}\nOpen: ${await webRunUrl(connection.teamId, command.runId)}`,
         runId: command.runId,
       };
     }
@@ -892,22 +1051,59 @@ async function executeCommand(
   }
 }
 
+function startRunReply(agentName: string, placement: string | null, url: string) {
+  return [
+    `🧠 ${agentName} is on it.`,
+    "I will send the result here.",
+    placement ? `Using ${placement}` : null,
+    `Track: ${url}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function clarifyAgentReply(
+  question: string,
+  choices: Array<{ handle: string; label: string }>,
+) {
+  return [
+    question,
+    ...choices.map((choice) => `/run @${choice.handle} "your request" · ${choice.label}`),
+    "",
+    "Tip: send /agent @agent_handle to keep one as the default hint.",
+  ].join("\n");
+}
+
 export async function sendTelegramMessage(input: {
   connection: ChannelConnectionRow;
   chatId: string;
   text: string;
+  parseMode?: "HTML";
 }) {
   const token = connectionToken(input.connection);
   if (!token) return;
-  await telegramCall(token, "sendMessage", { chat_id: input.chatId, text: input.text });
+  await telegramCall(token, "sendMessage", {
+    chat_id: input.chatId,
+    text: input.text,
+    ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
+    disable_web_page_preview: true,
+  });
 }
 
-export async function notifyRunTelegram(
-  teamId: string,
-  runId: string,
-  text: string,
-  sender: TelegramSender = sendTelegramMessage,
-) {
+export async function sendTelegramChatAction(input: {
+  connection: ChannelConnectionRow;
+  chatId: string;
+  action: "typing";
+}) {
+  const token = connectionToken(input.connection);
+  if (!token) return;
+  await telegramCall(token, "sendChatAction", {
+    chat_id: input.chatId,
+    action: input.action,
+  });
+}
+
+async function activeTelegramRecipients(teamId: string) {
   const connections = await db
     .select()
     .from(channelConnections)
@@ -918,33 +1114,287 @@ export async function notifyRunTelegram(
         eq(channelConnections.status, "active"),
       ),
     );
-  if (!connections.length) return 0;
-
+  if (!connections.length) return [];
   const identities = await db
     .select()
     .from(channelIdentities)
     .where(eq(channelIdentities.teamId, teamId));
-  const body = `${text}\nOpen: ${await webRunUrl(teamId, runId)}`;
+  return connections.flatMap((connection) =>
+    identities
+      .filter((identity) => identity.connectionId === connection.id)
+      .map((identity) => ({ connection, identity })),
+  );
+}
+
+export async function sendRunTelegramAction(
+  teamId: string,
+  action: "typing",
+  actionSender: TelegramActionSender = sendTelegramChatAction,
+) {
+  const recipients = await activeTelegramRecipients(teamId);
+  let sent = 0;
+  for (const { connection, identity } of recipients) {
+    await actionSender({
+      connection,
+      chatId: identity.externalChatId,
+      action,
+    }).catch(() => undefined);
+    sent += 1;
+  }
+  return sent;
+}
+
+export function startRunTelegramTypingHeartbeat(
+  teamId: string,
+  runId: string,
+  options: { intervalMs?: number; maxMs?: number } = {},
+) {
+  const key = `${teamId}:${runId}`;
+  if (telegramTypingHeartbeats.has(key)) return;
+  telegramTypingHeartbeats.add(key);
+  const intervalMs = options.intervalMs ?? 4_000;
+  const maxMs = options.maxMs ?? 15 * 60_000;
+  let interval: ReturnType<typeof setInterval> | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const stop = () => {
+    if (interval) clearInterval(interval);
+    if (timeout) clearTimeout(timeout);
+    telegramTypingHeartbeats.delete(key);
+  };
+  const tick = async () => {
+    const [task] = await db
+      .select({ status: schema.agentTasks.status })
+      .from(schema.agentTasks)
+      .where(and(eq(schema.agentTasks.teamId, teamId), eq(schema.agentTasks.id, runId)))
+      .limit(1);
+    if (!task || TELEGRAM_TYPING_TERMINAL_STATUSES.has(task.status)) {
+      stop();
+      return;
+    }
+    await sendRunTelegramAction(teamId, "typing");
+  };
+
+  void tick().catch(() => undefined);
+  interval = setInterval(() => {
+    void tick().catch(() => undefined);
+  }, intervalMs);
+  timeout = setTimeout(stop, maxMs);
+  if (typeof interval === "object" && "unref" in interval) interval.unref();
+  if (typeof timeout === "object" && "unref" in timeout) timeout.unref();
+}
+
+export async function notifyRunTelegram(
+  teamId: string,
+  runId: string,
+  text: string,
+  sender: TelegramSender = sendTelegramMessage,
+  actionSender: TelegramActionSender = sendTelegramChatAction,
+  options: { includeLink?: boolean } = {},
+) {
+  const recipients = await activeTelegramRecipients(teamId);
+  if (!recipients.length) return 0;
+  const includeLink = options.includeLink ?? true;
+  const body = includeLink
+    ? `${text}\n\nOpen run: ${await webRunUrl(teamId, runId)}`
+    : text;
+  const parts = formatTelegramHtmlMessages(body);
   let sent = 0;
 
-  for (const connection of connections) {
-    for (const identity of identities.filter(
-      (item) => item.connectionId === connection.id,
-    )) {
-      await recordMessage({
+  for (const { connection, identity } of recipients) {
+    await recordMessage({
+      connection,
+      identity,
+      direction: "outbound",
+      text: parts.join("\n\n"),
+      payload: { kind: "run.notification", parts: parts.length },
+      runId,
+    });
+    await actionSender({
+      connection,
+      chatId: identity.externalChatId,
+      action: "typing",
+    }).catch(() => undefined);
+    for (const part of parts) {
+      await sender({
         connection,
-        identity,
-        direction: "outbound",
-        text: body,
-        payload: { kind: "run.notification" },
-        runId,
+        chatId: identity.externalChatId,
+        text: part,
+        parseMode: "HTML",
       });
-      await sender({ connection, chatId: identity.externalChatId, text: body });
-      sent += 1;
     }
+    sent += 1;
   }
 
   return sent;
+}
+
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_SAFE_CHUNK = 3600;
+
+export function formatTelegramHtmlMessages(input: string) {
+  const formatted = formatTelegramText(input, Number.POSITIVE_INFINITY);
+  const parts: string[] = [];
+  for (const chunk of splitTelegramSource(formatted, TELEGRAM_SAFE_CHUNK)) {
+    const html = markdownToTelegramHtml(chunk);
+    if (html.length <= TELEGRAM_MESSAGE_LIMIT) {
+      parts.push(html);
+      continue;
+    }
+    for (const smaller of splitTelegramSource(chunk, 900)) {
+      parts.push(markdownToTelegramHtml(smaller));
+    }
+  }
+  return parts.filter(Boolean);
+}
+
+export function formatTelegramText(input: string, maxChars = 1800) {
+  const lines = input.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const next = lines[i + 1] ?? "";
+    if (isMarkdownTableRow(line) && isMarkdownTableDivider(next)) {
+      const headers = splitMarkdownTableRow(line);
+      i += 2;
+      while (i < lines.length && isMarkdownTableRow(lines[i] ?? "")) {
+        const values = splitMarkdownTableRow(lines[i] ?? "");
+        const pairs = headers
+          .map((header, index) => [header, values[index] ?? ""] as const)
+          .filter(([, value]) => value.trim() !== "");
+        out.push(
+          `- ${pairs
+            .map(([header, value]) => `${header}: ${value}`)
+            .join(" ; ")}`,
+        );
+        i += 1;
+      }
+      i -= 1;
+      continue;
+    }
+    out.push(line);
+  }
+  const compact = out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function splitTelegramSource(input: string, maxChars: number) {
+  const chunks: string[] = [];
+  let current = "";
+  const push = () => {
+    const trimmed = current.trim();
+    if (trimmed) chunks.push(trimmed);
+    current = "";
+  };
+  for (const line of input.split("\n")) {
+    if (line.length > maxChars) {
+      push();
+      for (let i = 0; i < line.length; i += maxChars) {
+        chunks.push(line.slice(i, i + maxChars));
+      }
+      continue;
+    }
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > maxChars) {
+      push();
+      current = line;
+    } else {
+      current = next;
+    }
+  }
+  push();
+  return chunks.length ? chunks : [""];
+}
+
+function markdownToTelegramHtml(input: string) {
+  const lines = input.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let codeLines: string[] = [];
+
+  const flushCode = () => {
+    if (!codeLines.length) return;
+    out.push(`<pre><code>${escapeTelegramHtml(codeLines.join("\n"))}</code></pre>`);
+    codeLines = [];
+  };
+
+  for (const raw of lines) {
+    if (/^\s*```/.test(raw)) {
+      if (inFence) {
+        flushCode();
+        inFence = false;
+      } else {
+        inFence = true;
+        codeLines = [];
+      }
+      continue;
+    }
+    if (inFence) {
+      codeLines.push(raw);
+      continue;
+    }
+
+    const heading = raw.match(/^\s{0,3}#{1,6}\s+(.+)$/);
+    if (heading?.[1]) {
+      out.push(`<b>${inlineTelegramHtml(heading[1])}</b>`);
+      continue;
+    }
+
+    const bullet = raw.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet?.[1]) {
+      out.push(`• ${inlineTelegramHtml(bullet[1])}`);
+      continue;
+    }
+
+    out.push(inlineTelegramHtml(raw));
+  }
+  if (inFence) flushCode();
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function inlineTelegramHtml(input: string) {
+  let text = escapeTelegramHtml(input);
+  text = text.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  text = text.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label: string, url: string) => {
+    return `<a href="${escapeTelegramAttr(url)}">${label}</a>`;
+  });
+  text = text.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+  text = text.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
+  return text;
+}
+
+function escapeTelegramHtml(input: string) {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeTelegramAttr(input: string) {
+  return escapeTelegramHtml(input).replace(/"/g, "&quot;");
+}
+
+function isMarkdownTableRow(line: string) {
+  const trimmed = line.trim();
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.split("|").length >= 4;
+}
+
+function isMarkdownTableDivider(line: string) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function splitMarkdownTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 /**

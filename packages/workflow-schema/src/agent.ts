@@ -28,6 +28,14 @@ export const skillPolicy = z.object({
 });
 export type SkillPolicy = z.infer<typeof skillPolicy>;
 
+export const toolGrant = z.object({
+  toolId: z.string(),
+  scopes: z.array(z.string()).default(["read"]),
+  rateCapPerMin: z.number().int().positive().optional(),
+  requireApproval: z.boolean().optional(),
+});
+export type ToolGrant = z.infer<typeof toolGrant>;
+
 /** Immutable, versioned agent config. Fills the real gap (`agent_versions`). */
 export const agentVersion = z.object({
   id: z.string(),
@@ -36,6 +44,7 @@ export const agentVersion = z.object({
   model: z.string().optional(),
   instructions: z.string(),
   tools: z.array(z.string()),
+  toolGrants: z.array(toolGrant).default([]),
   runtimeKind: runtimeKindSchema,
   memoryPolicy,
   skillPolicy,
@@ -63,6 +72,7 @@ export const createAgentVersionInput = z.object({
   model: z.string().optional(),
   instructions: z.string().default(""),
   tools: z.array(z.string()).default([]),
+  toolGrants: z.array(toolGrant).default([]),
   runtimeKind: runtimeKindSchema.default("echo"),
   memoryPolicy: memoryPolicy.default(DEFAULT_MEMORY_POLICY),
   skillPolicy: skillPolicy.default(DEFAULT_SKILL_POLICY),

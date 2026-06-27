@@ -31,6 +31,7 @@ import {
   useUninstallLocalDaemon,
   streamInstallJob,
 } from "./local-daemon-api";
+import { deriveDaemonView } from "./daemon-view";
 import {
   useRevokeDaemonToken,
   useRotateDaemonToken,
@@ -101,25 +102,24 @@ function StatusLine({ status }: { status?: LocalDaemonStatus }) {
     );
   }
 
-  const checkedIn = Boolean(status.health?.running ?? status.running);
-  const label = checkedIn
-    ? status.health?.deviceName
-      ? `Daemon running on ${status.health.deviceName}`
-      : "Daemon running on this machine"
-    : status.installed
-      ? "Daemon installed, stopped"
-      : "Daemon not installed on this machine";
+  const view = deriveDaemonView(status);
+  const label =
+    view.state === "running"
+      ? `Daemon running on ${view.device}`
+      : view.state === "stopped"
+        ? "Daemon installed, stopped"
+        : "Daemon not installed on this machine";
 
   return (
     <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      {checkedIn ? (
+      {view.running ? (
         <CircleCheck className="size-3.5 text-success" />
       ) : (
         <CircleX className="size-3.5 text-muted-foreground" />
       )}
       <span>{label}</span>
-      {status.health?.pid ? (
-        <span className="font-mono">pid={status.health.pid}</span>
+      {view.pid ? (
+        <span className="font-mono">pid={view.pid}</span>
       ) : null}
     </p>
   );

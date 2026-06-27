@@ -8,7 +8,10 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import type {
   CreatedBy,
   KnowledgeScope,
@@ -33,6 +36,15 @@ const ts = (name: string) =>
 export type AgentHealth = "healthy" | "degraded" | "error" | "idle" | "disabled";
 export type DaemonStatus = "online" | "offline" | "draining";
 export type RuntimeStatus = "online" | "offline";
+export type McpTransport = "streamable_http" | "sse";
+export type McpServerStatus = "unknown" | "online" | "error";
+export type McpToolStatus = "available" | "unavailable";
+export interface ToolGrantRecord {
+  toolId: string;
+  scopes: string[];
+  rateCapPerMin?: number;
+  requireApproval?: boolean;
+}
 export type AgentTaskStatus =
   | "queued"
   | "dispatched"
@@ -89,6 +101,50 @@ export const credentials = pgTable("credentials", {
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
+
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    transport: text("transport").$type<McpTransport>().notNull().default("streamable_http"),
+    url: text("url").notNull(),
+    credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
+    status: text("status").$type<McpServerStatus>().notNull().default("unknown"),
+    lastSyncAt: ts("last_sync_at"),
+    lastError: text("last_error"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("mcp_servers_team_name_unique").on(t.teamId, t.name)],
+);
+
+export const mcpTools = pgTable(
+  "mcp_tools",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    toolId: text("tool_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    inputSchema: jsonb("input_schema").$type<Record<string, unknown>>().notNull().default({}),
+    status: text("status").$type<McpToolStatus>().notNull().default("available"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("mcp_tools_team_tool_id_unique").on(t.teamId, t.toolId),
+    unique("mcp_tools_server_name_unique").on(t.serverId, t.name),
+  ],
+);
 
 export const workflows = pgTable("workflows", {
   id: text("id").primaryKey(),
@@ -166,6 +222,8 @@ export const agents = pgTable("agents", {
   health: text("health").$type<AgentHealth>().notNull().default("idle"),
   /** runtime kind this agent runs on (echo | claude | …). */
   runtimeKind: text("runtime_kind").notNull().default("echo"),
+  /** Optional machine pin: when set, only this daemon may claim the agent's tasks. */
+  preferredDaemonId: text("preferred_daemon_id").references(() => daemons.id, { onDelete: "set null" }),
   liveVersionId: text("live_version_id"),
   draftVersionId: text("draft_version_id"),
   config: jsonb("config").$type<Record<string, unknown>>(),
@@ -175,15 +233,26 @@ export const agents = pgTable("agents", {
 });
 
 /** A registered daemon (remote worker host). */
-export const daemons = pgTable("daemons", {
-  id: text("id").primaryKey(),
-  teamId: text("team_id").notNull(),
-  name: text("name").notNull(),
-  status: text("status").$type<DaemonStatus>().notNull().default("online"),
-  lastHeartbeatAt: ts("last_heartbeat_at"),
-  meta: jsonb("meta").$type<Record<string, unknown>>(),
-  createdAt: ts("created_at").notNull().defaultNow(),
-});
+export const daemons = pgTable(
+  "daemons",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status").$type<DaemonStatus>().notNull().default("online"),
+    lastHeartbeatAt: ts("last_heartbeat_at"),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per (team, machine identity): enforces the register dedup at the DB
+    // level and backs the deviceId lookup. Partial — legacy rows without a
+    // deviceId are exempt (they dedup by name in app code).
+    uniqueIndex("daemons_team_device_unique")
+      .on(t.teamId, sql`(${t.meta} ->> 'deviceId')`)
+      .where(sql`${t.meta} ->> 'deviceId' is not null`),
+  ],
+);
 
 /** A runtime advertised by a daemon (one per agent kind it can run). */
 export const runtimes = pgTable("runtimes", {
@@ -349,6 +418,8 @@ export const channelIdentities = pgTable(
     externalChatId: text("external_chat_id").notNull(),
     displayName: text("display_name").notNull().default(""),
     role: text("role").$type<ChannelIdentityRole>().notNull().default("operator"),
+    /** Optional conversational routing: free-form Telegram messages go to this agent. */
+    activeAgentId: text("active_agent_id").references(() => agents.id, { onDelete: "set null" }),
     approvedAt: ts("approved_at").notNull().defaultNow(),
     createdAt: ts("created_at").notNull().defaultNow(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
@@ -439,6 +510,7 @@ export const agentVersions = pgTable(
     model: text("model"),
     instructions: text("instructions").notNull().default(""),
     tools: jsonb("tools").$type<string[]>().notNull().default([]),
+    toolGrants: jsonb("tool_grants").$type<ToolGrantRecord[]>().notNull().default([]),
     runtimeKind: text("runtime_kind").$type<RuntimeKind>().notNull().default("echo"),
     memoryPolicy: jsonb("memory_policy").$type<MemoryPolicy>().notNull(),
     skillPolicy: jsonb("skill_policy").$type<SkillPolicy>().notNull(),
@@ -459,9 +531,30 @@ export const memoryEntries = pgTable("memory_entries", {
   sourceRunId: text("source_run_id"), // = agent_tasks.id
   confidence: doublePrecision("confidence").notNull().default(0.5),
   createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
+  lastEditedBy: text("last_edited_by"),
+  archivedAt: ts("archived_at"),
+  archivedBy: text("archived_by"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
-});
+}, (t) => [
+  index("memory_entries_team_created_idx").on(t.teamId, t.createdAt),
+  index("memory_entries_team_scope_target_idx").on(t.teamId, t.scope, t.targetId),
+]);
+
+export type MemoryEventAction = "create" | "update" | "archive" | "restore";
+
+export const memoryEvents = pgTable("memory_events", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  memoryId: text("memory_id").notNull(),
+  action: text("action").$type<MemoryEventAction>().notNull(),
+  actorId: text("actor_id").notNull().default("system"),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("memory_events_team_memory_created_idx").on(t.teamId, t.memoryId, t.createdAt),
+]);
 
 /** Procedural knowledge (head row). Points at its current version. */
 export const skills = pgTable("skills", {

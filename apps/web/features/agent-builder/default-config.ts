@@ -4,9 +4,10 @@ import type { AgentConfig } from "@/types/domain";
 export function defaultAgentConfig(): AgentConfig {
   return {
     runtimeKind: "echo",
+    runtimeBinding: { daemonId: null },
     model: {
       provider: "anthropic",
-      model: "claude-sonnet-4",
+      model: "claude-sonnet-4-6",
       temperature: 0.2,
       maxTokens: 2048,
       topP: 1,

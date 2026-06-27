@@ -4,12 +4,27 @@ import {
   ArrowUpCircle,
   CircleCheck,
   CircleX,
+  Loader2,
   Server,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PresenceBadge } from "@/components/shared/presence-badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Card,
   CardAction,
@@ -22,6 +37,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useForgetDaemon } from "./local-daemon-api";
 import type { DaemonInfo, SystemInfo } from "./types";
 
 const modeLabel = (mode: DaemonInfo["mode"]): string => {
@@ -39,7 +55,82 @@ function daemonDisplayName(daemon: DaemonInfo): string {
   );
 }
 
-function DaemonCard({ daemon }: { daemon: DaemonInfo }) {
+/** Mirror of the engine's DELETE_MIN_OFFLINE_MS: only offer "Forget" once a
+ *  daemon has been silent well past the 15s online-flap window, so a brief blip
+ *  can't surface a destructive action on a live machine (the API also refuses). */
+const FORGET_MIN_OFFLINE_MS = 120_000;
+
+function isForgettable(daemon: DaemonInfo): boolean {
+  if (daemon.status === "online") return false;
+  if (!daemon.lastHeartbeatAt) return true;
+  // Postgres offset "+00" → "+00:00" for Date.parse.
+  const ts = Date.parse(
+    String(daemon.lastHeartbeatAt)
+      .replace(" ", "T")
+      .replace(/([+-]\d{2})$/, "$1:00"),
+  );
+  if (Number.isNaN(ts)) return true;
+  return Date.now() - ts >= FORGET_MIN_OFFLINE_MS;
+}
+
+function ForgetDaemonButton({
+  team,
+  daemon,
+}: {
+  team: string;
+  daemon: DaemonInfo;
+}) {
+  const forget = useForgetDaemon(team);
+  const name = daemonDisplayName(daemon);
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-8 text-muted-foreground hover:text-danger pointer-coarse:size-11"
+          aria-label={`Forget ${name}`}
+          disabled={forget.isPending}
+        >
+          {forget.isPending ? (
+            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Trash2 className="size-4" />
+          )}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Forget this computer?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Removes <span className="font-medium">{name}</span> from this
+            workspace. A daemon that is still running won&apos;t re-register on
+            its own — restart it (or re-run the installer) to bring it back.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className={cn(buttonVariants({ variant: "destructive" }))}
+            onClick={() =>
+              forget.mutate(daemon.id, {
+                onSuccess: () => toast.success("Computer forgotten"),
+                onError: (e) =>
+                  toast.error(
+                    e instanceof Error ? e.message : "Could not forget computer",
+                  ),
+              })
+            }
+          >
+            Forget
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function DaemonCard({ team, daemon }: { team: string; daemon: DaemonInfo }) {
   const online = daemon.status === "online";
   const stale = !online;
   const tools = daemon.meta.tools ?? [];
@@ -59,9 +150,12 @@ function DaemonCard({ daemon }: { daemon: DaemonInfo }) {
               : "Computer details unavailable"}
           </CardDescription>
         </div>
-        <CardAction className="flex gap-2">
+        <CardAction className="flex items-center gap-2">
           <PresenceBadge status={daemon.status} />
           <Badge variant="muted">{modeLabel(daemon.mode)}</Badge>
+          {isForgettable(daemon) ? (
+            <ForgetDaemonButton team={team} daemon={daemon} />
+          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 px-4">
@@ -175,9 +269,11 @@ function DaemonCard({ daemon }: { daemon: DaemonInfo }) {
 }
 
 export function RuntimesComputersList({
+  team,
   data,
   loading,
 }: {
+  team: string;
   data?: SystemInfo;
   loading: boolean;
 }) {
@@ -198,7 +294,7 @@ export function RuntimesComputersList({
         ) : data && data.daemons.length > 0 ? (
           <div className="grid gap-3 lg:grid-cols-2">
             {data.daemons.map((d) => (
-              <DaemonCard key={d.id} daemon={d} />
+              <DaemonCard key={d.id} team={team} daemon={d} />
             ))}
           </div>
         ) : null}

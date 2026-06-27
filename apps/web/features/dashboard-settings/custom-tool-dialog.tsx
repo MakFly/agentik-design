@@ -36,21 +36,27 @@ export function CustomToolDialog({
   onOpenChange,
   onSave,
   existingNames,
+  tool,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (tool: CustomTool) => void;
   existingNames: string[];
+  tool?: CustomTool | null;
 }) {
-  const [label, setLabel] = useState("");
-  const [description, setDescription] = useState("");
-  const [method, setMethod] = useState<"GET" | "POST">("GET");
-  const [url, setUrl] = useState("");
-  const [params, setParams] = useState<ToolParam[]>([]);
+  const [label, setLabel] = useState(tool?.name ?? "");
+  const [description, setDescription] = useState(tool?.description ?? "");
+  const [method, setMethod] = useState<"GET" | "POST">(tool?.method ?? "GET");
+  const [url, setUrl] = useState(tool?.url ?? "");
+  const [params, setParams] = useState<ToolParam[]>(tool?.params ?? []);
 
   const name = slugifyToolName(label);
-  const nameTaken = existingNames.includes(name);
-  const valid = name.length > 0 && !nameTaken && /^https?:\/\//.test(url) && description.trim().length > 0;
+  const nameTaken = existingNames.includes(name) && name !== tool?.name;
+  const valid =
+    name.length > 0 &&
+    !nameTaken &&
+    /^https?:\/\//.test(url) &&
+    description.trim().length > 0;
 
   const reset = () => {
     setLabel("");
@@ -63,7 +69,7 @@ export function CustomToolDialog({
   const submit = () => {
     if (!valid) return;
     onSave({
-      id: crypto.randomUUID(),
+      id: tool?.id ?? crypto.randomUUID(),
       name,
       description: description.trim(),
       method,
@@ -84,10 +90,10 @@ export function CustomToolDialog({
     >
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New tool</DialogTitle>
+          <DialogTitle>{tool ? "Edit tool" : "New tool"}</DialogTitle>
           <DialogDescription>
-            An HTTP endpoint the assistant can call. Runs in your browser (public,
-            CORS-enabled APIs).
+            An HTTP endpoint the assistant can call. Runs in your browser
+            (public, CORS-enabled APIs).
           </DialogDescription>
         </DialogHeader>
 
@@ -103,7 +109,9 @@ export function CustomToolDialog({
             {name && (
               <p className="text-muted-foreground text-xs">
                 Tool id: <code className="bg-muted rounded px-1">{name}</code>
-                {nameTaken && <span className="text-destructive"> — already used</span>}
+                {nameTaken && (
+                  <span className="text-destructive"> — already used</span>
+                )}
               </p>
             )}
           </div>
@@ -122,7 +130,10 @@ export function CustomToolDialog({
           <div className="flex flex-col gap-1.5 sm:flex-row sm:items-end sm:gap-2">
             <div className="flex flex-col gap-1.5 sm:w-28">
               <Label htmlFor="ct-method">Method</Label>
-              <Select value={method} onValueChange={(v) => setMethod(v as "GET" | "POST")}>
+              <Select
+                value={method}
+                onValueChange={(v) => setMethod(v as "GET" | "POST")}
+              >
                 <SelectTrigger id="ct-method">
                   <SelectValue />
                 </SelectTrigger>
@@ -151,7 +162,10 @@ export function CustomToolDialog({
                 variant="ghost"
                 size="sm"
                 onClick={() =>
-                  setParams((p) => [...p, { name: "", type: "string", required: true }])
+                  setParams((p) => [
+                    ...p,
+                    { name: "", type: "string", required: true },
+                  ])
                 }
               >
                 <PlusIcon className="size-4" /> Add
@@ -166,7 +180,9 @@ export function CustomToolDialog({
                   value={p.name}
                   onChange={(e) =>
                     setParams((arr) =>
-                      arr.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)),
+                      arr.map((x, j) =>
+                        j === i ? { ...x, name: e.target.value } : x,
+                      ),
                     )
                   }
                   placeholder="param_name"
@@ -176,7 +192,9 @@ export function CustomToolDialog({
                   value={p.type}
                   onValueChange={(v) =>
                     setParams((arr) =>
-                      arr.map((x, j) => (j === i ? { ...x, type: v as ParamType } : x)),
+                      arr.map((x, j) =>
+                        j === i ? { ...x, type: v as ParamType } : x,
+                      ),
                     )
                   }
                 >
@@ -196,7 +214,9 @@ export function CustomToolDialog({
                     checked={!!p.required}
                     onCheckedChange={(v) =>
                       setParams((arr) =>
-                        arr.map((x, j) => (j === i ? { ...x, required: v } : x)),
+                        arr.map((x, j) =>
+                          j === i ? { ...x, required: v } : x,
+                        ),
                       )
                     }
                     aria-label="Required"
@@ -208,7 +228,9 @@ export function CustomToolDialog({
                   variant="ghost"
                   size="icon"
                   className="size-8 shrink-0"
-                  onClick={() => setParams((arr) => arr.filter((_, j) => j !== i))}
+                  onClick={() =>
+                    setParams((arr) => arr.filter((_, j) => j !== i))
+                  }
                   aria-label="Remove parameter"
                 >
                   <Trash2Icon className="size-4" />
@@ -223,7 +245,7 @@ export function CustomToolDialog({
             Cancel
           </Button>
           <Button disabled={!valid} onClick={submit}>
-            Create tool
+            {tool ? "Update tool" : "Create tool"}
           </Button>
         </DialogFooter>
       </DialogContent>

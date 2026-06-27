@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TeamSwitcher } from "./team-switcher";
 import { NavUser } from "./nav-user";
+import { DaemonStatusFooter } from "./daemon-status";
 
 const GROUP_ORDER: NavGroup[] = [
   "control",
@@ -103,6 +104,7 @@ export function AppSidebar({ team }: { team: string }) {
       </SidebarContent>
 
       <SidebarFooter>
+        <DaemonStatusFooter />
         <NavUser team={team} />
       </SidebarFooter>
 

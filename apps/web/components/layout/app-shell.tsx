@@ -47,7 +47,7 @@ export function AppShell({
           <div className="h-svh overflow-hidden">{children}</div>
         ) : (
           <>
-            <Topbar />
+            <Topbar team={team} />
             <main className="min-w-0 flex-1 overflow-x-hidden">
               <div
                 className={

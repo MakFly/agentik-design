@@ -17,6 +17,7 @@
   "dependencies": {
     "@agentik/workflow-engine": "workspace:*",
     "@agentik/workflow-schema": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "bullmq": "^5.34.0",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.6.14",

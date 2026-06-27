@@ -4,7 +4,7 @@
 // presence means the model is usable.
 //
 // Maintenance note: provider model ids drift as new versions ship. The ids below
-// were verified against each provider's docs on 21-06-2026 (Anthropic ids from the
+// were verified against each provider's docs on 26-06-2026 (Anthropic ids from the
 // authoritative Claude API reference; OpenAI / Google / xAI / Groq via their model
 // docs). Re-verify when a provider ships a new generation.
 
@@ -48,6 +48,8 @@ export const LLM_MODELS: readonly LlmModel[] = [
   { id: "gpt-5.5", label: "GPT-5.5", provider: "openai", apiModel: "gpt-5.5", efforts: EFFORT_LMH },
   { id: "gpt-5.4", label: "GPT-5.4", provider: "openai", apiModel: "gpt-5.4", efforts: EFFORT_LMH },
   { id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: "openai", apiModel: "gpt-5.4-mini", efforts: EFFORT_LMH },
+  { id: "gpt-5.4-nano", label: "GPT-5.4 nano", provider: "openai", apiModel: "gpt-5.4-nano", efforts: EFFORT_LMH },
+  { id: "claude-fable-5", label: "Claude Fable 5", provider: "anthropic", apiModel: "claude-fable-5", efforts: EFFORT_LMHX },
   { id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "anthropic", apiModel: "claude-opus-4-8", efforts: EFFORT_LMHX },
   { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", apiModel: "claude-sonnet-4-6", efforts: EFFORT_LMH },
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic", apiModel: "claude-haiku-4-5" },

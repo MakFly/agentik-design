@@ -11,11 +11,19 @@ import { resolveTeam } from "./repo";
 import { createAgent, publishAgent } from "./agents-repo";
 import {
   applyRunReview,
+  archiveMemory,
+  createMemory,
   generateRunReview,
   getRunReview,
+  listMemory,
+  listMemoryEvents,
   listAgentVersions,
+  resolveMemoryInjectionPreview,
   resolveInjectionContext,
+  restoreMemory,
+  searchChatMemory,
   setRunReviewStatus,
+  updateMemory,
 } from "./learning-repo";
 import { claimTask } from "./daemon-repo";
 import { cancelAgentTask, getRunUnified } from "./agents-repo";
@@ -222,5 +230,113 @@ d("Security regressions — tenancy & review-state guards", () => {
     // and the status stays rejected, not flipped to applied
     const after = await getRunReview(teamId, review!.id);
     expect(after?.status).toBe("rejected");
+  });
+});
+
+d("Memory cockpit — durable memory CRUD, audit, preview, and session recall", () => {
+  const slug = `itest-memory-${Date.now()}`;
+  let teamId: string;
+  let projectId: string;
+  let agentId: string;
+  let memoryId: string;
+  let chatSessionId: string;
+
+  beforeAll(async () => {
+    teamId = await resolveTeam(slug);
+    const agent = await createAgent(teamId, { name: "Memory Agent" });
+    agentId = agent.id;
+    await publishAgent(teamId, agentId, { instructions: "remember safely", runtimeKind: "echo" });
+    projectId = genId("proj");
+    await db.insert(schema.projects).values({
+      id: projectId,
+      teamId,
+      name: "Memory Project",
+      type: "ops",
+      createdBy: "usr_test",
+    });
+    chatSessionId = genId("chat");
+    await db.insert(schema.chatSessions).values({
+      id: chatSessionId,
+      teamId,
+      agentId,
+      creatorId: "usr_test",
+      title: "Memory source",
+    });
+    await db.insert(schema.chatMessages).values({
+      id: genId("cmsg"),
+      chatSessionId,
+      role: "user",
+      content: "The client prefers concise French weather summaries.",
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(schema.chatSessions).where(eq(schema.chatSessions.teamId, teamId));
+    await db.delete(schema.memoryEvents).where(eq(schema.memoryEvents.teamId, teamId));
+    await db.delete(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
+    await db.delete(schema.projects).where(eq(schema.projects.teamId, teamId));
+    await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
+    await db.delete(schema.teams).where(eq(schema.teams.id, teamId));
+  });
+
+  test("creates, updates, archives, restores, searches, and audits memory", async () => {
+    const created = await createMemory({
+      teamId,
+      scope: "project",
+      targetId: projectId,
+      content: "Weather answers must mention the source conflict when providers disagree.",
+      confidence: 0.9,
+      actorId: "usr_test",
+    });
+    expect("memory" in created).toBe(true);
+    memoryId = "memory" in created ? created.memory.id : "";
+
+    const updated = await updateMemory({
+      teamId,
+      memoryId,
+      actorId: "usr_test",
+      content: "Weather answers must mention source conflicts and keep the answer concise.",
+      confidence: 0.95,
+    });
+    expect("memory" in updated ? updated.memory.confidence : 0).toBe(0.95);
+
+    const search = await listMemory(teamId, { q: "source conflicts" });
+    expect(search.some((memory) => memory.id === memoryId)).toBe(true);
+
+    const archived = await archiveMemory(teamId, memoryId, "usr_test");
+    if (!("memory" in archived)) throw new Error("memory archive failed");
+    const archivedMemory = archived.memory;
+    if (!archivedMemory) throw new Error("memory archive returned no row");
+    expect(archivedMemory.archivedAt).toBeTruthy();
+    expect(await listMemory(teamId)).toHaveLength(0);
+
+    const restored = await restoreMemory(teamId, memoryId, "usr_test");
+    expect("memory" in restored ? restored.memory?.archivedAt : "x").toBeNull();
+
+    const events = await listMemoryEvents(teamId, memoryId);
+    expect(new Set(events.map((event) => event.action))).toEqual(
+      new Set(["create", "update", "archive", "restore"]),
+    );
+  });
+
+  test("preview uses the same injection resolver as runtime claim", async () => {
+    await createMemory({
+      teamId,
+      scope: "agent",
+      targetId: agentId,
+      content: "For this agent, prefer direct operational answers.",
+      confidence: 0.8,
+      actorId: "usr_test",
+    });
+    const preview = await resolveMemoryInjectionPreview(teamId, agentId);
+    expect(preview?.memories.some((memory) => memory.content.includes("operational answers"))).toBe(true);
+  });
+
+  test("session recall finds chat turns without making them durable", async () => {
+    const hits = await searchChatMemory(teamId, "concise French");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.sessionId).toBe(chatSessionId);
+    const durable = await listMemory(teamId, { q: "concise French" });
+    expect(durable).toHaveLength(0);
   });
 });

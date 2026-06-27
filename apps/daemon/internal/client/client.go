@@ -83,6 +83,38 @@ func (c *Client) DiscoverOrgs(ctx context.Context) ([]protocol.OrgRef, error) {
 	return out.Orgs, nil
 }
 
+func (c *Client) ListAgents(ctx context.Context, teamID string) ([]protocol.AgentSummary, error) {
+	var out protocol.AgentsResponse
+	if _, err := c.do(ctx, "/daemon/agents/list", map[string]string{"teamId": teamID}, &out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
+}
+
+func (c *Client) RunAgent(ctx context.Context, teamID, agentID, input string) (*protocol.RunAgentResponse, error) {
+	var out protocol.RunAgentResponse
+	if _, err := c.do(ctx, "/daemon/agents/"+agentID+"/run", protocol.RunAgentRequest{TeamID: teamID, Input: input}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) OrchestratorTurn(ctx context.Context, req protocol.OrchestratorTurnRequest) (*protocol.OrchestratorTurnResponse, error) {
+	var out protocol.OrchestratorTurnResponse
+	if _, err := c.do(ctx, "/daemon/orchestrator/turn", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) RunDetail(ctx context.Context, teamID, runID string) (*protocol.RunDetailResponse, error) {
+	var out protocol.RunDetailResponse
+	if _, err := c.do(ctx, "/daemon/runs/"+runID+"/detail", map[string]string{"teamId": teamID}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) Register(ctx context.Context, req protocol.RegisterRequest) (*protocol.RegisterResponse, error) {
 	var out protocol.RegisterResponse
 	if _, err := c.do(ctx, "/daemon/register", req, &out); err != nil {
@@ -126,6 +158,14 @@ func (c *Client) SendMessages(ctx context.Context, taskID string, msgs []protoco
 		return false, err
 	}
 	return out.Cancel, nil
+}
+
+func (c *Client) InvokeTool(ctx context.Context, taskID string, req protocol.InvokeToolRequest) (*protocol.InvokeToolResponse, error) {
+	var out protocol.InvokeToolResponse
+	if _, err := c.do(ctx, "/daemon/tasks/"+taskID+"/tools/invoke", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) Complete(ctx context.Context, taskID string, result any) error {

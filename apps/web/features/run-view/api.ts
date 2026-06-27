@@ -14,6 +14,13 @@ export interface RunFilters {
 export interface RunDetail {
   run: Run;
   steps: Step[];
+  placement?: {
+    runtimeKind: string;
+    runtimeId: string | null;
+    daemonId: string | null;
+    daemonName: string | null;
+    pinned: boolean;
+  };
   projectContext?: RunProjectContext;
   artifacts?: {
     summary: string;

@@ -94,7 +94,11 @@ export function RuntimesTab({
       {capability === "local_available" ? (
         <ThisMachineCard team={team} system={system.data} />
       ) : null}
-      <RuntimesComputersList data={system.data} loading={system.isLoading} />
+      <RuntimesComputersList
+        team={team}
+        data={system.data}
+        loading={system.isLoading}
+      />
       <ConnectRemoteDialog
         team={team}
         open={remoteOpen}

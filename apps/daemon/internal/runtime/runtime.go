@@ -19,6 +19,14 @@ type Runtime interface {
 	Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error)
 }
 
+type ToolInvokerFunc func(ctx context.Context, taskID string, toolID string, args map[string]any) (any, error)
+
+// ToolAware runtimes can receive a per-task tool invoker. It returns a copy so
+// shared runtime registry entries are not mutated across concurrent tasks.
+type ToolAware interface {
+	WithToolInvoker(ToolInvokerFunc) Runtime
+}
+
 // withTaskEnv appends the engine-supplied per-task env (org provider keys) onto a
 // base allowlist env. Later entries win, so a managed key overrides any inherited one.
 func withTaskEnv(base []string, extra map[string]string) []string {

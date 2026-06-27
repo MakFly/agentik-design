@@ -98,7 +98,11 @@ export function RuntimesPageContent({ team }: { team: string }) {
         ) : null}
 
         {hasDaemons ? (
-          <RuntimesComputersList data={system.data} loading={loading} />
+          <RuntimesComputersList
+            team={team}
+            data={system.data}
+            loading={loading}
+          />
         ) : null}
       </div>
 
