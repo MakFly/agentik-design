@@ -1,5 +1,7 @@
 export * from "./graph";
 export * from "./run";
+export * from "./events";
+export * from "./daemon-protocol";
 export * from "./api";
 export * from "./credentials";
 // Agentik MVP learning-loop contracts (see AGENTIK_MVP_GUIDELINE.md §5)

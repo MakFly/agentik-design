@@ -1,11 +1,19 @@
 /**
- * Realtime event schema (docs/04 §10). Transport: SSE for streams, WS for control.
- * Every event has a global `id` (Last-Event-ID replay), per-run `seq`, ISO `ts`.
+ * Realtime event schema (docs/04 §10). Shapes mirror @agentik/workflow-schema/events
+ * with branded IDs for the web UI (RunId / StepId / etc.).
  */
+export type {
+  OrchestratorRunEvent,
+  Money,
+  TokenUsage,
+  Cost,
+  AppErrorKind,
+  StepError,
+} from "@agentik/workflow-schema";
+
 import type {
   RunId,
   StepId,
-  StepError,
   RunStatus,
   Cost,
   Money,
@@ -48,7 +56,7 @@ export interface StepCompleted {
 export interface StepFailed {
   type: "step.failed";
   stepId: StepId;
-  error: StepError;
+  error: import("@agentik/workflow-schema").StepError;
 }
 export interface StepRetrying {
   type: "step.retrying";
@@ -124,8 +132,7 @@ export interface EventEnvelope<T extends RunEvent = RunEvent> {
   ts: ISODate;
   runId: RunId;
   event: T["type"];
-  /** Orchestrator-level event name from docs/agentic-system/ORCHESTRATOR.md. */
-  contractEvent?: string;
+  contractEvent?: import("@agentik/workflow-schema").OrchestratorRunEvent;
   data: T;
 }
 
