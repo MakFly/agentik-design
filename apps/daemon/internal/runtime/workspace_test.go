@@ -11,7 +11,7 @@ import (
 
 func TestTaskWorkDirUsesRelativeWorkspaceUnderWorkRoot(t *testing.T) {
 	root := t.TempDir()
-	task := protocol.ClaimedTask{ID: "atask_test", WorkDir: "projects/proj_test/pwsp_test"}
+	task := protocol.ClaimedTask{ID: "run_test", WorkDir: "projects/proj_test/pwsp_test"}
 
 	dir, cleanup, err := taskWorkDir(root, task)
 	if err != nil {
@@ -29,7 +29,7 @@ func TestTaskWorkDirUsesRelativeWorkspaceUnderWorkRoot(t *testing.T) {
 }
 
 func TestTaskWorkDirRejectsParentTraversal(t *testing.T) {
-	_, _, err := taskWorkDir(t.TempDir(), protocol.ClaimedTask{ID: "atask_test", WorkDir: "../outside"})
+	_, _, err := taskWorkDir(t.TempDir(), protocol.ClaimedTask{ID: "run_test", WorkDir: "../outside"})
 	if err == nil {
 		t.Fatal("expected parent traversal to be rejected")
 	}
@@ -37,11 +37,11 @@ func TestTaskWorkDirRejectsParentTraversal(t *testing.T) {
 
 func TestTaskWorkDirMapsLegacyWorkPathUnderWorkRoot(t *testing.T) {
 	root := t.TempDir()
-	dir, cleanup, err := taskWorkDir(root, protocol.ClaimedTask{ID: "atask_test", WorkDir: "/work/atask_test"})
+	dir, cleanup, err := taskWorkDir(root, protocol.ClaimedTask{ID: "run_test", WorkDir: "/work/run_test"})
 	if err != nil {
 		t.Fatalf("taskWorkDir returned error: %v", err)
 	}
-	if dir != filepath.Join(root, "atask_test") {
+	if dir != filepath.Join(root, "run_test") {
 		t.Fatalf("dir = %q", dir)
 	}
 	cleanup()

@@ -103,5 +103,5 @@ func taskWithInput(t *testing.T, input protocol.TaskInput) protocol.ClaimedTask 
 	if err != nil {
 		t.Fatalf("marshal input: %v", err)
 	}
-	return protocol.ClaimedTask{ID: "atask_test", Input: b, WorkDir: filepath.Join(t.TempDir(), "work")}
+	return protocol.ClaimedTask{ID: "run_test", Input: b, WorkDir: filepath.Join(t.TempDir(), "work")}
 }

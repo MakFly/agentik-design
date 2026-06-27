@@ -23,7 +23,7 @@ func TestPreflightApprovalRequiresGateUntilApproved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	approval := preflightApproval(protocol.ClaimedTask{ID: "atask_test", Input: input})
+	approval := preflightApproval(protocol.ClaimedTask{ID: "run_test", Input: input})
 	if approval == nil {
 		t.Fatal("expected preflight approval")
 	}
@@ -45,7 +45,7 @@ func TestPreflightApprovalSkipsApprovedGate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if approval := preflightApproval(protocol.ClaimedTask{ID: "atask_test", Input: input}); approval != nil {
+	if approval := preflightApproval(protocol.ClaimedTask{ID: "run_test", Input: input}); approval != nil {
 		t.Fatalf("expected approved task to skip preflight, got %#v", approval)
 	}
 }
@@ -66,7 +66,7 @@ func TestInjectWorkspaceInstructionsAddsAgentsMdToSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := protocol.ClaimedTask{ID: "atask_test", Input: input}
+	task := protocol.ClaimedTask{ID: "run_test", Input: input}
 
 	injectWorkspaceInstructions(&task, dir)
 

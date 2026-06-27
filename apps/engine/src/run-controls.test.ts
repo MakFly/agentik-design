@@ -16,7 +16,8 @@ import {
   requestRunApproval,
   resumeRun,
 } from "./domains/runs";
-import { claimTask, registerDaemon, requestDaemonTaskApproval } from "./execution/daemon/repo";
+import { claimTask, registerDaemon } from "./execution/daemon/repo";
+import { requestDaemonTaskApproval } from "./execution/daemon/service";
 
 let dbUp = false;
 try {

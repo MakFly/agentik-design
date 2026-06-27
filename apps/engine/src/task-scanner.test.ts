@@ -8,7 +8,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "./infra/db/client";
 import { genId } from "./infra/db/ids";
 import { resolveTeam } from "./domains/workflows/repo";
-import { failTask } from "./execution/daemon/repo";
+import { failTask } from "./execution/daemon/service";
 import { retryRun } from "./domains/runs";
 import { scanStaleTasks, SCANNER_LOCK_KEY } from "./jobs/task-scanner";
 

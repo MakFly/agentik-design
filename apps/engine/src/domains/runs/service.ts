@@ -12,7 +12,7 @@ import {
   runtimeKindSchema,
 } from "@agentik/workflow-schema";
 import type { RuntimeKind, ToolGrant } from "@agentik/workflow-schema";
-import { ensureDevAgents } from "./repo";
+import { ensureDevAgents } from "../agents/repo";
 
 const { agents, daemons, runtimes, runs } = schema;
 
@@ -222,4 +222,126 @@ export async function createTestTask(
   });
   hub.publish(teamId, { kind: "run", action: "created", runId: runId });
   return { runId: runId };
+}
+
+function resultText(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object") {
+    const r = (result as Record<string, unknown>).result;
+    if (typeof r === "string") return r;
+  }
+  return result == null ? "" : JSON.stringify(result);
+}
+
+/** Side effects after a daemon run succeeds — hub, channels, chat, learning. */
+export async function onRunCompleted(
+  teamId: string,
+  runId: string,
+  result: unknown,
+  ctx: { chatSessionId?: string | null; projectTaskId?: string | null },
+): Promise<void> {
+  const { appendAssistantTurn } = await import("../chat/repo");
+  const { ensureRunReview } = await import("../learning/index");
+  const { notifyRunTelegram } = await import("../channels/service");
+
+  hub.publish(teamId, { kind: "run", action: "succeeded", runId });
+  if (ctx.projectTaskId) {
+    await db
+      .update(schema.projectTasks)
+      .set({ status: "review", updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(schema.projectTasks.id, ctx.projectTaskId),
+          eq(schema.projectTasks.teamId, teamId),
+        ),
+      );
+  }
+  if (ctx.chatSessionId) {
+    await appendAssistantTurn(
+      teamId,
+      ctx.chatSessionId,
+      runId,
+      resultText(result),
+    ).catch(() => undefined);
+  }
+  await notifyRunTelegram(
+    teamId,
+    runId,
+    `✅ Run completed\n\n${resultText(result)}`,
+    undefined,
+    undefined,
+    { includeLink: false },
+  ).catch(() => undefined);
+  await ensureRunReview(teamId, runId).catch(() => undefined);
+}
+
+/** Side effects after a daemon run fails — hub, channels, learning. */
+export async function onRunFailed(
+  teamId: string,
+  runId: string,
+  error: string,
+  ctx: { projectTaskId?: string | null },
+): Promise<void> {
+  const { ensureRunReview } = await import("../learning/index");
+  const { notifyRunTelegram } = await import("../channels/service");
+
+  hub.publish(teamId, { kind: "run", action: "failed", runId });
+  if (ctx.projectTaskId) {
+    await db
+      .update(schema.projectTasks)
+      .set({ status: "blocked", updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(schema.projectTasks.id, ctx.projectTaskId),
+          eq(schema.projectTasks.teamId, teamId),
+        ),
+      );
+  }
+  await notifyRunTelegram(
+    teamId,
+    runId,
+    `❌ Run failed\n\n${error}`,
+    undefined,
+    undefined,
+    { includeLink: false },
+  ).catch(() => undefined);
+  await ensureRunReview(teamId, runId).catch(() => undefined);
+}
+
+export async function onRunRunning(teamId: string, runId: string): Promise<void> {
+  const { startRunTelegramTypingHeartbeat } = await import("../channels/service");
+  hub.publish(teamId, { kind: "run", action: "running", runId });
+  startRunTelegramTypingHeartbeat(teamId, runId);
+}
+
+export function onRunDispatched(teamId: string, runId: string): void {
+  hub.publish(teamId, { kind: "run", action: "dispatched", runId });
+}
+
+export function onRunProgress(
+  teamId: string,
+  runId: string,
+  completedSteps: number,
+  stepCount: number,
+): void {
+  hub.publish(teamId, {
+    kind: "run.progress",
+    runId,
+    completedSteps,
+    stepCount,
+  });
+}
+
+export async function onRunWaitingApproval(
+  teamId: string,
+  runId: string,
+  message: string,
+): Promise<void> {
+  const { notifyRunTelegram } = await import("../channels/service");
+  hub.publish(teamId, { kind: "run", action: "waiting_approval", runId });
+  await notifyRunTelegram(
+    teamId,
+    runId,
+    `Approval requested\n${message}`,
+  ).catch(() => undefined);
 }

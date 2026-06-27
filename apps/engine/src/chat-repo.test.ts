@@ -8,7 +8,7 @@ import { db, schema } from "./infra/db/client";
 import { genId } from "./infra/db/ids";
 import { resolveTeam } from "./domains/workflows/repo";
 import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./domains/chat/repo";
-import { startTask, completeTask } from "./execution/daemon/repo";
+import { startTask, completeTask } from "./execution/daemon/service";
 
 const { agents, runs, chatSessions, chatMessages, teams } = schema;
 

@@ -5,16 +5,12 @@ import { resolveTeam } from "../../domains/workflows/repo";
 import { hub } from "../../infra/hub";
 import {
   buildInjectionPreamble,
-  ensureRunReview,
   resolveInjectionContext,
   type InjectionContext,
 } from "../../domains/learning/index";
-import { appendAssistantTurn } from "../../domains/chat/repo";
 import { resolveProviderEnv } from "../../domains/settings/providers-repo";
 import { liveRuntimeTools } from "../../domains/mcp/repo";
-import { notifyRunTelegram, startRunTelegramTypingHeartbeat } from "../../domains/channels/service";
 import type { RunMessageType, TaskErrorReason } from "../../infra/db/schema";
-import { runStatusToAgentTaskStatus } from "../../infra/db/schema";
 import type { RunStatus } from "@agentik/workflow-schema";
 
 const {
@@ -459,11 +455,6 @@ export async function claimTask(
     // Inject the org's runtime provider keys so the runtime (hermes/claude…)
     // authenticates from credentials managed entirely in the web UI.
     task.env = await resolveProviderEnv(task.teamId);
-    hub.publish(task.teamId, {
-      kind: "run",
-      action: "dispatched",
-      runId: task.id,
-    });
   }
   return task;
 }
@@ -504,7 +495,9 @@ export async function reportProjectWorkspaceStatus(
   return true;
 }
 
-export async function startTask(runId: string): Promise<boolean> {
+export async function startTask(
+  runId: string,
+): Promise<{ teamId: string } | null> {
   const updated = await db
     .update(runs)
     .set({ status: "running", startedAt: sql`now()` })
@@ -516,14 +509,7 @@ export async function startTask(runId: string): Promise<boolean> {
       ),
     )
     .returning({ id: runs.id, teamId: runs.teamId });
-  if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, {
-    kind: "run",
-    action: "running",
-    runId: runId,
-  });
-  startRunTelegramTypingHeartbeat(updated[0].teamId, runId);
-  return true;
+  return updated[0] ?? null;
 }
 
 export interface IncomingMessage {
@@ -564,18 +550,12 @@ async function appendTaskControlMessage(
     .update(runs)
     .set({ stepCount: seq + 1, completedSteps: seq + 1 })
     .where(and(eq(runs.id, runId), eq(runs.teamId, teamId)));
-  hub.publish(teamId, {
-    kind: "run.progress",
-    runId: runId,
-    completedSteps: seq + 1,
-    stepCount: seq + 1,
-  });
 }
 
 export async function requestDaemonTaskApproval(
   runId: string,
   input: { message?: string; context?: Record<string, unknown> },
-): Promise<boolean> {
+): Promise<{ teamId: string; message: string } | null> {
   const [task] = await db
     .select({
       id: runs.id,
@@ -586,9 +566,14 @@ export async function requestDaemonTaskApproval(
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
-  if (!task) return false;
-  if (task.status === "waiting_approval") return true;
-  if (!["queued", "running"].includes(task.status)) return false;
+  if (!task) return null;
+  if (task.status === "waiting_approval") {
+    return {
+      teamId: task.teamId,
+      message: input.message?.trim() || "Operator approval required before execution.",
+    };
+  }
+  if (!["queued", "running"].includes(task.status)) return null;
   await db
     .update(runs)
     .set({ status: "waiting_approval" })
@@ -616,17 +601,7 @@ export async function requestDaemonTaskApproval(
         ),
       );
   }
-  hub.publish(task.teamId, {
-    kind: "run",
-    action: "waiting_approval",
-    runId: runId,
-  });
-  await notifyRunTelegram(
-    task.teamId,
-    runId,
-    `Approval requested\n${message}`,
-  ).catch(() => undefined);
-  return true;
+  return { teamId: task.teamId, message };
 }
 
 /**
@@ -636,7 +611,12 @@ export async function requestDaemonTaskApproval(
 export async function appendMessages(
   runId: string,
   messages: IncomingMessage[],
-): Promise<{ cancel: boolean }> {
+): Promise<{
+  cancel: boolean;
+  teamId?: string;
+  completedSteps?: number;
+  stepCount?: number;
+}> {
   if (messages.length > 0) {
     await db
       .insert(runMessages)
@@ -675,21 +655,26 @@ export async function appendMessages(
     .from(runs)
     .where(eq(runs.id, runId))
     .limit(1);
-  if (task && messages.length > 0) {
-    hub.publish(task.teamId, {
-      kind: "run.progress",
-      runId: runId,
-      completedSteps: task.completedSteps,
-      stepCount: task.stepCount,
-    });
-  }
-  return { cancel: task?.status === "cancelled" };
+  return {
+    cancel: task?.status === "cancelled",
+    ...(task && messages.length > 0
+      ? {
+          teamId: task.teamId,
+          completedSteps: task.completedSteps,
+          stepCount: task.stepCount,
+        }
+      : {}),
+  };
 }
 
 export async function completeTask(
   runId: string,
   result: unknown,
-): Promise<boolean> {
+): Promise<{
+  teamId: string;
+  chatSessionId: string | null;
+  projectTaskId: string | null;
+} | null> {
   const updated = await db
     .update(runs)
     .set({
@@ -711,54 +696,12 @@ export async function completeTask(
       chatSessionId: runs.chatSessionId,
       projectTaskId: runs.projectTaskId,
     });
-  if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, {
-    kind: "run",
-    action: "succeeded",
-    runId: runId,
-  });
-  if (updated[0].projectTaskId) {
-    await db
-      .update(projectTasks)
-      .set({ status: "review", updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(projectTasks.id, updated[0].projectTaskId),
-          eq(projectTasks.teamId, updated[0].teamId),
-        ),
-      );
-  }
-  // Chat-spawns-task: write the result back as the assistant turn (best-effort).
-  if (updated[0].chatSessionId) {
-    await appendAssistantTurn(
-      updated[0].teamId,
-      updated[0].chatSessionId,
-      runId,
-      resultText(result),
-    ).catch(() => undefined);
-  }
-  await notifyRunTelegram(
-    updated[0].teamId,
-    runId,
-    `✅ Run completed\n\n${resultText(result)}`,
-    undefined,
-    undefined,
-    { includeLink: false },
-  ).catch(() => undefined);
-  // Moat: kick off the propose-only review as soon as the run finishes (best-effort;
-  // never let a review hiccup fail task completion). Idempotent per run.
-  await ensureRunReview(updated[0].teamId, runId).catch(() => undefined);
-  return true;
-}
-
-/** Best-effort extraction of an agent task's final text from its result payload. */
-function resultText(result: unknown): string {
-  if (typeof result === "string") return result;
-  if (result && typeof result === "object") {
-    const r = (result as Record<string, unknown>).result;
-    if (typeof r === "string") return r;
-  }
-  return result == null ? "" : JSON.stringify(result);
+  if (!updated[0]) return null;
+  return {
+    teamId: updated[0].teamId,
+    chatSessionId: updated[0].chatSessionId,
+    projectTaskId: updated[0].projectTaskId,
+  };
 }
 
 /**
@@ -770,7 +713,7 @@ export async function failTask(
   runId: string,
   error: string,
   reason: TaskErrorReason = "agent_error",
-): Promise<boolean> {
+): Promise<{ teamId: string; projectTaskId: string | null } | null> {
   const updated = await db
     .update(runs)
     .set({
@@ -791,34 +734,11 @@ export async function failTask(
       teamId: runs.teamId,
       projectTaskId: runs.projectTaskId,
     });
-  if (!updated[0]) return false;
-  hub.publish(updated[0].teamId, {
-    kind: "run",
-    action: "failed",
-    runId: runId,
-  });
-  if (updated[0].projectTaskId) {
-    await db
-      .update(projectTasks)
-      .set({ status: "blocked", updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(projectTasks.id, updated[0].projectTaskId),
-          eq(projectTasks.teamId, updated[0].teamId),
-        ),
-      );
-  }
-  await notifyRunTelegram(
-    updated[0].teamId,
-    runId,
-    `❌ Run failed\n\n${error}`,
-    undefined,
-    undefined,
-    { includeLink: false },
-  ).catch(() => undefined);
-  // A failed run is exactly when the reviewer proposes a lesson — trigger it too.
-  await ensureRunReview(updated[0].teamId, runId).catch(() => undefined);
-  return true;
+  if (!updated[0]) return null;
+  return {
+    teamId: updated[0].teamId,
+    projectTaskId: updated[0].projectTaskId,
+  };
 }
 
 /**

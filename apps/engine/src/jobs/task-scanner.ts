@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../infra/db/client";
-import { autoRetryTask, failTask } from "../execution/daemon/repo";
+import { autoRetryTask } from "../execution/daemon/repo";
+import { failTask } from "../execution/daemon/service";
 
 /**
  * Lifecycle scanner: periodically fails tasks that are stuck past their deadline and
