@@ -5,10 +5,10 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { genId } from "./db/ids";
-import { resolveTeam } from "./repo";
-import { createAgent, publishAgent } from "./agents-repo";
+import { db, schema } from "./infra/db/client";
+import { genId } from "./infra/db/ids";
+import { resolveTeam } from "./domains/workflows/repo";
+import { createAgent, publishAgent } from "./domains/runs";
 import {
   applyRunReview,
   archiveMemory,
@@ -24,9 +24,9 @@ import {
   searchChatMemory,
   setRunReviewStatus,
   updateMemory,
-} from "./learning-repo";
-import { claimTask } from "./daemon-repo";
-import { cancelAgentTask, getRunUnified } from "./agents-repo";
+} from "./domains/learning/repo";
+import { claimTask } from "./execution/daemon/repo";
+import { cancelRun, getRunDetail } from "./domains/runs";
 
 let dbUp = false;
 try {
@@ -92,7 +92,7 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
   const slug = `itest-loop-${Date.now()}`;
   let teamId: string;
   let agentId: string;
-  let taskId: string;
+  let runId: string;
 
   beforeAll(async () => {
     teamId = await resolveTeam(slug);
@@ -101,24 +101,25 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     // Live version with default policies (inject agent+team-scoped memory, minConfidence 0.5).
     await publishAgent(teamId, agentId, { instructions: "base", runtimeKind: "echo" });
     // A finished (failed) run N with some streamed output.
-    taskId = genId("atask");
-    await db.insert(schema.agentTasks).values({
-      id: taskId,
+    runId = genId("run");
+    await db.insert(schema.runs).values({
+      id: runId,
       teamId,
+      executor: "daemon",
       agentId,
       status: "failed",
       kind: "direct",
       input: { prompt: "do the thing" },
       error: "timed out calling the API",
     });
-    await db.insert(schema.taskMessages).values([
-      { id: genId("amsg"), taskId, seq: 0, type: "text", content: "starting" },
-      { id: genId("amsg"), taskId, seq: 1, type: "error", content: "timed out calling the API" },
+    await db.insert(schema.runMessages).values([
+      { id: genId("amsg"), runId: runId, seq: 0, type: "text", content: "starting" },
+      { id: genId("amsg"), runId: runId, seq: 1, type: "error", content: "timed out calling the API" },
     ]);
   });
 
   afterAll(async () => {
-    await db.delete(schema.agentTasks).where(eq(schema.agentTasks.teamId, teamId));
+    await db.delete(schema.runs).where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.runReviews).where(eq(schema.runReviews.teamId, teamId));
     await db.delete(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
     await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
@@ -126,7 +127,7 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
   });
 
   test("step 6: completed run produces a PENDING review with a memory proposal", async () => {
-    const review = await generateRunReview(teamId, taskId);
+    const review = await generateRunReview(teamId, runId);
     expect(review?.status).toBe("pending");
     expect(review?.riskLevel).toBe("medium");
     expect(review!.proposedMemories).toHaveLength(1);
@@ -139,7 +140,7 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
   });
 
   test("steps 7-9: approve → memory persisted → injected into the NEXT run's context", async () => {
-    const review = await generateRunReview(teamId, taskId); // idempotent: returns the existing pending review
+    const review = await generateRunReview(teamId, runId); // idempotent: returns the existing pending review
     const res = await applyRunReview(teamId, review!.id, [`m0`]);
     expect(res?.applied).toBe(1);
 
@@ -150,7 +151,7 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     // memory row exists, sourced from the run
     const mem = await db.select().from(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
     expect(mem).toHaveLength(1);
-    expect(mem[0]?.sourceRunId).toBe(taskId);
+    expect(mem[0]?.sourceRunId).toBe(runId);
 
     // THE MOAT: the approved memory is now in what the next run would receive.
     const ctx = await resolveInjectionContext(teamId, agentId);
@@ -165,10 +166,11 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     await db.insert(schema.daemons).values({ id: daemonId, teamId, name: "itest-daemon" });
     await db.insert(schema.runtimes).values({ id: runtimeId, daemonId, teamId, kind: "echo" });
     // Queue run N+1 for the same (echo) agent.
-    const nextTaskId = genId("atask");
-    await db.insert(schema.agentTasks).values({
+    const nextTaskId = genId("run");
+    await db.insert(schema.runs).values({
       id: nextTaskId,
       teamId,
+      executor: "daemon",
       agentId,
       status: "queued",
       kind: "direct",
@@ -191,7 +193,7 @@ d("Security regressions — tenancy & review-state guards", () => {
   let teamId: string;
   let otherTeam: string;
   let agentId: string;
-  let taskId: string;
+  let runId: string;
 
   beforeAll(async () => {
     teamId = await resolveTeam(slug);
@@ -199,12 +201,21 @@ d("Security regressions — tenancy & review-state guards", () => {
     const a = await createAgent(teamId, { name: "Sec Agent" });
     agentId = a.id;
     await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "echo" });
-    taskId = genId("atask");
-    await db.insert(schema.agentTasks).values({ id: taskId, teamId, agentId, status: "failed", kind: "direct", input: { prompt: "p" }, error: "boom" });
+    runId = genId("run");
+    await db.insert(schema.runs).values({
+      id: runId,
+      teamId,
+      executor: "daemon",
+      agentId,
+      status: "failed",
+      kind: "direct",
+      input: { prompt: "p" },
+      error: "boom",
+    });
   });
 
   afterAll(async () => {
-    await db.delete(schema.agentTasks).where(eq(schema.agentTasks.teamId, teamId));
+    await db.delete(schema.runs).where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.runReviews).where(eq(schema.runReviews.teamId, teamId));
     await db.delete(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
     await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
@@ -212,14 +223,14 @@ d("Security regressions — tenancy & review-state guards", () => {
     await db.delete(schema.teams).where(eq(schema.teams.id, otherTeam));
   });
 
-  test("getRunUnified / cancelAgentTask reject a run from another org", async () => {
-    expect(await getRunUnified(otherTeam, taskId)).toBeNull();
-    expect(await getRunUnified(teamId, taskId)).not.toBeNull();
-    expect(await cancelAgentTask(otherTeam, taskId)).toBe(false);
+  test("getRunDetail / cancelRun reject a run from another org", async () => {
+    expect(await getRunDetail(otherTeam, runId)).toBeNull();
+    expect(await getRunDetail(teamId, runId)).not.toBeNull();
+    expect(await cancelRun(otherTeam, runId)).toBe(false);
   });
 
   test("a rejected review can never be applied", async () => {
-    const review = await generateRunReview(teamId, taskId);
+    const review = await generateRunReview(teamId, runId);
     await setRunReviewStatus(teamId, review!.id, "rejected");
     const res = await applyRunReview(teamId, review!.id, ["m0"]);
     expect(res?.alreadyApplied).toBe(true);

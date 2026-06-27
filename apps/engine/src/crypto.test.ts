@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { encryptJson, decryptJson } from "./crypto";
+import { encryptJson, decryptJson } from "./infra/crypto";
 
 describe("credential encryption", () => {
   test("round-trips a secret object", () => {

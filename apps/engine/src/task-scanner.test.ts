@@ -5,14 +5,14 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { genId } from "./db/ids";
-import { resolveTeam } from "./repo";
-import { failTask } from "./daemon-repo";
-import { retryAgentTask } from "./agents-repo";
-import { scanStaleTasks, SCANNER_LOCK_KEY } from "./task-scanner";
+import { db, schema } from "./infra/db/client";
+import { genId } from "./infra/db/ids";
+import { resolveTeam } from "./domains/workflows/repo";
+import { failTask } from "./execution/daemon/repo";
+import { retryRun } from "./domains/runs";
+import { scanStaleTasks, SCANNER_LOCK_KEY } from "./jobs/task-scanner";
 
-const { agents, agentTasks, teams } = schema;
+const { agents, runs, teams } = schema;
 
 let dbUp = false;
 try {
@@ -28,33 +28,34 @@ const d = dbUp ? describe : describe.skip;
 async function insertTask(opts: {
   teamId: string;
   agentId: string;
-  status: "queued" | "dispatched" | "running";
+  status: "queued" | "queued" | "running";
   kind?: string;
   attempt?: number;
   /** SQL interval string to backdate dispatched_at/started_at, e.g. "10 minutes". */
   staleBy?: string;
 }): Promise<string> {
-  const id = genId("atask");
+  const id = genId("run");
   const backdate = opts.staleBy ? sql`now() - interval '${sql.raw(opts.staleBy)}'` : null;
-  await db.insert(agentTasks).values({
+  await db.insert(runs).values({
     id,
     teamId: opts.teamId,
+    executor: "daemon",
     agentId: opts.agentId,
     status: opts.status,
     kind: opts.kind ?? "chat",
     attempt: opts.attempt ?? 1,
     input: { prompt: "hi" },
-    dispatchedAt: opts.status === "dispatched" ? (backdate as never) : null,
-    startedAt: opts.status === "running" ? (backdate as never) : null,
+    ...(opts.status === "queued" && backdate ? { dispatchedAt: backdate as never } : {}),
+    ...(opts.status === "running" && backdate ? { startedAt: backdate as never } : {}),
   });
   return id;
 }
 
 async function getTask(id: string) {
   const [t] = await db
-    .select({ status: agentTasks.status, attempt: agentTasks.attempt, errorReason: agentTasks.errorReason })
-    .from(agentTasks)
-    .where(eq(agentTasks.id, id))
+    .select({ status: runs.status, attempt: runs.attempt, errorReason: runs.errorReason })
+    .from(runs)
+    .where(eq(runs.id, id))
     .limit(1);
   return t;
 }
@@ -73,18 +74,18 @@ d("task-scanner — timeout + auto-retry", () => {
     agentId = genId("agt");
     await db.insert(agents).values({ id: agentId, teamId, name: "Scanner Agent" });
 
-    chatRetryable = await insertTask({ teamId, agentId, status: "dispatched", kind: "chat", attempt: 1, staleBy: "10 minutes" });
+    chatRetryable = await insertTask({ teamId, agentId, status: "queued", kind: "chat", attempt: 1, staleBy: "10 minutes" });
     chatRunning = await insertTask({ teamId, agentId, status: "running", kind: "chat", attempt: 1, staleBy: "3 hours" });
-    chatCeiling = await insertTask({ teamId, agentId, status: "dispatched", kind: "chat", attempt: 2, staleBy: "10 minutes" });
-    directTask = await insertTask({ teamId, agentId, status: "dispatched", kind: "direct", attempt: 1, staleBy: "10 minutes" });
-    fresh = await insertTask({ teamId, agentId, status: "dispatched", kind: "chat", attempt: 1 }); // dispatched_at = null → not stale
+    chatCeiling = await insertTask({ teamId, agentId, status: "queued", kind: "chat", attempt: 2, staleBy: "10 minutes" });
+    directTask = await insertTask({ teamId, agentId, status: "queued", kind: "direct", attempt: 1, staleBy: "10 minutes" });
+    fresh = await insertTask({ teamId, agentId, status: "queued", kind: "chat", attempt: 1 }); // dispatched_at = null → not stale
 
     await scanStaleTasks();
   });
 
   afterAll(async () => {
     await db.delete(agents).where(eq(agents.teamId, teamId)); // tasks are soft-ref'd by teamId; clean explicitly
-    await db.delete(agentTasks).where(eq(agentTasks.teamId, teamId));
+    await db.delete(runs).where(eq(runs.teamId, teamId));
     await db.delete(teams).where(eq(teams.id, teamId));
   });
 
@@ -116,7 +117,7 @@ d("task-scanner — timeout + auto-retry", () => {
 
   test("recent dispatched task is left untouched", async () => {
     const t = await getTask(fresh);
-    expect(t?.status).toBe("dispatched");
+    expect(t?.status).toBe("queued");
     expect(t?.attempt).toBe(1);
     expect(t?.errorReason).toBeNull();
   });
@@ -134,7 +135,7 @@ d("task-scanner — daemon-reported failures are terminal", () => {
 
   afterAll(async () => {
     await db.delete(agents).where(eq(agents.teamId, teamId));
-    await db.delete(agentTasks).where(eq(agentTasks.teamId, teamId));
+    await db.delete(runs).where(eq(runs.teamId, teamId));
     await db.delete(teams).where(eq(teams.id, teamId));
   });
 
@@ -152,7 +153,7 @@ d("task-scanner — daemon-reported failures are terminal", () => {
   });
 });
 
-d("retryAgentTask — manual rerun forks a fresh task", () => {
+d("retryRun — manual rerun forks a fresh task", () => {
   let teamId: string;
   let agentId: string;
 
@@ -164,7 +165,7 @@ d("retryAgentTask — manual rerun forks a fresh task", () => {
 
   afterAll(async () => {
     await db.delete(agents).where(eq(agents.teamId, teamId));
-    await db.delete(agentTasks).where(eq(agentTasks.teamId, teamId));
+    await db.delete(runs).where(eq(runs.teamId, teamId));
     await db.delete(teams).where(eq(teams.id, teamId));
   });
 
@@ -172,7 +173,7 @@ d("retryAgentTask — manual rerun forks a fresh task", () => {
     const orig = await insertTask({ teamId, agentId, status: "running", kind: "chat", attempt: 3 });
     await failTask(orig, "boom");
 
-    const res = await retryAgentTask(teamId, orig);
+    const res = await retryRun(teamId, orig);
     expect(res).not.toBeNull();
     expect(res!.runId).not.toBe(orig);
 
@@ -185,7 +186,7 @@ d("retryAgentTask — manual rerun forks a fresh task", () => {
   });
 
   test("returns null for a non-agent-task id", async () => {
-    expect(await retryAgentTask(teamId, "run_whatever")).toBeNull();
+    expect(await retryRun(teamId, "run_whatever")).toBeNull();
   });
 });
 

@@ -4,12 +4,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, ne, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { resolveTeam } from "./repo";
-import { createAgent, getRunUnified, publishAgent } from "./agents-repo";
-import { addProjectResource, createProject, createProjectTask, runProjectTask } from "./projects-repo";
-import { insertConfirmedMemory } from "./learning-repo";
-import { claimTask, registerDaemon } from "./daemon-repo";
+import { db, schema } from "./infra/db/client";
+import { resolveTeam } from "./domains/workflows/repo";
+import { createAgent, getRunDetail, publishAgent } from "./domains/runs";
+import { addProjectResource, createProject, createProjectTask, runProjectTask } from "./domains/projects/repo";
+import { insertConfirmedMemory } from "./domains/learning/repo";
+import { claimTask, registerDaemon } from "./execution/daemon/repo";
 
 let dbUp = false;
 try {
@@ -54,7 +54,7 @@ d("project task runs", () => {
   });
 
   afterAll(async () => {
-    await db.delete(schema.agentTasks).where(eq(schema.agentTasks.teamId, teamId));
+    await db.delete(schema.runs).where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.runtimes).where(eq(schema.runtimes.teamId, teamId));
     await db.delete(schema.daemons).where(eq(schema.daemons.teamId, teamId));
     await db.delete(schema.memoryEntries).where(eq(schema.memoryEntries.teamId, teamId));
@@ -71,9 +71,9 @@ d("project task runs", () => {
     const run = await runProjectTask(teamId, taskId, "Use the attached repo.");
     const runId = "runId" in run && run.runId ? run.runId : null;
     if (!runId) throw new Error(`expected runId, got ${"error" in run ? run.error : "unknown"}`);
-    expect(runId.startsWith("atask_")).toBe(true);
+    expect(runId.startsWith("run_")).toBe(true);
 
-    const detail = await getRunUnified(teamId, runId);
+    const detail = await getRunDetail(teamId, runId);
     expect(detail?.run.status).toBe("queued");
     expect(detail?.projectContext?.project.name).toBe("Client Ops");
     expect(detail?.projectContext?.task.title).toBe("Fix checkout bug");
@@ -99,9 +99,9 @@ d("project task runs", () => {
     if (!runId) throw new Error(`expected runId, got ${"error" in run ? run.error : "unknown"}`);
 
     const [agentTask] = await db
-      .select({ input: schema.agentTasks.input })
-      .from(schema.agentTasks)
-      .where(eq(schema.agentTasks.id, runId))
+      .select({ input: schema.runs.input })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
       .limit(1);
     expect((agentTask?.input as { prompt?: string })?.prompt).toContain("Confirmed project memory");
     expect((agentTask?.input as { prompt?: string })?.prompt).toContain("Use bun for every command in this repo.");
@@ -118,9 +118,9 @@ d("project task runs", () => {
     if (!runId) throw new Error(`expected runId, got ${"error" in run ? run.error : "unknown"}`);
 
     const [agentTask] = await db
-      .select({ input: schema.agentTasks.input })
-      .from(schema.agentTasks)
-      .where(eq(schema.agentTasks.id, runId))
+      .select({ input: schema.runs.input })
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
       .limit(1);
     const approval = (agentTask?.input as { approval?: { requiresApproval?: boolean; risks?: string[] } })?.approval;
     expect(approval?.requiresApproval).toBe(true);
@@ -138,9 +138,9 @@ d("project task runs", () => {
     if (!runId) throw new Error(`expected runId, got ${"error" in run ? run.error : "unknown"}`);
 
     await db
-      .update(schema.agentTasks)
+      .update(schema.runs)
       .set({ status: "cancelled" })
-      .where(and(eq(schema.agentTasks.teamId, teamId), ne(schema.agentTasks.id, runId), eq(schema.agentTasks.status, "queued")));
+      .where(and(eq(schema.runs.teamId, teamId), ne(schema.runs.id, runId), eq(schema.runs.status, "queued")));
 
     const registered = await registerDaemon({
       teamId,

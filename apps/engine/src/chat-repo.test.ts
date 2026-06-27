@@ -4,13 +4,13 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { genId } from "./db/ids";
-import { resolveTeam } from "./repo";
-import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./chat-repo";
-import { startTask, completeTask } from "./daemon-repo";
+import { db, schema } from "./infra/db/client";
+import { genId } from "./infra/db/ids";
+import { resolveTeam } from "./domains/workflows/repo";
+import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./domains/chat/repo";
+import { startTask, completeTask } from "./execution/daemon/repo";
 
-const { agents, agentTasks, chatSessions, chatMessages, teams } = schema;
+const { agents, runs, chatSessions, chatMessages, teams } = schema;
 
 let dbUp = false;
 try {
@@ -34,7 +34,7 @@ d("chat-spawns-task", () => {
 
   afterAll(async () => {
     await db.delete(chatSessions).where(eq(chatSessions.teamId, teamId)); // cascade → chat_messages
-    await db.delete(agentTasks).where(eq(agentTasks.teamId, teamId));
+    await db.delete(runs).where(eq(runs.teamId, teamId));
     await db.delete(agents).where(eq(agents.teamId, teamId));
     await db.delete(teams).where(eq(teams.id, teamId));
   });
@@ -52,12 +52,12 @@ d("chat-spawns-task", () => {
     const s = (await createChatSession(teamId, { agentId }))!;
     const res = await sendChatMessage(teamId, s.id, "What is 2+2?");
     expect(res).not.toBeNull();
-    expect(res!.taskId.startsWith("atask_")).toBe(true);
+    expect(res!.taskId.startsWith("run_")).toBe(true);
 
     const [task] = await db
-      .select({ status: agentTasks.status, kind: agentTasks.kind, chatSessionId: agentTasks.chatSessionId, input: agentTasks.input })
-      .from(agentTasks)
-      .where(eq(agentTasks.id, res!.taskId))
+      .select({ status: runs.status, kind: runs.kind, chatSessionId: runs.chatSessionId, input: runs.input })
+      .from(runs)
+      .where(eq(runs.id, res!.taskId))
       .limit(1);
     expect(task?.status).toBe("queued");
     expect(task?.kind).toBe("chat");
@@ -73,6 +73,7 @@ d("chat-spawns-task", () => {
     const s = (await createChatSession(teamId, { agentId }))!;
     const { taskId } = (await sendChatMessage(teamId, s.id, "ping"))!;
 
+    await db.update(runs).set({ dispatchedAt: sql`now()` }).where(eq(runs.id, taskId));
     expect(await startTask(taskId)).toBe(true); // queued → running
     expect(await completeTask(taskId, { result: "pong" })).toBe(true);
 
@@ -84,14 +85,15 @@ d("chat-spawns-task", () => {
   test("later turns include recent conversation context in the runtime prompt", async () => {
     const s = (await createChatSession(teamId, { agentId }))!;
     const first = (await sendChatMessage(teamId, s.id, "Donne moi la météo au Havre"))!;
+    await db.update(runs).set({ dispatchedAt: sql`now()` }).where(eq(runs.id, first.taskId));
     expect(await startTask(first.taskId)).toBe(true);
     expect(await completeTask(first.taskId, { result: "Il fait 20 °C au Havre." })).toBe(true);
 
     const second = (await sendChatMessage(teamId, s.id, "Et demain ?"))!;
     const [task] = await db
-      .select({ input: agentTasks.input })
-      .from(agentTasks)
-      .where(eq(agentTasks.id, second.taskId))
+      .select({ input: runs.input })
+      .from(runs)
+      .where(eq(runs.id, second.taskId))
       .limit(1);
 
     const prompt = (task?.input as { prompt: string } | undefined)?.prompt ?? "";

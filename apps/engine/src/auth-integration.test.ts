@@ -3,7 +3,7 @@
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { eq, inArray } from "drizzle-orm";
-import { db, schema } from "./db/client";
+import { db, schema } from "./infra/db/client";
 import {
   acceptInvitation,
   createInvitation,
@@ -22,7 +22,7 @@ import {
   verifyEmail,
   verifyEmailCode,
   completeOnboarding,
-} from "./auth-repo";
+} from "./gateway/auth-repo";
 
 let dbUp = false;
 try {

@@ -1,10 +1,10 @@
-import { env } from "./env";
-import app from "./server";
-import { hub, type WsData } from "./hub";
-import { handleControl } from "./control";
-import { resolveAuthFromRequest } from "./auth";
-import { startTaskScanner } from "./task-scanner";
-import { startTelegramPolling } from "./telegram-poller";
+import { env } from "./infra/env";
+import app from "./app/server";
+import { hub, type WsData } from "./infra/hub";
+import { handleControl } from "./infra/control";
+import { resolveAuthFromRequest } from "./app/middleware/auth";
+import { startTaskScanner } from "./jobs/task-scanner";
+import { startTelegramPolling } from "./domains/channels/telegram/poller";
 
 const server = Bun.serve<WsData>({
   port: env.PORT,

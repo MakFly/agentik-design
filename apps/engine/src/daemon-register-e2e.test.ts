@@ -7,8 +7,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import app from "./server";
-import { db, schema } from "./db/client";
+import app from "./app/server";
+import { db, schema } from "./infra/db/client";
 
 let dbUp = false;
 try {

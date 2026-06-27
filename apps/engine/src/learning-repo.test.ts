@@ -5,7 +5,7 @@ import {
   nextVersion,
   selectMemoriesForInjection,
   selectSkillsForInjection,
-} from "./learning-repo";
+} from "./domains/learning/repo";
 
 describe("nextVersion (monotonicity)", () => {
   test("starts at 1 with no prior versions", () => {

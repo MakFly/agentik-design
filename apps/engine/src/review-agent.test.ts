@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { deterministicReview } from "./review-agent";
+import { deterministicReview } from "./domains/learning/reviews/agent";
 
 describe("deterministicReview (offline, propose-only)", () => {
   test("failed run → one medium-risk memory lesson, no skills", () => {
-    const out = deterministicReview({ taskId: "atask_1", agentId: "agt_1", status: "failed", error: "boom", messages: [] });
+    const out = deterministicReview({ taskId: "run_1", agentId: "agt_1", status: "failed", error: "boom", messages: [] });
     expect(out.riskLevel).toBe("medium");
     expect(out.shouldCreateMemory).toBe(true);
     expect(out.memories).toHaveLength(1);
@@ -14,9 +14,9 @@ describe("deterministicReview (offline, propose-only)", () => {
 
   test("success with tools → one low-confidence note", () => {
     const out = deterministicReview({
-      taskId: "atask_2",
+      taskId: "run_2",
       agentId: "agt_1",
-      status: "completed",
+      status: "succeeded",
       messages: [{ type: "tool_use", tool: "get_weather" }],
     });
     expect(out.riskLevel).toBe("low");
@@ -27,9 +27,9 @@ describe("deterministicReview (offline, propose-only)", () => {
 
   test("quiet success → no proposals (avoids review spam)", () => {
     const out = deterministicReview({
-      taskId: "atask_3",
+      taskId: "run_3",
       agentId: "agt_1",
-      status: "completed",
+      status: "succeeded",
       messages: [{ type: "text", content: "ok" }],
     });
     expect(out.shouldCreateMemory).toBe(false);

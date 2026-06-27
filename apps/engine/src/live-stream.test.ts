@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import {
-  agentTaskMessageToEvents,
+  runMessageToEvents,
   contractEventForStatus,
-  contractEventForTaskMessage,
-} from "./agents-repo";
-import type { taskMessages } from "./db/schema";
+  contractEventForRunMessage,
+} from "./domains/runs";
+import type { runMessages } from "./infra/db/schema";
 
-type MsgRow = typeof taskMessages.$inferSelect;
+type MsgRow = typeof runMessages.$inferSelect;
 
 /** Build a task_messages row with sane defaults for the fields under test. */
 function msg(partial: Partial<MsgRow>): MsgRow {
   return {
     id: "msg_1",
-    taskId: "atask_1",
+    taskId: "run_1",
     seq: 1,
     type: "text",
     tool: null,
@@ -24,9 +24,9 @@ function msg(partial: Partial<MsgRow>): MsgRow {
   } as MsgRow;
 }
 
-describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", () => {
+describe("runMessageToEvents (live SSE ↔ web event-reducer contract)", () => {
   test("each message becomes one step (id = msg.id, index = msg.seq)", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({ id: "msg_42", seq: 42, type: "text", content: "hi" }),
       "Bot",
     );
@@ -38,7 +38,7 @@ describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", (
   });
 
   test("thinking → step.started + reasoning.delta + step.completed", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({ id: "m", type: "thinking", content: "pondering" }),
       "Bot",
     );
@@ -55,14 +55,14 @@ describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", (
   });
 
   test("thinking with no content omits the reasoning.delta", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({ type: "thinking", content: null }),
     );
     expect(evs.map((e) => e.type)).toEqual(["step.started", "step.completed"]);
   });
 
   test("tool_use → tool actor step that stays running (no completion)", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({ id: "tu", type: "tool_use", tool: "search", input: { q: "x" } }),
     );
     expect(evs.map((e) => e.type)).toEqual([
@@ -79,7 +79,7 @@ describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", (
   });
 
   test("tool_result → started + completed tool call, step succeeds", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({
         id: "tr",
         type: "tool_result",
@@ -115,9 +115,9 @@ describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", (
       input: { command: "bun test" },
     });
     expect(
-      contractEventForTaskMessage(
+      contractEventForRunMessage(
         toolUse,
-        agentTaskMessageToEvents(toolUse)[0]!,
+        runMessageToEvents(toolUse)[0]!,
       ),
     ).toBe("tool.started");
 
@@ -127,16 +127,16 @@ describe("agentTaskMessageToEvents (live SSE ↔ web event-reducer contract)", (
       tool: "workspace.prepare",
       output: { path: "/tmp/repo" },
     });
-    const completed = agentTaskMessageToEvents(workspaceResult).find(
+    const completed = runMessageToEvents(workspaceResult).find(
       (e) => e.type === "step.completed",
     )!;
-    expect(contractEventForTaskMessage(workspaceResult, completed)).toBe(
+    expect(contractEventForRunMessage(workspaceResult, completed)).toBe(
       "workspace.prepared",
     );
   });
 
   test("error → step.failed carries the message", () => {
-    const evs = agentTaskMessageToEvents(
+    const evs = runMessageToEvents(
       msg({ id: "e", type: "error", content: "boom" }),
     );
     expect(evs.map((e) => e.type)).toEqual(["step.started", "step.failed"]);

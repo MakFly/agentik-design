@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { deleteDaemon, registerDaemon } from "./daemon-repo";
+import { db, schema } from "./infra/db/client";
+import { deleteDaemon, registerDaemon } from "./execution/daemon/repo";
 
 let dbUp = false;
 try {
@@ -41,8 +41,8 @@ d("daemon-repo — register dedup & delete guards", () => {
   });
   afterAll(async () => {
     await db
-      .delete(schema.agentTasks)
-      .where(eq(schema.agentTasks.teamId, teamId));
+      .delete(schema.runs)
+      .where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.daemons).where(eq(schema.daemons.teamId, teamId));
     await db.delete(schema.teams).where(eq(schema.teams.id, teamId));
   });
@@ -170,9 +170,10 @@ d("daemon-repo — register dedup & delete guards", () => {
       .update(schema.daemons)
       .set({ lastHeartbeatAt: sql`now() - interval '10 minutes'` })
       .where(eq(schema.daemons.id, reg.daemonId));
-    await db.insert(schema.agentTasks).values({
-      id: `atask_${stamp}_busy`,
+    await db.insert(schema.runs).values({
+      id: `run_${stamp}_busy`,
       teamId,
+      executor: "daemon",
       agentId: "agent_x",
       daemonId: reg.daemonId,
       status: "running",

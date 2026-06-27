@@ -4,8 +4,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./db/client";
-import { resolveTeam } from "./repo";
+import { db, schema } from "./infra/db/client";
+import { resolveTeam } from "./domains/workflows/repo";
 import {
   formatTelegramHtmlMessages,
   formatTelegramText,
@@ -14,11 +14,11 @@ import {
   notifyRunTelegram,
   parseTelegramCommand,
   sendRunTelegramAction,
-} from "./channels-repo";
-import { encryptJson } from "./crypto";
-import { createProject } from "./projects-repo";
-import { createAgent, publishAgent, requestAgentTaskApproval } from "./agents-repo";
-import { genId } from "./db/ids";
+} from "./domains/channels/repo";
+import { encryptJson } from "./infra/crypto";
+import { createProject } from "./domains/projects/repo";
+import { createAgent, publishAgent, requestRunApproval } from "./domains/runs";
+import { genId } from "./infra/db/ids";
 
 let dbUp = false;
 try {
@@ -76,8 +76,8 @@ d("telegram channel control", () => {
 
   afterAll(async () => {
     await db
-      .delete(schema.agentTasks)
-      .where(eq(schema.agentTasks.teamId, teamId));
+      .delete(schema.runs)
+      .where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
     await db
       .delete(schema.memoryEntries)
@@ -146,14 +146,14 @@ d("telegram channel control", () => {
       projectId: "proj_1",
       content: "use bun only",
     });
-    expect(parseTelegramCommand('/pause atask_1 "operator review"')).toEqual({
+    expect(parseTelegramCommand('/pause run_1 "operator review"')).toEqual({
       kind: "pause",
-      runId: "atask_1",
+      runId: "run_1",
       reason: "operator review",
     });
-    expect(parseTelegramCommand("/approve atask_1 ok")).toEqual({
+    expect(parseTelegramCommand("/approve run_1 ok")).toEqual({
       kind: "approve",
-      runId: "atask_1",
+      runId: "run_1",
       reason: "ok",
     });
   });
@@ -353,12 +353,12 @@ d("telegram channel control", () => {
 
     const chatTasks = await db
       .select({
-        id: schema.agentTasks.id,
-        kind: schema.agentTasks.kind,
-        chatSessionId: schema.agentTasks.chatSessionId,
+        id: schema.runs.id,
+        kind: schema.runs.kind,
+        chatSessionId: schema.runs.chatSessionId,
       })
-      .from(schema.agentTasks)
-      .where(eq(schema.agentTasks.teamId, teamId));
+      .from(schema.runs)
+      .where(eq(schema.runs.teamId, teamId));
     const firstTask = chatTasks.find((task) => task.id === res.runId);
     const secondTask = chatTasks.find((task) => task.id === followUp.runId);
     expect(firstTask?.kind).toBe("chat");
@@ -500,7 +500,7 @@ d("telegram channel control", () => {
     const actions: string[] = [];
     const count = await notifyRunTelegram(
       teamId,
-      "atask_notify",
+      "run_notify",
       "Approval requested\nAllow deploy?",
       async ({ text, parseMode }) => {
         delivered.push({ text, parseMode });
@@ -513,7 +513,7 @@ d("telegram channel control", () => {
     expect(actions).toHaveLength(count);
     expect(actions.every((action) => action === "typing")).toBe(true);
     expect(delivered[0]?.text).toContain("Approval requested");
-    expect(delivered[0]?.text).toContain(`/${teamSlug}/runs/atask_notify`);
+    expect(delivered[0]?.text).toContain(`/${teamSlug}/runs/run_notify`);
     expect(delivered[0]?.parseMode).toBe("HTML");
   });
 
@@ -587,10 +587,11 @@ d("telegram channel control", () => {
       sender,
     );
 
-    const runId = genId("atask");
-    await db.insert(schema.agentTasks).values({
+    const runId = genId("run");
+    await db.insert(schema.runs).values({
       id: runId,
       teamId,
+      executor: "daemon",
       agentId,
       status: "queued",
       kind: "direct",
@@ -642,7 +643,7 @@ d("telegram channel control", () => {
     expect(resume.ok).toBe(true);
 
     expect(
-      await requestAgentTaskApproval(teamId, runId, "Allow this run?"),
+      await requestRunApproval(teamId, runId, "Allow this run?"),
     ).toBe(true);
     const approve = await handleTelegramWebhookSecret(
       webhookSecret,
@@ -659,7 +660,7 @@ d("telegram channel control", () => {
     expect(approve.ok).toBe(true);
 
     expect(
-      await requestAgentTaskApproval(teamId, runId, "Allow second attempt?"),
+      await requestRunApproval(teamId, runId, "Allow second attempt?"),
     ).toBe(true);
     const reject = await handleTelegramWebhookSecret(
       webhookSecret,
@@ -677,15 +678,16 @@ d("telegram channel control", () => {
 
     const [task] = await db
       .select()
-      .from(schema.agentTasks)
-      .where(eq(schema.agentTasks.id, runId))
+      .from(schema.runs)
+      .where(eq(schema.runs.id, runId))
       .limit(1);
     expect(task?.status).toBe("cancelled");
 
-    const killRunId = genId("atask");
-    await db.insert(schema.agentTasks).values({
+    const killRunId = genId("run");
+    await db.insert(schema.runs).values({
       id: killRunId,
       teamId,
+      executor: "daemon",
       agentId,
       status: "queued",
       kind: "direct",
