@@ -45,16 +45,32 @@ export interface ToolGrantRecord {
   rateCapPerMin?: number;
   requireApproval?: boolean;
 }
-export type AgentTaskStatus =
-  | "queued"
-  | "dispatched"
-  | "running"
-  | "paused"
-  | "waiting_approval"
-  | "completed"
-  | "failed"
-  | "cancelled";
-export type TaskMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
+export type RunExecutor = "workflow" | "daemon";
+export type RunMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
+
+/** Map legacy agent_tasks / daemon wire status to unified {@link RunStatus}. */
+export function agentTaskStatusToRunStatus(status: string): RunStatus {
+  switch (status) {
+    case "completed":
+      return "succeeded";
+    case "dispatched":
+      return "queued";
+    default:
+      return status as RunStatus;
+  }
+}
+
+/** Map unified {@link RunStatus} to legacy daemon task status (claim/complete wire format). */
+export function runStatusToAgentTaskStatus(status: RunStatus): string {
+  switch (status) {
+    case "succeeded":
+      return "completed";
+    case "timed_out":
+      return "failed";
+    default:
+      return status;
+  }
+}
 export type ChatSessionStatus = "active" | "archived";
 export type ChatMessageRole = "user" | "assistant";
 export type ProjectType = "ops" | "code" | "hybrid";
@@ -171,46 +187,9 @@ export const workflowVersions = pgTable("workflow_versions", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
-export const runs = pgTable("runs", {
-  id: text("id").primaryKey(),
-  teamId: text("team_id").notNull(),
-  workflowId: text("workflow_id")
-    .notNull()
-    .references(() => workflows.id, { onDelete: "cascade" }),
-  versionId: text("version_id").notNull(),
-  status: text("status").$type<RunStatus>().notNull().default("queued"),
-  trigger: text("trigger").$type<TriggerKind>().notNull().default("manual"),
-  payload: jsonb("payload"),
-  error: text("error"),
-  startedAt: ts("started_at").notNull().defaultNow(),
-  endedAt: ts("ended_at"),
-  durationMs: integer("duration_ms"),
-  stepCount: integer("step_count").notNull().default(0),
-  completedSteps: integer("completed_steps").notNull().default(0),
-});
-
-export const runSteps = pgTable("run_steps", {
-  id: text("id").primaryKey(),
-  runId: text("run_id")
-    .notNull()
-    .references(() => runs.id, { onDelete: "cascade" }),
-  index: integer("index").notNull(),
-  nodeId: text("node_id").notNull(),
-  nodeType: text("node_type").notNull(),
-  label: text("label").notNull(),
-  status: text("status").$type<StepStatus>().notNull().default("pending"),
-  input: jsonb("input"),
-  output: jsonb("output"),
-  error: text("error"),
-  attempt: integer("attempt").notNull().default(1),
-  startedAt: ts("started_at").notNull().defaultNow(),
-  endedAt: ts("ended_at"),
-  durationMs: integer("duration_ms"),
-});
-
 /* ── Agent-execution harness ─────────────────────────────────────────── */
 
-/** A configured agent — the subject of an agent task. teamId is a soft ref (like runs). */
+/** A configured agent — the subject of a daemon run. teamId is a soft ref (like runs). */
 export const agents = pgTable("agents", {
   id: text("id").primaryKey(),
   teamId: text("team_id").notNull(),
@@ -299,7 +278,7 @@ export const projectResources = pgTable("project_resources", {
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
-/** Product-level work item. One task may spawn many low-level agent_tasks. */
+/** Product-level work item. One task may spawn many daemon runs (`executor=daemon`). */
 export const projectTasks = pgTable("project_tasks", {
   id: text("id").primaryKey(),
   teamId: text("team_id").notNull(),
@@ -315,6 +294,66 @@ export const projectTasks = pgTable("project_tasks", {
   createdBy: text("created_by").notNull().default(""),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Unified execution record: workflow runs (`executor=workflow`) and daemon agent runs
+ * (`executor=daemon`). Replaces the former split between `runs` and `agent_tasks`.
+ */
+export const runs = pgTable("runs", {
+  id: text("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  executor: text("executor").$type<RunExecutor>().notNull().default("workflow"),
+  workflowId: text("workflow_id").references(() => workflows.id, { onDelete: "cascade" }),
+  versionId: text("version_id"),
+  status: text("status").$type<RunStatus>().notNull().default("queued"),
+  trigger: text("trigger").$type<TriggerKind>().notNull().default("manual"),
+  payload: jsonb("payload"),
+  error: text("error"),
+  /** Daemon run: agent that executes this run. Null for workflow runs. */
+  agentId: text("agent_id"),
+  /** Daemon run: product context when backing a project task. */
+  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+  projectTaskId: text("project_task_id").references(() => projectTasks.id, { onDelete: "set null" }),
+  runtimeId: text("runtime_id"),
+  daemonId: text("daemon_id"),
+  priority: integer("priority"),
+  kind: text("kind"), // chat | direct (daemon runs)
+  input: jsonb("input"),
+  workDir: text("work_dir"),
+  result: jsonb("result"),
+  /** Classified failure cause; null unless status = failed. Drives retry policy. */
+  errorReason: text("error_reason").$type<TaskErrorReason>(),
+  /** 1-based attempt counter; bumped on auto-retry of a retryable failure. */
+  attempt: integer("attempt"),
+  /** Set when this run backs a chat turn; result is written back as an assistant message. */
+  chatSessionId: text("chat_session_id"),
+  stepCount: integer("step_count").notNull().default(0),
+  completedSteps: integer("completed_steps").notNull().default(0),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  dispatchedAt: ts("dispatched_at"),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  endedAt: ts("ended_at"),
+  durationMs: integer("duration_ms"),
+});
+
+export const runSteps = pgTable("run_steps", {
+  id: text("id").primaryKey(),
+  runId: text("run_id")
+    .notNull()
+    .references(() => runs.id, { onDelete: "cascade" }),
+  index: integer("index").notNull(),
+  nodeId: text("node_id").notNull(),
+  nodeType: text("node_type").notNull(),
+  label: text("label").notNull(),
+  status: text("status").$type<StepStatus>().notNull().default("pending"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  error: text("error"),
+  attempt: integer("attempt").notNull().default(1),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  endedAt: ts("ended_at"),
+  durationMs: integer("duration_ms"),
 });
 
 /** TUI-style task thread: human comments, agent notes, and run links. */
@@ -348,38 +387,6 @@ export const projectWorkspaces = pgTable("project_workspaces", {
   meta: jsonb("meta").$type<Record<string, unknown>>(),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
-});
-
-/** A unit of agent work — claimed by a daemon, mapped to a Run in the web UI. */
-export const agentTasks = pgTable("agent_tasks", {
-  id: text("id").primaryKey(),
-  teamId: text("team_id").notNull(),
-  agentId: text("agent_id").notNull(),
-  /** Product-level context, when this run is backing a project task. */
-  projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
-  projectTaskId: text("project_task_id").references(() => projectTasks.id, { onDelete: "set null" }),
-  runtimeId: text("runtime_id"),
-  daemonId: text("daemon_id"),
-  status: text("status").$type<AgentTaskStatus>().notNull().default("queued"),
-  priority: integer("priority").notNull().default(0),
-  kind: text("kind").notNull().default("chat"), // chat | direct
-  input: jsonb("input"),
-  workDir: text("work_dir"),
-  result: jsonb("result"),
-  error: text("error"),
-  /** Classified failure cause; null unless status = failed. Drives retry policy. */
-  errorReason: text("error_reason").$type<TaskErrorReason>(),
-  /** 1-based attempt counter; bumped on auto-retry of a retryable failure. */
-  attempt: integer("attempt").notNull().default(1),
-  /** Set when this task backs a chat turn; its result is written back as an assistant message. */
-  chatSessionId: text("chat_session_id"),
-  stepCount: integer("step_count").notNull().default(0),
-  completedSteps: integer("completed_steps").notNull().default(0),
-  createdAt: ts("created_at").notNull().defaultNow(),
-  dispatchedAt: ts("dispatched_at"),
-  startedAt: ts("started_at"),
-  endedAt: ts("ended_at"),
-  durationMs: integer("duration_ms"),
 });
 
 /* ── External channels (OpenClaw-style control surfaces) ─────────────── */
@@ -451,26 +458,26 @@ export const channelMessages = pgTable("channel_messages", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
-/** Streamed output of an agent task — maps to a Step/timeline entry in the web UI. */
-export const taskMessages = pgTable(
-  "task_messages",
+/** Streamed output of a run — maps to a Step/timeline entry in the web UI. */
+export const runMessages = pgTable(
+  "run_messages",
   {
     id: text("id").primaryKey(),
-    taskId: text("task_id")
+    runId: text("run_id")
       .notNull()
-      .references(() => agentTasks.id, { onDelete: "cascade" }),
+      .references(() => runs.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(),
-    type: text("type").$type<TaskMessageType>().notNull(),
+    type: text("type").$type<RunMessageType>().notNull(),
     tool: text("tool"),
     content: text("content"),
     input: jsonb("input"),
     output: jsonb("output"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [unique("task_messages_task_seq_unique").on(t.taskId, t.seq)],
+  (t) => [unique("run_messages_run_seq_unique").on(t.runId, t.seq)],
 );
 
-/** A chat conversation with an agent. Each user turn spawns a `kind='chat'` agent task. */
+/** A chat conversation with an agent. Each user turn spawns a `kind='chat'` daemon run. */
 export const chatSessions = pgTable("chat_sessions", {
   id: text("id").primaryKey(),
   teamId: text("team_id").notNull(),
@@ -491,7 +498,7 @@ export const chatMessages = pgTable("chat_messages", {
     .references(() => chatSessions.id, { onDelete: "cascade" }),
   role: text("role").$type<ChatMessageRole>().notNull(),
   content: text("content").notNull().default(""),
-  /** The agent task that produced this message (assistant turns); null for user turns. */
+  /** The daemon run that produced this message (assistant turns); null for user turns. */
   taskId: text("task_id"),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
@@ -528,7 +535,7 @@ export const memoryEntries = pgTable("memory_entries", {
   scope: text("scope").$type<KnowledgeScope>().notNull(),
   targetId: text("target_id"),
   content: text("content").notNull(),
-  sourceRunId: text("source_run_id"), // = agent_tasks.id
+  sourceRunId: text("source_run_id"), // = runs.id (daemon runs)
   confidence: doublePrecision("confidence").notNull().default(0.5),
   createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),
   lastEditedBy: text("last_edited_by"),
@@ -664,7 +671,7 @@ export const orgInvitations = pgTable("org_invitations", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
-/** Propose-only review of a finished run. runId = agent_tasks.id (soft ref). */
+/** Propose-only review of a finished run. runId = runs.id (soft ref). */
 export const runReviews = pgTable("run_reviews", {
   id: text("id").primaryKey(),
   teamId: text("team_id").notNull(),

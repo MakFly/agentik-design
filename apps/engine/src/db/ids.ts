@@ -8,7 +8,6 @@ export type IdPrefix =
   | "cred"
   // agent-execution harness
   | "agt"
-  | "atask"
   | "amsg"
   | "chat"
   | "cmsg"
