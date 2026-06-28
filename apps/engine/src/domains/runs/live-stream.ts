@@ -22,6 +22,14 @@ export const TERMINAL_RUN_STATUSES = new Set([
   "timed_out",
 ]);
 
+/**
+ * Live streams run until the run reaches a terminal state or the client
+ * disconnects — bounded only by a generous wall-clock ceiling so long SMB batch
+ * runs (e.g. bulk email triage over hours) keep streaming. Replaces the old fixed
+ * 1500-iteration cap that silently cut streams off at ~7.5 minutes.
+ */
+const MAX_LIVE_STREAM_MS = 6 * 60 * 60 * 1000;
+
 type WebRunStatusOrNull = Awaited<ReturnType<typeof getRunStatus>>;
 
 /**
@@ -61,7 +69,9 @@ export async function streamDaemonRunLive(
     });
   };
 
-  for (let i = 0; i < 1500; i++) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < MAX_LIVE_STREAM_MS) {
+    if (stream.aborted) return;
     const status = await getRunStatus(teamId, id);
     if (!status) {
       await emit(
@@ -113,7 +123,9 @@ export async function streamRunLive(
     await streamDaemonRunLive(stream, id, teamId, resumeAfter);
     return;
   }
-  for (let i = 0; i < 1500; i++) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < MAX_LIVE_STREAM_MS) {
+    if (stream.aborted) return;
     const run = await getRun(id, teamId);
     if (!run) {
       await stream.writeSSE({

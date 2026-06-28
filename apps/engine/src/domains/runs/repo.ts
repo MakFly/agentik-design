@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
+import { genId } from "../../infra/db/ids";
 import {
   artifactsFromRun,
   daemonDisplayName,
@@ -29,6 +30,7 @@ const {
   runtimes,
   runs,
   runMessages,
+  runEvents,
   runSteps,
   workflows,
   projects,
@@ -37,6 +39,63 @@ const {
   projectWorkspaces,
   teams,
 } = schema;
+
+export type RunEventRow = typeof runEvents.$inferSelect;
+
+/**
+ * Read the V2 run_events ledger for a run (team-scoped via the parent run).
+ * This is the authoritative, persisted event log used for audit / replay /
+ * export — distinct from the on-the-fly SSE projection built from run_messages.
+ */
+export async function listRunEvents(
+  teamId: string,
+  runId: string,
+  afterSeq = 0,
+): Promise<RunEventRow[] | null> {
+  const [run] = await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.id, runId), eq(runs.teamId, teamId)))
+    .limit(1);
+  if (!run) return null;
+  return db
+    .select()
+    .from(runEvents)
+    .where(and(eq(runEvents.runId, runId), gt(runEvents.seq, afterSeq)))
+    .orderBy(runEvents.seq);
+}
+
+/** Append events to the V2 ledger. Idempotent on (runId, seq). */
+export async function appendRunEvents(
+  runId: string,
+  events: Array<{
+    seq: number;
+    type: string;
+    actor: unknown;
+    payload: unknown;
+    toolCallId?: string | null;
+    parentEventId?: string | null;
+    contractEvent?: string | null;
+  }>,
+): Promise<void> {
+  if (events.length === 0) return;
+  await db
+    .insert(runEvents)
+    .values(
+      events.map((e) => ({
+        id: genId("revt"),
+        runId,
+        seq: e.seq,
+        type: e.type,
+        actor: e.actor as never,
+        payload: e.payload as never,
+        toolCallId: e.toolCallId ?? null,
+        parentEventId: e.parentEventId ?? null,
+        contractEvent: e.contractEvent ?? null,
+      })),
+    )
+    .onConflictDoNothing({ target: [runEvents.runId, runEvents.seq] });
+}
 
 /** Sum of realized run cost (integer cents) for a team in the current calendar month. */
 export async function monthlyCostCents(teamId: string): Promise<number> {

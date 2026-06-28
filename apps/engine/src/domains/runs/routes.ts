@@ -14,7 +14,7 @@ import {
   retryRun,
 } from "./controls";
 import { streamRunLive } from "./live-stream";
-import { getRunDetail, listRuns } from "./repo";
+import { getRunDetail, listRunEvents, listRuns } from "./repo";
 
 export const runsRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -30,6 +30,18 @@ runsRoutes.get("/runs/:id", async (c) => {
   const detail = await getRunDetail(c.get("teamId"), c.req.param("id"));
   if (!detail) return c.json({ error: "not_found" }, 404);
   return c.json(detail);
+});
+
+// V2 event ledger for a run — audit / replay / export. `?after=<seq>` for paging.
+runsRoutes.get("/runs/:id/events", async (c) => {
+  const after = Number(c.req.query("after") ?? 0);
+  const events = await listRunEvents(
+    c.get("teamId"),
+    c.req.param("id"),
+    Number.isFinite(after) ? after : 0,
+  );
+  if (events === null) return c.json({ error: "not_found" }, 404);
+  return c.json({ items: events, total: events.length });
 });
 
 runsRoutes.post("/runs/:id/cancel", requirePermission("run:control"), async (c) => {
