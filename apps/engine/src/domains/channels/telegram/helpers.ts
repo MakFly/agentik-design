@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../../../infra/db/client";
 import { env } from "../../../infra/env";
 import { listAgentRows } from "../../runs";
-import { listProjects } from "../../projects/repo";
+import { listProjects } from "../../projects";
 import type { ChannelConnectionRow, ChannelIdentityRow } from "./types";
 
 export function normalizeAgentHandle(value: string) {

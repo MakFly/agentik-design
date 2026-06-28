@@ -3,17 +3,24 @@ import {
   requirePermission,
   type AuthVars,
 } from "../../app/middleware/auth";
+import { jsonValidationError, parseJsonBody } from "../../infra/validation";
 import {
   addProjectResource,
   addProjectTaskComment,
+  addResourceBody,
   createProject,
+  createProjectBody,
   createProjectTask,
+  createTaskBody,
   getProject,
   listProjectTaskComments,
   listProjects,
   runProjectTask,
+  runTaskBody,
+  taskCommentBody,
   updateProjectTask,
-} from "./repo";
+  updateTaskBody,
+} from "./index";
 
 export const projectsRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -23,13 +30,9 @@ projectsRoutes.get("/projects", requirePermission("run:read"), async (c) => {
 });
 
 projectsRoutes.post("/projects", requirePermission("run:run"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    name?: string;
-    type?: unknown;
-    description?: string;
-    leadAgentId?: string | null;
-  };
-  const res = await createProject(c.get("teamId"), c.get("auth").userId, body);
+  const parsed = parseJsonBody(createProjectBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await createProject(c.get("teamId"), c.get("auth").userId, parsed.data);
   if ("error" in res) return c.json({ error: res.error }, 400);
   return c.json(res.project, 201);
 });
@@ -41,31 +44,22 @@ projectsRoutes.get("/projects/:id", requirePermission("run:read"), async (c) => 
 });
 
 projectsRoutes.post("/projects/:id/resources", requirePermission("run:run"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    type?: unknown;
-    ref?: string;
-    label?: string;
-    meta?: Record<string, unknown>;
-  };
-  const res = await addProjectResource(c.get("teamId"), c.req.param("id"), body);
+  const parsed = parseJsonBody(addResourceBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await addProjectResource(c.get("teamId"), c.req.param("id"), parsed.data);
   if ("error" in res)
     return c.json({ error: res.error }, res.error === "project_not_found" ? 404 : 400);
   return c.json(res.resource, 201);
 });
 
 projectsRoutes.post("/projects/:id/tasks", requirePermission("run:run"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    title?: string;
-    description?: string;
-    priority?: unknown;
-    assignedAgentId?: string | null;
-    status?: unknown;
-  };
+  const parsed = parseJsonBody(createTaskBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
   const res = await createProjectTask(
     c.get("teamId"),
     c.req.param("id"),
     c.get("auth").userId,
-    body,
+    parsed.data,
   );
   if ("error" in res)
     return c.json({ error: res.error }, res.error === "project_not_found" ? 404 : 400);
@@ -73,14 +67,9 @@ projectsRoutes.post("/projects/:id/tasks", requirePermission("run:run"), async (
 });
 
 projectsRoutes.patch("/project-tasks/:id", requirePermission("run:control"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    status?: unknown;
-    assignedAgentId?: string | null;
-    title?: string;
-    description?: string;
-    priority?: unknown;
-  };
-  const task = await updateProjectTask(c.get("teamId"), c.req.param("id"), body);
+  const parsed = parseJsonBody(updateTaskBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const task = await updateProjectTask(c.get("teamId"), c.req.param("id"), parsed.data);
   if (!task) return c.json({ error: "not_found" }, 404);
   return c.json(task);
 });
@@ -98,12 +87,13 @@ projectsRoutes.post(
   "/project-tasks/:id/comments",
   requirePermission("run:run"),
   async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { content?: string };
+    const parsed = parseJsonBody(taskCommentBody, await c.req.json().catch(() => null));
+    if (!parsed.success) return jsonValidationError(c, parsed.error);
     const res = await addProjectTaskComment(
       c.get("teamId"),
       c.req.param("id"),
       c.get("auth").userId,
-      body.content ?? "",
+      parsed.data.content,
     );
     if ("error" in res)
       return c.json({ error: res.error }, res.error === "task_not_found" ? 404 : 400);
@@ -112,8 +102,9 @@ projectsRoutes.post(
 );
 
 projectsRoutes.post("/project-tasks/:id/run", requirePermission("run:run"), async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { instruction?: string };
-  const res = await runProjectTask(c.get("teamId"), c.req.param("id"), body.instruction);
+  const parsed = parseJsonBody(runTaskBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await runProjectTask(c.get("teamId"), c.req.param("id"), parsed.data.instruction);
   if ("error" in res) {
     const error = res.error ?? "unknown_error";
     const status =

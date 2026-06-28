@@ -7,7 +7,7 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import { db, schema } from "../../../src/infra/db/client";
 import { resolveTeam } from "../../../src/domains/workflows/repo";
 import { createAgent, getRunDetail, publishAgent } from "../../../src/domains/runs";
-import { addProjectResource, createProject, createProjectTask, runProjectTask } from "../../../src/domains/projects/repo";
+import { addProjectResource, createProject, createProjectTask, runProjectTask } from "../../../src/domains/projects";
 import { insertConfirmedMemory } from "../../../src/domains/learning/memory/service";
 import { claimTask, registerDaemon } from "../../../src/execution/daemon/repo";
 

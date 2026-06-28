@@ -9,7 +9,7 @@ import {
   getProject,
   listProjects,
   runProjectTask,
-} from "../../projects/repo";
+} from "../../projects";
 import type { TelegramCommand } from "./commands";
 import { executeRunControlCommand } from "./execute-controls";
 import {

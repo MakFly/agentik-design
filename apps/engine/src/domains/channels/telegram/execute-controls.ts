@@ -6,7 +6,7 @@ import {
   rejectRun,
   resumeRun,
 } from "../../runs";
-import { getProject } from "../../projects/repo";
+import { getProject } from "../../projects";
 import { insertConfirmedMemory } from "../../learning/memory/service";
 import type { TelegramCommand } from "./commands";
 import { helpText, webRunUrl } from "./helpers";

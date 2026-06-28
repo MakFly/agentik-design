@@ -1,28 +1,19 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
-import { hub } from "../../infra/hub";
 import { listMemory } from "../learning/memory/repo";
 import type { ProjectResourceType, ProjectTaskPriority, ProjectTaskStatus, ProjectType } from "../../infra/db/schema";
 
 const { projects, projectResources, projectTasks, projectTaskComments, projectWorkspaces, runs, agents } = schema;
 
+export type ProjectRow = typeof projects.$inferSelect;
+export type ProjectTaskRow = typeof projectTasks.$inferSelect;
+export type ProjectResourceRow = typeof projectResources.$inferSelect;
+
 const PROJECT_TYPES: ProjectType[] = ["ops", "code", "hybrid"];
 const RESOURCE_TYPES: ProjectResourceType[] = ["git_repo", "local_dir", "url", "document", "tool"];
 const TASK_STATUSES: ProjectTaskStatus[] = ["backlog", "ready", "running", "blocked", "review", "done", "cancelled"];
 const TASK_PRIORITIES: ProjectTaskPriority[] = ["P0", "P1", "P2", "P3"];
-
-type ProjectRow = typeof projects.$inferSelect;
-type ProjectTaskRow = typeof projectTasks.$inferSelect;
-type ProjectResourceRow = typeof projectResources.$inferSelect;
-type ProjectMemoryRow = Awaited<ReturnType<typeof listMemory>>[number];
-
-interface RunApprovalPolicy {
-  requiresApproval: true;
-  approved: false;
-  message: string;
-  risks: string[];
-}
 
 function projectType(value: unknown): ProjectType {
   return PROJECT_TYPES.includes(value as ProjectType) ? (value as ProjectType) : "hybrid";
@@ -57,10 +48,11 @@ function toProjectSummary(project: ProjectRow, tasks: ProjectTaskRow[], resource
   };
 }
 
-async function assertProject(teamId: string, projectId: string) {
+export async function getProjectRow(teamId: string, projectId: string) {
   const [project] = await db.select().from(projects).where(and(eq(projects.teamId, teamId), eq(projects.id, projectId))).limit(1);
   return project ?? null;
 }
+const assertProject = getProjectRow;
 
 export async function listProjects(teamId: string) {
   const [projectRows, taskRows, resourceRows] = await Promise.all([
@@ -200,117 +192,66 @@ export async function addProjectTaskComment(teamId: string, runId: string, userI
   return { comment };
 }
 
-function taskPrompt(input: {
-  project: ProjectRow;
-  task: ProjectTaskRow;
-  instruction?: string;
-  resources: ProjectResourceRow[];
-  memories: ProjectMemoryRow[];
-  approval?: RunApprovalPolicy | null;
-}) {
-  const resourceLines = input.resources.length
-    ? input.resources.map((r) => `- ${r.type}: ${r.label || r.ref} (${r.ref})`).join("\n")
-    : "- No attached resource yet.";
-  const memoryLines = input.memories.length
-    ? input.memories.map((memory) => `- ${memory.content}`).join("\n")
-    : "- No confirmed project memory yet.";
-  return [
-    `Project: ${input.project.name}`,
-    `Project type: ${input.project.type}`,
-    input.project.description ? `Project context: ${input.project.description}` : "",
-    "",
-    `Task: ${input.task.title}`,
-    input.task.description ? `Task detail: ${input.task.description}` : "",
-    input.instruction ? `Operator instruction: ${input.instruction}` : "",
-    "",
-    "Project resources:",
-    resourceLines,
-    "",
-    "Confirmed project memory:",
-    memoryLines,
-    input.approval ? "" : "",
-    input.approval ? `Preflight approval required before execution: ${input.approval.risks.join(", ")}.` : "",
-    "",
-    "Work as an Agentik project agent. Produce concise progress, mention blockers, and for coding tasks report files/tests/diff expectations.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+// ── Data-access helpers for the run-orchestration service ──────────────────
+
+export async function getProjectTaskRow(teamId: string, taskId: string) {
+  const [task] = await db
+    .select()
+    .from(projectTasks)
+    .where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.id, taskId)))
+    .limit(1);
+  return task ?? null;
 }
 
-function riskyApprovalPolicy(input: {
-  project: ProjectRow;
-  task: ProjectTaskRow;
-  instruction?: string;
-  resources: ProjectResourceRow[];
-}): RunApprovalPolicy | null {
-  const text = [input.project.name, input.project.description, input.task.title, input.task.description, input.instruction]
-    .filter(Boolean)
-    .join("\n")
-    .toLowerCase();
-  const checks: Array<[string, RegExp]> = [
-    ["destructive shell/filesystem", /\b(rm\s+-rf|delete|destroy|drop\s+table|truncate|wipe|erase|remove\s+all)\b/],
-    ["production deploy", /\b(deploy|release|production|prod|ship)\b/],
-    ["external write", /\b(git\s+push|push\s+to|send\s+email|webhook|post\s+to|external\s+api|write\s+to\s+api)\b/],
-    ["billing/provider change", /\b(stripe|charge|refund|invoice|paid|billing|provider\s+key|api\s+key)\b/],
-    ["database migration", /\b(migrate|migration|schema\s+change|alter\s+table)\b/],
-  ];
-  const risks = checks.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
-  const hasWritableWorkspace = input.resources.some((resource) => resource.type === "git_repo" || resource.type === "local_dir");
-  if (hasWritableWorkspace && /\b(commit|merge|rebase|checkout\s+-b|branch)\b/.test(text)) {
-    risks.push("git mutation");
-  }
-  const uniqueRisks = [...new Set(risks)];
-  if (!uniqueRisks.length) return null;
-  return {
-    requiresApproval: true,
-    approved: false,
-    message: `Approval required before executing risky project task: ${uniqueRisks.join(", ")}.`,
-    risks: uniqueRisks,
-  };
-}
-
-export async function runProjectTask(teamId: string, projectTaskId: string, instruction?: string) {
-  const [task] = await db.select().from(projectTasks).where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.id, projectTaskId))).limit(1);
-  if (!task) return { error: "task_not_found" as const };
-  const [project] = await db.select().from(projects).where(and(eq(projects.teamId, teamId), eq(projects.id, task.projectId))).limit(1);
-  if (!project) return { error: "project_not_found" as const };
-  const agentId = task.assignedAgentId ?? project.leadAgentId;
-  if (!agentId) return { error: "agent_required" as const };
+export async function getRunnableAgent(teamId: string, agentId: string) {
   const [agent] = await db
     .select({ id: agents.id, liveVersionId: agents.liveVersionId })
     .from(agents)
     .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
     .limit(1);
-  if (!agent) return { error: "agent_not_found" as const };
-  if (!agent.liveVersionId) return { error: "not_published" as const };
+  return agent ?? null;
+}
 
-  const resources = await db.select().from(projectResources).where(and(eq(projectResources.teamId, teamId), eq(projectResources.projectId, project.id)));
-  const memories = await listMemory(teamId, { scope: "project", targetId: project.id });
-  const approval = riskyApprovalPolicy({ project, task, instruction, resources });
-  const runId = genId("run");
+export async function getProjectResources(teamId: string, projectId: string) {
+  return db
+    .select()
+    .from(projectResources)
+    .where(and(eq(projectResources.teamId, teamId), eq(projectResources.projectId, projectId)));
+}
+
+export async function getProjectMemories(teamId: string, projectId: string) {
+  return listMemory(teamId, { scope: "project", targetId: projectId });
+}
+
+export async function createProjectRun(input: {
+  teamId: string;
+  runId: string;
+  agentId: string;
+  projectId: string;
+  taskId: string;
+  payload: Record<string, unknown>;
+}) {
   await db.insert(runs).values({
-    id: runId,
-    teamId,
+    id: input.runId,
+    teamId: input.teamId,
     executor: "daemon",
-    agentId,
-    projectId: project.id,
-    projectTaskId: task.id,
+    agentId: input.agentId,
+    projectId: input.projectId,
+    projectTaskId: input.taskId,
     status: "queued",
     kind: "chat",
-    input: {
-      prompt: taskPrompt({ project, task, instruction, resources, memories, approval }),
-      ...(approval ? { approval } : {}),
-    },
+    input: input.payload,
   });
-  await db.update(projectTasks).set({ status: "running", lastRunId: runId, updatedAt: sql`now()` }).where(eq(projectTasks.id, task.id));
+  await db
+    .update(projectTasks)
+    .set({ status: "running", lastRunId: input.runId, updatedAt: sql`now()` })
+    .where(eq(projectTasks.id, input.taskId));
   await db.insert(projectTaskComments).values({
     id: genId("pmsg"),
-    teamId,
-    projectTaskId: task.id,
+    teamId: input.teamId,
+    projectTaskId: input.taskId,
     authorKind: "system",
     content: "Run queued for the assigned agent.",
-    runId,
+    runId: input.runId,
   });
-  hub.publish(teamId, { kind: "run", action: "created", runId });
-  return { runId };
 }
