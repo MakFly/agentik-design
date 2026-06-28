@@ -1,5 +1,32 @@
 import { decryptJson } from "../../../infra/crypto";
+import { db, schema } from "../../../infra/db/client";
+import { genId } from "../../../infra/db/ids";
+import { env } from "../../../infra/env";
 import type { ChannelConnectionRow } from "./types";
+
+/**
+ * Dev/sim capture: with no real bot token we can't reach Telegram, so record the
+ * would-be outbound to channel_deliveries (status "simulated"). The Telegram
+ * simulation script reads these back, making the bot's replies observable without
+ * a live bot. No-op in production (gated on AUTH_DEV_HEADERS).
+ */
+async function captureSimulatedSend(
+  connection: Pick<ChannelConnectionRow, "id" | "teamId">,
+  chatId: string,
+  text: string,
+  parseMode?: string,
+): Promise<void> {
+  await db.insert(schema.channelDeliveries).values({
+    id: genId("chdel"),
+    teamId: connection.teamId,
+    connectionId: connection.id,
+    provider: "telegram",
+    kind: "reply",
+    status: "simulated",
+    parseMode: parseMode ?? null,
+    payload: { chatId, text },
+  });
+}
 
 interface TelegramApiResponse<T = unknown> {
   ok: boolean;
@@ -37,7 +64,13 @@ export async function sendTelegramMessage(input: {
   parseMode?: "HTML";
 }) {
   const token = connectionToken(input.connection);
-  if (!token) return;
+  if (!token) {
+    if (env.AUTH_DEV_HEADERS) {
+      await captureSimulatedSend(input.connection, input.chatId, input.text, input.parseMode);
+      return { messageId: undefined };
+    }
+    return;
+  }
   const res = await telegramCall<{ message_id?: number }>(token, "sendMessage", {
     chat_id: input.chatId,
     text: input.text,
