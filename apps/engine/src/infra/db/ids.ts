@@ -41,7 +41,9 @@ export type IdPrefix =
   | "pkey"
   // bundle manager + generic org settings
   | "bcmd"
-  | "oset";
+  | "oset"
+  // audit trail
+  | "audit";
 
 export function genId(prefix: IdPrefix): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;

@@ -3,14 +3,21 @@ import { env } from "./env";
 
 /**
  * Credential encryption at rest — AES-256-GCM. The 32-byte key is derived
- * (scrypt) from CREDENTIALS_ENCRYPTION_KEY. In dev, an insecure fallback is used
- * with a loud warning so the engine still boots; production MUST set the env var.
+ * (scrypt) from CREDENTIALS_ENCRYPTION_KEY. Outside production an insecure fallback
+ * is used with a loud warning so the engine still boots; in production the engine
+ * REFUSES to boot without the env var (a fixed dev key would expose every tenant's
+ * provider secrets if it ever leaked).
  *
  * Stored format: `iv:authTag:ciphertext`, each base64. GCM's auth tag makes
  * tampering detectable (decrypt throws on a modified blob).
  */
-function deriveKey(secret?: string): Buffer {
+export function deriveKey(secret?: string): Buffer {
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "[engine] CREDENTIALS_ENCRYPTION_KEY is required in production — refusing to boot with an insecure dev key.",
+      );
+    }
     console.warn(
       "[engine] CREDENTIALS_ENCRYPTION_KEY is unset — using an INSECURE dev key. Set it before production.",
     );

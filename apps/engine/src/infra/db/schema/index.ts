@@ -8,3 +8,4 @@ export * from "./runs";
 export * from "./channels";
 export * from "./learning";
 export * from "./auth";
+export * from "./audit";

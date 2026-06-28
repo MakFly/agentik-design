@@ -12,6 +12,7 @@ import {
   SUPPORTED_PROVIDERS,
   isSupportedProvider,
 } from "./providers-repo";
+import { recordAudit } from "../../infra/audit";
 import { PROVIDER_MODELS } from "@agentik/workflow-schema";
 
 const { appUsers, teams, orgMembers, orgInvitations } = schema;
@@ -440,6 +441,14 @@ export async function inviteTeamMember(
     return { error: "forbidden" as const };
   }
   const inv = await createInvitation(teamId, email, role, actorId);
+  await recordAudit({
+    teamId,
+    actorId,
+    action: "member.invite",
+    targetType: "invitation",
+    targetId: inv.id,
+    metadata: { email, role },
+  });
   return { id: inv.id, expiresAt: inv.expiresAt, token: inv.token };
 }
 
@@ -575,6 +584,22 @@ export async function updateProvidersPolicy(
   }
 
   await saveTeamSettings(teamId, { ...settings, providers });
+  await recordAudit({
+    teamId,
+    actorId,
+    action: "settings.providers_policy.update",
+    targetType: "team",
+    targetId: teamId,
+    metadata: {
+      ...(patch.costCeilingPerDayCents !== undefined
+        ? { costCeilingPerDayCents: patch.costCeilingPerDayCents }
+        : {}),
+      ...(patch.monthlySpendLimitCents !== undefined
+        ? { monthlySpendLimitCents: patch.monthlySpendLimitCents }
+        : {}),
+      ...(patch.fallbackOrder !== undefined ? { fallbackOrderChanged: true } : {}),
+    },
+  });
   return getProvidersSettings(teamId);
 }
 

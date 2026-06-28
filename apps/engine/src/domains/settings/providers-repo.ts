@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { encryptJson, decryptJson } from "../../infra/crypto";
+import { recordAudit } from "../../infra/audit";
 
 const { providerKeys } = schema;
 
@@ -52,10 +53,23 @@ export async function setProviderKey(teamId: string, provider: string, key: stri
   } else {
     await db.insert(providerKeys).values({ id: genId("pkey"), teamId, provider, secret });
   }
+  // Audit the change — provider name only, NEVER the key material.
+  await recordAudit({
+    teamId,
+    action: "provider_key.set",
+    targetType: "provider_key",
+    targetId: provider,
+  });
 }
 
 export async function deleteProviderKey(teamId: string, provider: string): Promise<void> {
   await db.delete(providerKeys).where(and(eq(providerKeys.teamId, teamId), eq(providerKeys.provider, provider)));
+  await recordAudit({
+    teamId,
+    action: "provider_key.delete",
+    targetType: "provider_key",
+    targetId: provider,
+  });
 }
 
 /**

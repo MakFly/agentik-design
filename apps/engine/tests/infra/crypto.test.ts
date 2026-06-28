@@ -1,5 +1,27 @@
-import { describe, expect, test } from "bun:test";
-import { encryptJson, decryptJson } from "./infra/crypto";
+import { afterEach, describe, expect, test } from "bun:test";
+import { decryptJson, deriveKey, encryptJson } from "../../src/infra/crypto";
+
+describe("master key hardening", () => {
+  const prevEnv = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = prevEnv;
+  });
+
+  test("refuses to derive a key in production without a secret", () => {
+    process.env.NODE_ENV = "production";
+    expect(() => deriveKey(undefined)).toThrow(/CREDENTIALS_ENCRYPTION_KEY is required/);
+  });
+
+  test("derives a key in production when a secret is provided", () => {
+    process.env.NODE_ENV = "production";
+    expect(deriveKey("a-real-production-secret").length).toBe(32);
+  });
+
+  test("falls back to the dev key outside production", () => {
+    process.env.NODE_ENV = "test";
+    expect(deriveKey(undefined).length).toBe(32);
+  });
+});
 
 describe("credential encryption", () => {
   test("round-trips a secret object", () => {
