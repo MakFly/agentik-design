@@ -85,14 +85,35 @@ export interface PublishResult {
   status: "published";
 }
 
+/** Identity fields patched atomically alongside the published version (edit mode). */
+export interface PublishIdentityPatch {
+  name?: string;
+  role?: string;
+  goal?: string;
+  description?: string;
+  emoji?: string | null;
+  color?: string | null;
+  isOrchestrator?: boolean;
+}
+
 export function usePublishAgent(team: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ agentId, config, changelog }: { agentId: AgentId; config: AgentConfig; changelog: string }) =>
+    mutationFn: ({
+      agentId,
+      config,
+      changelog,
+      identity,
+    }: {
+      agentId: AgentId;
+      config: AgentConfig;
+      changelog: string;
+      identity?: PublishIdentityPatch;
+    }) =>
       apiFetch<PublishResult>(`/agents/${agentId}/publish`, {
         method: "POST",
         team,
-        body: { config, changelog },
+        body: { config, changelog, ...(identity ? { identity } : {}) },
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
     onSuccess: (_res, vars) => {

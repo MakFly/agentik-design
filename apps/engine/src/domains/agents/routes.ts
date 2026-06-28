@@ -20,6 +20,7 @@ import {
   updateAgent,
 } from "./repo";
 import { createAgentBody, rosterBody, updateAgentBody } from "./schemas";
+import type { AgentIdentityPatch } from "../runs";
 
 export const agentsRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -90,12 +91,14 @@ agentsRoutes.post("/agents/:id/publish", requirePermission("agent:update"), asyn
   const body = (await c.req.json().catch(() => ({}))) as {
     config?: unknown;
     changelog?: string;
+    identity?: AgentIdentityPatch;
   };
   const res = await publishAgent(
     c.get("teamId"),
     c.req.param("id"),
     body.config,
     body.changelog,
+    body.identity,
   );
   if (!res) return c.json({ error: "not_found" }, 404);
   if ("error" in res) {

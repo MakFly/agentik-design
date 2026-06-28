@@ -493,74 +493,79 @@ export async function deleteAgent(teamId: string, agentId: string) {
     .limit(1);
   if (!agent) return null;
 
-  // Detach deterministic routes before the row vanishes so the count is exact (the FKs
-  // are ON DELETE SET NULL, but we null explicitly to report how many were disabled).
-  const clearedRules = await db
-    .update(assistantRules)
-    .set({ targetAgentId: null, updatedAt: sql`now()` })
-    .where(
-      and(eq(assistantRules.teamId, teamId), eq(assistantRules.targetAgentId, agent.id)),
-    )
-    .returning({ id: assistantRules.id });
-  const clearedBindings = await db
-    .update(channelBindings)
-    .set({ agentId: null, updatedAt: sql`now()` })
-    .where(
-      and(eq(channelBindings.teamId, teamId), eq(channelBindings.agentId, agent.id)),
-    )
-    .returning({ id: channelBindings.id });
+  // One transaction for the whole cascade: a mid-cascade failure must not leave a
+  // half-deleted agent (orphaned runs/messages/reviews/sessions). Either it all
+  // commits or none of it does.
+  return db.transaction(async (tx) => {
+    // Detach deterministic routes before the row vanishes so the count is exact (the FKs
+    // are ON DELETE SET NULL, but we null explicitly to report how many were disabled).
+    const clearedRules = await tx
+      .update(assistantRules)
+      .set({ targetAgentId: null, updatedAt: sql`now()` })
+      .where(
+        and(eq(assistantRules.teamId, teamId), eq(assistantRules.targetAgentId, agent.id)),
+      )
+      .returning({ id: assistantRules.id });
+    const clearedBindings = await tx
+      .update(channelBindings)
+      .set({ agentId: null, updatedAt: sql`now()` })
+      .where(
+        and(eq(channelBindings.teamId, teamId), eq(channelBindings.agentId, agent.id)),
+      )
+      .returning({ id: channelBindings.id });
 
-  const taskRows = await db
-    .select({ id: runs.id })
-    .from(runs)
-    .where(and(eq(runs.teamId, teamId), eq(runs.agentId, agent.id)));
-  const taskIds = taskRows.map((r) => r.id);
-  if (taskIds.length > 0) {
-    await db.delete(runReviews).where(
-      and(eq(runReviews.teamId, teamId), inArray(runReviews.runId, taskIds)),
-    );
-    await db.delete(runMessages).where(inArray(runMessages.runId, taskIds));
-    await db
-      .delete(runs)
+    const taskRows = await tx
+      .select({ id: runs.id })
+      .from(runs)
       .where(and(eq(runs.teamId, teamId), eq(runs.agentId, agent.id)));
-  }
+    const taskIds = taskRows.map((r) => r.id);
+    if (taskIds.length > 0) {
+      await tx.delete(runReviews).where(
+        and(eq(runReviews.teamId, teamId), inArray(runReviews.runId, taskIds)),
+      );
+      await tx.delete(runMessages).where(inArray(runMessages.runId, taskIds));
+      await tx
+        .delete(runs)
+        .where(and(eq(runs.teamId, teamId), eq(runs.agentId, agent.id)));
+    }
 
-  await db
-    .update(projectTasks)
-    .set({ assignedAgentId: null })
-    .where(
-      and(eq(projectTasks.teamId, teamId), eq(projectTasks.assignedAgentId, agent.id)),
-    );
+    await tx
+      .update(projectTasks)
+      .set({ assignedAgentId: null })
+      .where(
+        and(eq(projectTasks.teamId, teamId), eq(projectTasks.assignedAgentId, agent.id)),
+      );
 
-  await db
-    .delete(chatSessions)
-    .where(
-      and(eq(chatSessions.teamId, teamId), eq(chatSessions.agentId, agent.id)),
-    );
+    await tx
+      .delete(chatSessions)
+      .where(
+        and(eq(chatSessions.teamId, teamId), eq(chatSessions.agentId, agent.id)),
+      );
 
-  await db
-    .update(projects)
-    .set({ leadAgentId: null })
-    .where(and(eq(projects.teamId, teamId), eq(projects.leadAgentId, agent.id)));
+    await tx
+      .update(projects)
+      .set({ leadAgentId: null })
+      .where(and(eq(projects.teamId, teamId), eq(projects.leadAgentId, agent.id)));
 
-  await db
-    .delete(memoryEntries)
-    .where(
-      and(
-        eq(memoryEntries.teamId, teamId),
-        eq(memoryEntries.scope, "agent"),
-        eq(memoryEntries.targetId, agent.id),
-      ),
-    );
+    await tx
+      .delete(memoryEntries)
+      .where(
+        and(
+          eq(memoryEntries.teamId, teamId),
+          eq(memoryEntries.scope, "agent"),
+          eq(memoryEntries.targetId, agent.id),
+        ),
+      );
 
-  // agent_subagents rows (as parent OR child) cascade away with the agent row.
-  await db
-    .delete(agents)
-    .where(and(eq(agents.teamId, teamId), eq(agents.id, agent.id)));
-  const disabled = clearedRules.length + clearedBindings.length;
-  return {
-    disabledRules: clearedRules.length,
-    disabledBindings: clearedBindings.length,
-    note: `${disabled} rules/bindings disabled`,
-  };
+    // agent_subagents rows (as parent OR child) cascade away with the agent row.
+    await tx
+      .delete(agents)
+      .where(and(eq(agents.teamId, teamId), eq(agents.id, agent.id)));
+    const disabled = clearedRules.length + clearedBindings.length;
+    return {
+      disabledRules: clearedRules.length,
+      disabledBindings: clearedBindings.length,
+      note: `${disabled} rules/bindings disabled`,
+    };
+  });
 }

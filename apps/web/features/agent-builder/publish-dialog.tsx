@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { KeyValueList } from "@/components/shared/key-value-list";
 import { findModel } from "@/config/models";
 import { formatMoney } from "@/lib/format";
-import { useCreateAgent, useUpdateAgent, usePublishAgent } from "./api";
+import { useCreateAgent, usePublishAgent } from "./api";
 import type { DraftIdentity } from "./validation";
 
 /**
@@ -54,9 +54,8 @@ export function PublishDialog({
   const router = useRouter();
   const [changelog, setChangelog] = useState(mode === "create" ? "Initial version" : "Update");
   const createAgent = useCreateAgent(team);
-  const updateAgent = useUpdateAgent(team);
   const publishAgent = usePublishAgent(team);
-  const busy = createAgent.isPending || updateAgent.isPending || publishAgent.isPending;
+  const busy = createAgent.isPending || publishAgent.isPending;
   const meta = findModel(config.model.model);
 
   async function publish() {
@@ -80,11 +79,13 @@ export function PublishDialog({
         return;
       }
 
-      // Edit: persist identity, then publish a new immutable version.
+      // Edit: identity patch + new immutable version in ONE server transaction.
       const id = agentId as AgentId;
-      await updateAgent.mutateAsync({
+      const result = await publishAgent.mutateAsync({
         agentId: id,
-        patch: {
+        config,
+        changelog,
+        identity: {
           name: identity.name,
           role: identity.role,
           goal: identity.goal,
@@ -94,7 +95,6 @@ export function PublishDialog({
           isOrchestrator: identity.isOrchestrator,
         },
       });
-      const result = await publishAgent.mutateAsync({ agentId: id, config, changelog });
       toast.success(`Published ${identity.name} v${result.version}`);
       onPublished?.();
       onOpenChange(false);

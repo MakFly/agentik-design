@@ -184,14 +184,63 @@ export async function publishAgentInTx(
   };
 }
 
-/** Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId. */
+/** Identity fields that may be patched atomically alongside a publish. */
+export interface AgentIdentityPatch {
+  name?: string;
+  role?: string;
+  goal?: string;
+  description?: string;
+  tags?: string[];
+  emoji?: string | null;
+  color?: string | null;
+  avatarUrl?: string | null;
+  isOrchestrator?: boolean;
+}
+
+async function applyIdentityPatch(
+  executor: DbOrTx,
+  teamId: string,
+  agentId: string,
+  identity: AgentIdentityPatch,
+): Promise<void> {
+  const set: Record<string, unknown> = { updatedAt: sql`now()` };
+  for (const key of [
+    "name",
+    "role",
+    "goal",
+    "description",
+    "tags",
+    "emoji",
+    "color",
+    "avatarUrl",
+    "isOrchestrator",
+  ] as const) {
+    if (identity[key] !== undefined) set[key] = identity[key];
+  }
+  if (Object.keys(set).length === 1) return; // only updatedAt → nothing to patch
+  await executor
+    .update(agents)
+    .set(set)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)));
+}
+
+/**
+ * Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId.
+ * When `identity` is provided, the identity patch and the version publish happen in
+ * ONE transaction (the edit-mode path), so a failure can never leave identity mutated
+ * without a matching new version.
+ */
 export async function publishAgent(
   teamId: string,
   agentId: string,
   config: unknown,
   changelog?: string,
+  identity?: AgentIdentityPatch,
 ): Promise<PublishAgentResult> {
-  return db.transaction((tx) => publishAgentInTx(tx, teamId, agentId, config, changelog));
+  return db.transaction(async (tx) => {
+    if (identity) await applyIdentityPatch(tx, teamId, agentId, identity);
+    return publishAgentInTx(tx, teamId, agentId, config, changelog);
+  });
 }
 
 /**
