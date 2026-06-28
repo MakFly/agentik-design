@@ -24,6 +24,8 @@ export type IdPrefix =
   | "chident"
   | "chbind"
   | "chmsg"
+  | "chsess"
+  | "chdel"
   | "daemon"
   | "runtime"
   | "mcp"

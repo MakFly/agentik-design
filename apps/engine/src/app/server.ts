@@ -16,6 +16,7 @@ import { handleTelegramWebhookSecret } from "../domains/channels/service";
 import { observationRoutes } from "../observation/routes";
 import { withAuth, type AuthVars } from "./middleware/auth";
 import { rateLimit } from "./middleware/rate-limit";
+import { devRoutes } from "./dev-routes";
 import { env } from "../infra/env";
 
 const app = new Hono();
@@ -41,6 +42,9 @@ api.route("/", settingsRoutes);
 api.route("/", runsRoutes);
 api.route("/", chatRoutes);
 api.route("/", signalsRoutes);
+
+// Dev/test surface (seed + run simulator). Never mounted in production.
+if (env.AUTH_DEV_HEADERS) api.route("/", devRoutes);
 
 app.route("/api/v1/auth", auth);
 
