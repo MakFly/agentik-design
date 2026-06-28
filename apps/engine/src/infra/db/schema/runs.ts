@@ -48,6 +48,9 @@ export const runs = pgTable("runs", {
   input: jsonb("input"),
   workDir: text("work_dir"),
   result: jsonb("result"),
+  /** Realized cost of this run in integer cents (USD). Extracted from the runtime's
+   *  reported `cost_usd` at completion; null when the runtime reports no cost (echo). */
+  costCents: integer("cost_cents"),
   /** Classified failure cause; null unless status = failed. Drives retry policy. */
   errorReason: text("error_reason").$type<TaskErrorReason>(),
   /** 1-based attempt counter; bumped on auto-retry of a retryable failure. */

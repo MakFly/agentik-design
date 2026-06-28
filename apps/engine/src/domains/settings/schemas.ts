@@ -45,6 +45,11 @@ export const providersPolicyBody = z.object({
     .int("Cost ceiling must be a whole number")
     .min(0, "Cost ceiling cannot be negative")
     .optional(),
+  monthlySpendLimitCents: z
+    .number({ error: "Monthly spend limit must be a number" })
+    .int("Monthly spend limit must be a whole number")
+    .min(0, "Monthly spend limit cannot be negative")
+    .optional(),
   fallbackOrder: z.array(z.string()).optional(),
 });
 

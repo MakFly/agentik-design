@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import {
   artifactsFromRun,
@@ -31,7 +31,35 @@ const {
   projectResources,
   projectTasks,
   projectWorkspaces,
+  teams,
 } = schema;
+
+/** Sum of realized run cost (integer cents) for a team in the current calendar month. */
+export async function monthlyCostCents(teamId: string): Promise<number> {
+  const rows = (await db.execute(sql`
+    SELECT coalesce(sum(cost_cents), 0)::int AS "total"
+    FROM ${runs}
+    WHERE team_id = ${teamId}
+      AND cost_cents IS NOT NULL
+      AND created_at >= date_trunc('month', now())
+  `)) as unknown as Array<{ total: number }>;
+  return rows[0]?.total ?? 0;
+}
+
+/** Per-team monthly spend ceiling in cents, or null when uncapped. Stored on
+ *  `teams.settings.providers.monthlySpendLimitCents` (owned by the settings domain). */
+export async function teamSpendLimitCents(teamId: string): Promise<number | null> {
+  const [row] = await db
+    .select({ settings: teams.settings })
+    .from(teams)
+    .where(eq(teams.id, teamId))
+    .limit(1);
+  const providers = (
+    row?.settings as { providers?: { monthlySpendLimitCents?: number } } | undefined
+  )?.providers;
+  const v = providers?.monthlySpendLimitCents;
+  return typeof v === "number" && v > 0 ? v : null;
+}
 
 async function projectContextForRun(task: DaemonRunRowDb) {
   if (!task.projectId || !task.projectTaskId) return null;

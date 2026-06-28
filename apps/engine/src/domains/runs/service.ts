@@ -13,8 +13,25 @@ import {
 } from "@agentik/workflow-schema";
 import type { RuntimeKind, ToolGrant } from "@agentik/workflow-schema";
 import { ensureDevAgents } from "../agents/repo";
+import { monthlyCostCents, teamSpendLimitCents } from "./repo";
 
 const { agents, daemons, runtimes, runs } = schema;
+
+/**
+ * Guard a team's monthly spend ceiling before enqueuing a new run. Returns ok when
+ * uncapped or under the limit; otherwise the spent/limit figures (cents) so callers
+ * can surface a precise 402. Enforced at dispatch so a runaway agent can't keep
+ * burning budget past the cap.
+ */
+export async function assertWithinSpendLimit(
+  teamId: string,
+): Promise<{ ok: true } | { ok: false; spentCents: number; limitCents: number }> {
+  const limit = await teamSpendLimitCents(teamId);
+  if (limit == null) return { ok: true };
+  const spent = await monthlyCostCents(teamId);
+  if (spent >= limit) return { ok: false, spentCents: spent, limitCents: limit };
+  return { ok: true };
+}
 
 /** Map the web's free-form config jsonb onto an immutable version's typed fields. */
 function configToVersionInput(
@@ -165,6 +182,14 @@ export async function runAgent(teamId: string, agentId: string, input: string) {
     .limit(1);
   if (!agent) return null;
   if (!agent.liveVersionId) return { error: "not_published" as const };
+  const guard = await assertWithinSpendLimit(teamId);
+  if (!guard.ok) {
+    return {
+      error: "spend_limit_exceeded" as const,
+      spentCents: guard.spentCents,
+      limitCents: guard.limitCents,
+    };
+  }
   const runId = genId("run");
   await db.insert(runs).values({
     id: runId,

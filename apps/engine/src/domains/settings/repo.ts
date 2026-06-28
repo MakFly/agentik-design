@@ -46,6 +46,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Required<NotificationPreferences>
 type TeamProviderSettings = {
   fallbackOrder?: string[];
   costCeilingPerDayCents?: number;
+  /** Per-team monthly spend ceiling (cents). Enforced at run dispatch; 0/undefined = uncapped. */
+  monthlySpendLimitCents?: number;
   disabled?: string[];
   defaultProvider?: string;
 };
@@ -505,6 +507,10 @@ export async function getProvidersSettings(teamId: string) {
       amountCents: providerCfg.costCeilingPerDayCents ?? 20_000,
       currency: "USD" as const,
     },
+    monthlySpendLimit: {
+      amountCents: providerCfg.monthlySpendLimitCents ?? 0,
+      currency: "USD" as const,
+    },
   };
 }
 
@@ -538,7 +544,11 @@ export async function updateProviderConfig(
 export async function updateProvidersPolicy(
   teamId: string,
   actorId: string,
-  patch: { costCeilingPerDayCents?: number; fallbackOrder?: string[] },
+  patch: {
+    costCeilingPerDayCents?: number;
+    monthlySpendLimitCents?: number;
+    fallbackOrder?: string[];
+  },
 ) {
   const role = await getMembership(actorId, teamId);
   if (!canManageMembers(role)) return { error: "forbidden" as const };
@@ -551,6 +561,12 @@ export async function updateProvidersPolicy(
       return { error: "invalid_body" as const };
     }
     providers.costCeilingPerDayCents = patch.costCeilingPerDayCents;
+  }
+  if (patch.monthlySpendLimitCents !== undefined) {
+    if (patch.monthlySpendLimitCents < 0) {
+      return { error: "invalid_body" as const };
+    }
+    providers.monthlySpendLimitCents = patch.monthlySpendLimitCents;
   }
   if (patch.fallbackOrder !== undefined) {
     providers.fallbackOrder = patch.fallbackOrder

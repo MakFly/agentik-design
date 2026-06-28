@@ -76,7 +76,9 @@ agentsRoutes.post("/agents/:id/run", requirePermission("run:run"), async (c) => 
   const body = (await c.req.json().catch(() => ({}))) as { input?: string };
   const res = await runAgent(c.get("teamId"), c.req.param("id"), body.input ?? "");
   if (!res) return c.json({ error: "not_found" }, 404);
-  if ("error" in res) return c.json(res, 409);
+  if ("error" in res) {
+    return c.json(res, res.error === "spend_limit_exceeded" ? 402 : 409);
+  }
   return c.json(res, 202);
 });
 

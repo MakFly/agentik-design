@@ -667,6 +667,15 @@ export async function appendMessages(
   };
 }
 
+/** Pull the runtime's reported `cost_usd` (dollars float) out of a result blob and
+ *  round to integer cents. Null when absent/invalid (echo and other runtimes omit it). */
+function costCentsFromResult(result: unknown): number | null {
+  if (!result || typeof result !== "object") return null;
+  const usd = (result as Record<string, unknown>).cost_usd;
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return null;
+  return Math.round(usd * 100);
+}
+
 export async function completeTask(
   runId: string,
   result: unknown,
@@ -675,11 +684,13 @@ export async function completeTask(
   chatSessionId: string | null;
   projectTaskId: string | null;
 } | null> {
+  const costCents = costCentsFromResult(result);
   const updated = await db
     .update(runs)
     .set({
       status: "succeeded",
       result: (result ?? null) as Record<string, unknown> | null,
+      ...(costCents != null ? { costCents } : {}),
       endedAt: sql`now()`,
       durationMs: sql`(extract(epoch from (now() - coalesce(started_at, created_at))) * 1000)::int`,
       completedSteps: sql`${runs.stepCount}`,
