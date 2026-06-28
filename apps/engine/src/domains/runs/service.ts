@@ -1,5 +1,5 @@
-import { and, eq, sql } from "drizzle-orm";
-import { db, schema } from "../../infra/db/client";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { db, schema, type DbOrTx } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
 import {
@@ -13,7 +13,9 @@ import {
 } from "@agentik/workflow-schema";
 import type { RuntimeKind, ToolGrant } from "@agentik/workflow-schema";
 import { ensureDevAgents } from "../agents/repo";
+import { hasLiveDaemonForAgent } from "../../infra/daemon-liveness";
 import { monthlyCostCents, teamSpendLimitCents } from "./repo";
+import { runMessagesToSteps } from "./mappers";
 
 const { agents, daemons, runtimes, runs } = schema;
 
@@ -103,15 +105,16 @@ async function validateDaemonBinding(
   teamId: string,
   daemonId: string | null,
   runtimeKind: RuntimeKind,
+  executor: DbOrTx = db,
 ) {
   if (!daemonId) return { ok: true as const };
-  const [daemon] = await db
+  const [daemon] = await executor
     .select({ id: daemons.id })
     .from(daemons)
     .where(and(eq(daemons.teamId, teamId), eq(daemons.id, daemonId)))
     .limit(1);
   if (!daemon) return { ok: false as const, error: "daemon_not_found" as const };
-  const [runtime] = await db
+  const [runtime] = await executor
     .select({ id: runtimes.id })
     .from(runtimes)
     .where(
@@ -126,14 +129,24 @@ async function validateDaemonBinding(
   return { ok: true as const };
 }
 
-/** Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId. */
-export async function publishAgent(
+export type PublishAgentResult =
+  | null
+  | { error: "daemon_not_found" | "daemon_missing_runtime" }
+  | { versionId: string; version: number; status: "published" };
+
+/**
+ * Publish core, runnable inside a caller's transaction so create+publish (or
+ * republish) commit atomically — the immutable version insert and the agents
+ * repoint can never half-apply. Pass the open `tx`; {@link publishAgent} opens its own.
+ */
+export async function publishAgentInTx(
+  executor: DbOrTx,
   teamId: string,
   agentId: string,
   config: unknown,
   changelog?: string,
-) {
-  const [agent] = await db
+): Promise<PublishAgentResult> {
+  const [agent] = await executor
     .select({ runtimeKind: agents.runtimeKind })
     .from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)))
@@ -141,17 +154,19 @@ export async function publishAgent(
   if (!agent) return null;
   const versionInput = configToVersionInput(config, agent.runtimeKind);
   const preferredDaemonId = preferredDaemonIdFromConfig(config);
-  const binding = await validateDaemonBinding(teamId, preferredDaemonId, versionInput.runtimeKind);
+  const binding = await validateDaemonBinding(teamId, preferredDaemonId, versionInput.runtimeKind, executor);
   if (!binding.ok) return { error: binding.error };
-  const created = await createAgentVersion(teamId, agentId, {
-    ...versionInput,
-    changelog,
-  });
+  const created = await createAgentVersion(
+    teamId,
+    agentId,
+    { ...versionInput, changelog },
+    executor,
+  );
   if (!created) return null;
   // Point liveVersionId at the immutable version AND sync the agent's runtime_kind to the
   // published version — claimTask matches tasks to runtimes on agents.runtime_kind, so a
   // claude version must flip the agent off "echo" or the wrong runtime would claim its runs.
-  await db
+  await executor
     .update(agents)
     .set({
       liveVersionId: created.id,
@@ -169,6 +184,16 @@ export async function publishAgent(
   };
 }
 
+/** Publish → write an IMMUTABLE agent_versions row (monotonic), repoint liveVersionId. */
+export async function publishAgent(
+  teamId: string,
+  agentId: string,
+  config: unknown,
+  changelog?: string,
+): Promise<PublishAgentResult> {
+  return db.transaction((tx) => publishAgentInTx(tx, teamId, agentId, config, changelog));
+}
+
 /**
  * Enqueue a real run of a PUBLISHED agent (Golden Path step 3). A daemon advertising the
  * agent's runtime claims it and the engine injects the agent's approved memory/skills into
@@ -176,12 +201,20 @@ export async function publishAgent(
  */
 export async function runAgent(teamId: string, agentId: string, input: string) {
   const [agent] = await db
-    .select({ id: agents.id, liveVersionId: agents.liveVersionId })
+    .select({
+      id: agents.id,
+      liveVersionId: agents.liveVersionId,
+      runtimeKind: agents.runtimeKind,
+      preferredDaemonId: agents.preferredDaemonId,
+    })
     .from(agents)
     .where(and(eq(agents.id, agentId), eq(agents.teamId, teamId)))
     .limit(1);
   if (!agent) return null;
   if (!agent.liveVersionId) return { error: "not_published" as const };
+  // Fail fast: with no live daemon to claim it, the run would sit `queued` forever.
+  if (!(await hasLiveDaemonForAgent(teamId, agent)))
+    return { error: "no_live_daemon" as const };
   const guard = await assertWithinSpendLimit(teamId);
   if (!guard.ok) {
     return {
@@ -289,6 +322,8 @@ export async function onRunCompleted(
       resultText(result),
     ).catch(() => undefined);
   }
+  const { handleOrchestrationChildCompleted } = await import("../chat/repo");
+  await handleOrchestrationChildCompleted(teamId, runId, resultText(result)).catch(() => undefined);
   await notifyRunTelegram(
     teamId,
     runId,
@@ -322,6 +357,8 @@ export async function onRunFailed(
         ),
       );
   }
+  const { handleOrchestrationChildFailed } = await import("../chat/repo");
+  await handleOrchestrationChildFailed(teamId, runId, error).catch(() => undefined);
   await notifyRunTelegram(
     teamId,
     runId,
@@ -355,6 +392,71 @@ export function onRunProgress(
     completedSteps,
     stepCount,
   });
+  void notifyTelegramProgress(teamId, runId, completedSteps, stepCount).catch(() => undefined);
+}
+
+async function notifyTelegramProgress(
+  teamId: string,
+  runId: string,
+  completedSteps: number,
+  stepCount: number,
+) {
+  const { notifyRunProgressTelegram } = await import("../channels/service");
+  const latest = await latestRunMessageSummary(runId);
+  await notifyRunProgressTelegram(teamId, runId, {
+    completedSteps,
+    stepCount,
+    latest,
+  });
+}
+
+async function latestRunMessageSummary(runId: string) {
+  const messages = await db
+    .select({
+      id: schema.runMessages.id,
+      runId: schema.runMessages.runId,
+      seq: schema.runMessages.seq,
+      type: schema.runMessages.type,
+      tool: schema.runMessages.tool,
+      content: schema.runMessages.content,
+      input: schema.runMessages.input,
+      output: schema.runMessages.output,
+      createdAt: schema.runMessages.createdAt,
+    })
+    .from(schema.runMessages)
+    .where(eq(schema.runMessages.runId, runId))
+    .orderBy(desc(schema.runMessages.seq))
+    .limit(20);
+  if (!messages.length) return null;
+  const steps = runMessagesToSteps(messages.reverse());
+  const [step] = steps.slice(-1);
+  if (!step) return null;
+  if (step.actor.kind === "tool") {
+    const [call] = step.toolCalls;
+    const verb = step.status === "running" ? "Running" : "Completed";
+    return `${verb} ${step.actor.name}${toolRequestLabel(call?.request)}`;
+  }
+  if ("error" in step && step.error) return compactProgressText(step.error.message);
+  if ("reasoning" in step && step.reasoning) return compactProgressText(step.reasoning);
+  return compactProgressText(step.summary);
+}
+
+function compactProgressText(value: string) {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= 180) return clean;
+  return `${clean.slice(0, 179).trimEnd()}…`;
+}
+
+function toolRequestLabel(input: unknown) {
+  if (!input || typeof input !== "object") return "";
+  const record = input as Record<string, unknown>;
+  const label =
+    typeof record.query === "string"
+      ? record.query
+      : typeof record.url === "string"
+        ? record.url
+        : null;
+  return label ? ` · ${compactProgressText(label)}` : "";
 }
 
 export async function onRunWaitingApproval(

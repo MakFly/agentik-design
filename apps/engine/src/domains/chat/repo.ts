@@ -2,6 +2,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
+import { hasLiveDaemonForAgent } from "../../infra/daemon-liveness";
 
 const { chatSessions, chatMessages, agents, runs } = schema;
 
@@ -85,6 +86,7 @@ export async function sendChatMessage(
   teamId: string,
   sessionId: string,
   content: string,
+  opts: { parentRunId?: string | null; inputMeta?: Record<string, unknown> } = {},
 ): Promise<{ taskId: string } | null> {
   const [session] = await db
     .select({ agentId: chatSessions.agentId })
@@ -106,7 +108,8 @@ export async function sendChatMessage(
     status: "queued",
     kind: "chat",
     chatSessionId: sessionId,
-    input: { prompt, rawPrompt: content },
+    parentRunId: opts.parentRunId ?? null,
+    input: { prompt, rawPrompt: content, ...(opts.inputMeta ?? {}) },
   });
   await db.update(chatSessions).set({ updatedAt: sql`now()` }).where(eq(chatSessions.id, sessionId));
   hub.publish(teamId, { kind: "run", action: "created", runId: runId });
@@ -156,20 +159,34 @@ function compactPromptText(value: string, max: number) {
 
 export async function sendAgentChatTurn(
   teamId: string,
-  input: { agentId: string; content: string; creatorId: string; title?: string },
+  input: {
+    agentId: string;
+    content: string;
+    creatorId: string;
+    title?: string;
+    parentRunId?: string | null;
+    inputMeta?: Record<string, unknown>;
+  },
 ): Promise<
   | { runId: string; chatSessionId: string }
-  | { error: "not_found" | "not_published" | "empty_input" }
+  | { error: "not_found" | "not_published" | "empty_input" | "no_live_daemon" }
 > {
   const content = input.content.trim();
   if (!content) return { error: "empty_input" };
   const [agent] = await db
-    .select({ id: agents.id, liveVersionId: agents.liveVersionId })
+    .select({
+      id: agents.id,
+      liveVersionId: agents.liveVersionId,
+      runtimeKind: agents.runtimeKind,
+      preferredDaemonId: agents.preferredDaemonId,
+    })
     .from(agents)
     .where(and(eq(agents.id, input.agentId), eq(agents.teamId, teamId)))
     .limit(1);
   if (!agent) return { error: "not_found" };
   if (!agent.liveVersionId) return { error: "not_published" };
+  // Fail fast: with no live daemon to claim it, the run would sit `queued` forever.
+  if (!(await hasLiveDaemonForAgent(teamId, agent))) return { error: "no_live_daemon" };
 
   const creatorId = input.creatorId.trim();
   const [existing] = await db
@@ -200,9 +217,217 @@ export async function sendAgentChatTurn(
     chatSessionId = created!.id;
   }
 
-  const sent = await sendChatMessage(teamId, chatSessionId, content);
+  const sent = await sendChatMessage(teamId, chatSessionId, content, {
+    parentRunId: input.parentRunId,
+    inputMeta: input.inputMeta,
+  });
   if (!sent) return { error: "not_found" };
   return { runId: sent.taskId, chatSessionId };
+}
+
+export type OrchestrationStepRecord = {
+  index: number;
+  agentId: string;
+  agentName: string;
+  prompt: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  childRunId?: string;
+  result?: string;
+  error?: string;
+};
+
+export type OrchestrationPlanRecord = {
+  goal: string;
+  source: string;
+  actorId: string;
+  threadKey: string;
+  currentIndex: number;
+  steps: OrchestrationStepRecord[];
+};
+
+export async function createOrchestrationRun(
+  teamId: string,
+  plan: OrchestrationPlanRecord,
+) {
+  const runId = genId("run");
+  await db.insert(runs).values({
+    id: runId,
+    teamId,
+    executor: "orchestrator",
+    status: "running",
+    trigger: "manual",
+    kind: "orchestration",
+    input: { orchestration: plan },
+    stepCount: plan.steps.length,
+    completedSteps: 0,
+  });
+  await appendOrchestrationMessage(teamId, runId, `Orchestration started: ${plan.goal}`);
+  hub.publish(teamId, { kind: "run", action: "created", runId });
+  return { runId };
+}
+
+export async function startNextOrchestrationStep(teamId: string, parentRunId: string) {
+  const [parent] = await db
+    .select({ input: runs.input, status: runs.status })
+    .from(runs)
+    .where(and(eq(runs.id, parentRunId), eq(runs.teamId, teamId)))
+    .limit(1);
+  if (!parent || !["queued", "running"].includes(parent.status)) return null;
+  const plan = orchestrationPlanFromInput(parent.input);
+  if (!plan) return null;
+  const next = plan.steps.find((step) => step.status === "pending");
+  if (!next) {
+    await db
+      .update(runs)
+      .set({ status: "succeeded", completedSteps: plan.steps.length, endedAt: sql`now()` })
+      .where(and(eq(runs.id, parentRunId), eq(runs.teamId, teamId)));
+    await appendOrchestrationMessage(teamId, parentRunId, "Orchestration completed.");
+    hub.publish(teamId, { kind: "run", action: "succeeded", runId: parentRunId });
+    return { done: true as const };
+  }
+
+  const turn = await sendAgentChatTurn(teamId, {
+    agentId: next.agentId,
+    content: next.prompt,
+    creatorId: `orchestration:${parentRunId}:agent:${next.agentId}`,
+    title: `Orchestration · ${next.agentName}`,
+    parentRunId,
+    inputMeta: { orchestration: { parentRunId, stepIndex: next.index, goal: plan.goal } },
+  });
+  if ("error" in turn) {
+    next.status = "failed";
+    next.error = turn.error;
+    await persistOrchestrationPlan(teamId, parentRunId, plan, "failed");
+    return { error: turn.error as string };
+  }
+
+  next.status = "running";
+  next.childRunId = turn.runId;
+  plan.currentIndex = next.index;
+  await persistOrchestrationPlan(teamId, parentRunId, plan, "running");
+  await appendOrchestrationMessage(
+    teamId,
+    parentRunId,
+    `Step ${next.index + 1}/${plan.steps.length} started: ${next.agentName}`,
+    { childRunId: turn.runId, agentId: next.agentId },
+  );
+  return { done: false as const, childRunId: turn.runId, step: next };
+}
+
+export async function handleOrchestrationChildCompleted(
+  teamId: string,
+  childRunId: string,
+  result: string,
+) {
+  const parent = await parentRunForChild(teamId, childRunId);
+  if (!parent) return null;
+  const plan = orchestrationPlanFromInput(parent.input);
+  if (!plan) return null;
+  const step = plan.steps.find((item) => item.childRunId === childRunId);
+  if (!step) return null;
+  step.status = "succeeded";
+  step.result = result;
+  await persistOrchestrationPlan(teamId, parent.id, plan, "running", completedCount(plan));
+  await appendOrchestrationMessage(
+    teamId,
+    parent.id,
+    `Step ${step.index + 1}/${plan.steps.length} completed: ${step.agentName}`,
+    { childRunId },
+  );
+  return startNextOrchestrationStep(teamId, parent.id);
+}
+
+export async function handleOrchestrationChildFailed(
+  teamId: string,
+  childRunId: string,
+  error: string,
+) {
+  const parent = await parentRunForChild(teamId, childRunId);
+  if (!parent) return null;
+  const plan = orchestrationPlanFromInput(parent.input);
+  if (!plan) return null;
+  const step = plan.steps.find((item) => item.childRunId === childRunId);
+  if (step) {
+    step.status = "failed";
+    step.error = error;
+  }
+  await persistOrchestrationPlan(teamId, parent.id, plan, "failed", completedCount(plan), error);
+  await appendOrchestrationMessage(teamId, parent.id, `Orchestration failed: ${error}`, {
+    childRunId,
+  });
+  hub.publish(teamId, { kind: "run", action: "failed", runId: parent.id });
+  return { parentRunId: parent.id };
+}
+
+async function parentRunForChild(teamId: string, childRunId: string) {
+  const [child] = await db
+    .select({ parentRunId: runs.parentRunId })
+    .from(runs)
+    .where(and(eq(runs.id, childRunId), eq(runs.teamId, teamId)))
+    .limit(1);
+  if (!child?.parentRunId) return null;
+  const [parent] = await db
+    .select({ id: runs.id, input: runs.input })
+    .from(runs)
+    .where(and(eq(runs.id, child.parentRunId), eq(runs.teamId, teamId)))
+    .limit(1);
+  return parent ?? null;
+}
+
+async function persistOrchestrationPlan(
+  teamId: string,
+  runId: string,
+  plan: OrchestrationPlanRecord,
+  status: typeof runs.$inferInsert.status,
+  completedSteps = completedCount(plan),
+  error?: string,
+) {
+  await db
+    .update(runs)
+    .set({
+      status,
+      input: { orchestration: plan },
+      completedSteps,
+      ...(error ? { error } : {}),
+      ...(status === "succeeded" || status === "failed" ? { endedAt: sql`now()` } : {}),
+    })
+    .where(and(eq(runs.id, runId), eq(runs.teamId, teamId)));
+  hub.publish(teamId, { kind: "run.progress", runId, completedSteps, stepCount: plan.steps.length });
+}
+
+async function appendOrchestrationMessage(
+  teamId: string,
+  runId: string,
+  content: string,
+  input?: Record<string, unknown>,
+) {
+  const rows = (await db.execute(sql`
+    SELECT coalesce(max(seq) + 1, 0)::int AS "nextSeq"
+    FROM ${schema.runMessages}
+    WHERE run_id = ${runId}
+  `)) as unknown as Array<{ nextSeq: number }>;
+  const seq = rows[0]?.nextSeq ?? 0;
+  await db.insert(schema.runMessages).values({
+    id: genId("amsg"),
+    runId,
+    seq,
+    type: "text",
+    tool: "orchestrator",
+    content,
+    input: input ?? null,
+  });
+}
+
+function orchestrationPlanFromInput(input: unknown): OrchestrationPlanRecord | null {
+  const root = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const plan = root.orchestration;
+  if (!plan || typeof plan !== "object") return null;
+  const record = plan as OrchestrationPlanRecord;
+  return Array.isArray(record.steps) ? record : null;
+}
+
+function completedCount(plan: OrchestrationPlanRecord) {
+  return plan.steps.filter((step) => step.status === "succeeded").length;
 }
 
 /**

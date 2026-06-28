@@ -67,6 +67,27 @@ describe("run schema", () => {
     });
     expect(row.agentId).toBe("agt_1");
   });
+
+  test("accepts orchestrator executor with parent metadata", () => {
+    const row = run.parse({
+      id: "run_parent",
+      teamId: "team_1",
+      executor: "orchestrator",
+      workflowId: null,
+      versionId: null,
+      status: "running",
+      trigger: "manual",
+      payload: null,
+      error: null,
+      startedAt: "2026-06-27T00:00:00.000Z",
+      endedAt: null,
+      durationMs: null,
+      kind: "orchestration",
+      input: { orchestration: { goal: "research then implement" } },
+    });
+    expect(row.executor).toBe("orchestrator");
+    expect(row.kind).toBe("orchestration");
+  });
 });
 
 describe("daemon-protocol", () => {

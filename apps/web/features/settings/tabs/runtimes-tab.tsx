@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { qk } from "@/lib/api/queryKeys";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProviderKeysSection } from "./provider-keys-section";
+import { ConnectedAccountsSection } from "./connected-accounts-section";
 import {
   AddComputerButton,
   ConnectRemoteDialog,
@@ -112,7 +113,10 @@ export function RuntimesTab({
       <div className="flex flex-col gap-5">
         {fixedSection === "runtimes" ? runtimesBody : null}
         {fixedSection === "providers" ? (
-          <ProviderKeysSection team={team} />
+          <>
+            <ProviderKeysSection team={team} />
+            <ConnectedAccountsSection team={team} />
+          </>
         ) : null}
       </div>
     );
@@ -138,8 +142,9 @@ export function RuntimesTab({
         {runtimesBody}
       </TabsContent>
 
-      <TabsContent value="providers" className="mt-0">
+      <TabsContent value="providers" className="mt-0 flex flex-col gap-5">
         <ProviderKeysSection team={team} />
+        <ConnectedAccountsSection team={team} />
       </TabsContent>
     </Tabs>
   );

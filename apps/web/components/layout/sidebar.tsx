@@ -73,6 +73,26 @@ export function AppSidebar({ team }: { team: string }) {
                     pathname === href || pathname.startsWith(`${href}/`);
                   const Icon = item.icon;
                   const count = badgeFor(item);
+
+                  if (item.comingSoon) {
+                    return (
+                      <SidebarMenuItem key={item.key}>
+                        <SidebarMenuButton
+                          disabled
+                          tooltip={`${item.label} — In progress`}
+                          className={MENU_BUTTON_CLASS}
+                          aria-disabled="true"
+                        >
+                          <Icon aria-hidden="true" />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                        <SidebarMenuBadge className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          In progress
+                        </SidebarMenuBadge>
+                      </SidebarMenuItem>
+                    );
+                  }
+
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton

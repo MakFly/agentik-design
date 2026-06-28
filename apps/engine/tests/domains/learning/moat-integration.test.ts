@@ -5,10 +5,10 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { genId } from "./infra/db/ids";
-import { resolveTeam } from "./domains/workflows/repo";
-import { createAgent, publishAgent } from "./domains/runs";
+import { db, schema } from "../../../src/infra/db/client";
+import { genId } from "../../../src/infra/db/ids";
+import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { createAgent, publishAgent } from "../../../src/domains/runs";
 import {
   applyRunReview,
   archiveMemory,
@@ -24,9 +24,9 @@ import {
   searchChatMemory,
   setRunReviewStatus,
   updateMemory,
-} from "./domains/learning/index";
-import { claimTask } from "./execution/daemon/repo";
-import { cancelRun, getRunDetail } from "./domains/runs";
+} from "../../../src/domains/learning/index";
+import { claimTask } from "../../../src/execution/daemon/repo";
+import { cancelRun, getRunDetail } from "../../../src/domains/runs";
 
 let dbUp = false;
 try {
@@ -38,6 +38,12 @@ try {
 if (!dbUp) console.warn("[moat-integration] no DB reachable — skipping integration tests");
 
 const d = dbUp ? describe : describe.skip;
+
+/** Narrow a publish result to the success shape (these tests never pin a daemon). */
+function published(res: Awaited<ReturnType<typeof publishAgent>>) {
+  if (!res || "error" in res) throw new Error(`expected published version, got ${JSON.stringify(res)}`);
+  return res;
+}
 
 d("Phase B — publishAgent writes immutable, monotonic versions", () => {
   const slug = `itest-b-${Date.now()}`;
@@ -61,9 +67,9 @@ d("Phase B — publishAgent writes immutable, monotonic versions", () => {
       tools: ["get_weather"],
       runtimeKind: "claude",
     });
-    expect(res?.version).toBe(1);
+    expect(published(res).version).toBe(1);
     const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)).limit(1);
-    expect(agent?.liveVersionId).toBe(res!.versionId);
+    expect(agent?.liveVersionId).toBe(published(res).versionId);
     // publish must sync the agent's runtime_kind to the version, or claimTask routes runs to the
     // wrong runtime (a claude agent would be claimed by an echo daemon).
     expect(agent?.runtimeKind).toBe("claude");
@@ -75,7 +81,7 @@ d("Phase B — publishAgent writes immutable, monotonic versions", () => {
 
   test("second publish → version 2 (monotonic, immutable history kept)", async () => {
     const res = await publishAgent(teamId, agentId, { instructions: "do v2" });
-    expect(res?.version).toBe(2);
+    expect(published(res).version).toBe(2);
     const versions = await listAgentVersions(teamId, agentId);
     expect(versions.map((v) => v.version)).toEqual([2, 1]); // desc; v1 still present
   });

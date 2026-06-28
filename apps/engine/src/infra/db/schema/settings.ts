@@ -32,6 +32,25 @@ export const providerKeys = pgTable(
   (t) => [unique("provider_keys_team_provider_unique").on(t.teamId, t.provider)],
 );
 
+/**
+ * Org-scoped runtime OAuth tokens (subscription auth, e.g. Codex via a ChatGPT
+ * plan). `secret` is an AES-256-GCM blob holding {access_token, refresh_token,
+ * id_token, account_id, expiresAtMs}. Refreshed engine-side before injection and
+ * materialized into the runtime's credential file (e.g. ~/.codex/auth.json).
+ */
+export const runtimeOauthTokens = pgTable(
+  "runtime_oauth_tokens",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    provider: text("provider").notNull(), // codex
+    secret: text("secret").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("runtime_oauth_tokens_team_provider_unique").on(t.teamId, t.provider)],
+);
+
 /* ── Bundle manager (install/provision agent CLIs on a daemon host) ───── */
 
 /**

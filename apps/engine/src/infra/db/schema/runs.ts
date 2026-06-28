@@ -5,6 +5,7 @@ import type {
   RiskLevel,
   RunReviewStatus,
   RunStatus,
+  RuntimeEventV2,
   StepStatus,
   TriggerKind,
 } from "@agentik/workflow-schema";
@@ -38,6 +39,8 @@ export const runs = pgTable("runs", {
   error: text("error"),
   /** Daemon run: agent that executes this run. Null for workflow runs. */
   agentId: text("agent_id"),
+  /** Orchestration run tree: null for root runs, set on child runs. */
+  parentRunId: text("parent_run_id"),
   /** Daemon run: product context when backing a project task. */
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   projectTaskId: text("project_task_id").references(() => projectTasks.id, { onDelete: "set null" }),
@@ -102,6 +105,27 @@ export const runMessages = pgTable(
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [unique("run_messages_run_seq_unique").on(t.runId, t.seq)],
+);
+
+/** Normalized append-only runtime/event ledger. This is the V2 source of truth;
+ *  run_messages remains as a read-compat layer while older runs migrate. */
+export const runEvents = pgTable(
+  "run_events",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    actor: jsonb("actor").notNull(),
+    toolCallId: text("tool_call_id"),
+    parentEventId: text("parent_event_id"),
+    payload: jsonb("payload").$type<RuntimeEventV2>().notNull(),
+    contractEvent: text("contract_event"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("run_events_run_seq_unique").on(t.runId, t.seq)],
 );
 
 /** A chat conversation with an agent. Each user turn spawns a `kind='chat'` daemon run. */

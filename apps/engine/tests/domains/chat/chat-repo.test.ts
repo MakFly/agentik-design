@@ -4,11 +4,11 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { genId } from "./infra/db/ids";
-import { resolveTeam } from "./domains/workflows/repo";
-import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "./domains/chat/repo";
-import { startTask, completeTask } from "./execution/daemon/service";
+import { db, schema } from "../../../src/infra/db/client";
+import { genId } from "../../../src/infra/db/ids";
+import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "../../../src/domains/chat/repo";
+import { startTask, completeTask } from "../../../src/execution/daemon/service";
 
 const { agents, runs, chatSessions, chatMessages, teams } = schema;
 
@@ -67,6 +67,31 @@ d("chat-spawns-task", () => {
     const view = await getChatSession(teamId, s.id);
     expect(view?.messages).toHaveLength(1);
     expect(view?.messages[0]).toMatchObject({ role: "user", content: "What is 2+2?" });
+  });
+
+  test("a chat task can be linked to an orchestration parent", async () => {
+    const s = (await createChatSession(teamId, { agentId }))!;
+    const parentRunId = genId("run");
+    await db.insert(runs).values({
+      id: parentRunId,
+      teamId,
+      executor: "orchestrator",
+      status: "running",
+      kind: "orchestration",
+      input: { orchestration: { goal: "parent" } },
+    });
+
+    const res = await sendChatMessage(teamId, s.id, "child work", {
+      parentRunId,
+      inputMeta: { orchestration: { stepIndex: 0 } },
+    });
+    const [task] = await db
+      .select({ parentRunId: runs.parentRunId, input: runs.input })
+      .from(runs)
+      .where(eq(runs.id, res!.taskId))
+      .limit(1);
+    expect(task?.parentRunId).toBe(parentRunId);
+    expect((task?.input as { orchestration?: { stepIndex?: number } }).orchestration?.stepIndex).toBe(0);
   });
 
   test("completing the task writes the assistant turn back into the session", async () => {

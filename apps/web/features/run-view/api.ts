@@ -14,6 +14,7 @@ export interface RunFilters {
 export interface RunDetail {
   run: Run;
   steps: Step[];
+  children?: RunChildSummary[];
   placement?: {
     runtimeKind: string;
     runtimeId: string | null;
@@ -33,6 +34,19 @@ export interface RunDetail {
     }>;
     tests: Array<{ name: string; status: string; output?: string }>;
   };
+}
+
+export interface RunChildSummary {
+  id: string;
+  parentRunId: string;
+  agentId: string | null;
+  agentName: string | null;
+  status: string;
+  kind: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  result: string | null;
+  error: string | null;
 }
 
 export function useRuns(team: string, filters: RunFilters = {}) {

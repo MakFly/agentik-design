@@ -5,7 +5,9 @@ import {
   daemonDisplayName,
   daemonRunToWeb,
   fallbackResultStep,
+  orchestrationRunToWeb,
   runMessageToStep,
+  runMessagesToSteps,
   workflowRunToRun,
   workflowStepToWebStep,
   type DaemonRunRowDb,
@@ -15,7 +17,9 @@ import {
 export type { WebRunStatus, DaemonRunRowDb, RunMsgRowDb } from "./mappers";
 export {
   daemonRunToWeb,
+  orchestrationRunToWeb,
   runMessageToStep,
+  runMessagesToSteps,
   workflowDetailToWeb,
 } from "./mappers";
 
@@ -210,7 +214,9 @@ export async function listRuns(
   const agentNames = await agentNameMap(teamId);
   const wfNames = await workflowNameMap(teamId);
   let items = rows.map((r) =>
-    r.executor === "daemon"
+    r.executor === "orchestrator"
+      ? orchestrationRunToWeb(r)
+      : r.executor === "daemon"
       ? daemonRunToWeb(r, r.agentId ? agentNames.get(r.agentId) : undefined)
       : workflowRunToRun(r, r.workflowId ? wfNames.get(r.workflowId) : undefined),
   );
@@ -228,6 +234,7 @@ export async function getRunDetail(teamId: string, id: string) {
     .where(and(eq(runs.id, id), eq(runs.teamId, teamId)))
     .limit(1);
   if (!run) return null;
+  const children = await childSummariesForRun(teamId, id);
   if (run.executor === "workflow") {
     const steps = await db
       .select()
@@ -244,6 +251,24 @@ export async function getRunDetail(teamId: string, id: string) {
       placement: undefined,
       artifacts: undefined,
       projectContext: undefined,
+      children,
+    };
+  }
+  if (run.executor === "orchestrator") {
+    const msgs = await db
+      .select()
+      .from(runMessages)
+      .where(eq(runMessages.runId, id))
+      .orderBy(runMessages.seq);
+    const steps = runMessagesToSteps(msgs, "Orchestrator");
+    const fallback = steps.length === 0 ? fallbackResultStep(run, "Orchestrator") : null;
+    return {
+      run: orchestrationRunToWeb(run),
+      steps: fallback ? [fallback] : steps,
+      placement: undefined,
+      artifacts: undefined,
+      projectContext: undefined,
+      children,
     };
   }
   const msgs = await db
@@ -256,7 +281,7 @@ export async function getRunDetail(teamId: string, id: string) {
   const projectContext = await projectContextForRun(run);
   const artifacts = artifactsFromRun(run);
   const placement = await placementForRun(run);
-  const steps = msgs.map((m) => runMessageToStep(m, name));
+  const steps = runMessagesToSteps(msgs, name);
   const fallback = steps.length === 0 ? fallbackResultStep(run, name) : null;
   return {
     run: daemonRunToWeb(run, name),
@@ -264,7 +289,42 @@ export async function getRunDetail(teamId: string, id: string) {
     ...(artifacts ? { artifacts } : {}),
     ...(placement ? { placement } : {}),
     ...(projectContext ? { projectContext } : {}),
+    children,
   };
+}
+
+async function childSummariesForRun(teamId: string, parentRunId: string) {
+  const rows = await db
+    .select()
+    .from(runs)
+    .where(and(eq(runs.teamId, teamId), eq(runs.parentRunId, parentRunId)))
+    .orderBy(runs.createdAt);
+  if (!rows.length) return [];
+  const names = await agentNameMap(teamId);
+  return rows.map((row) => ({
+    id: row.id,
+    parentRunId,
+    agentId: row.agentId,
+    agentName: row.agentId ? names.get(row.agentId) ?? row.agentId : null,
+    status: row.status,
+    kind: row.kind,
+    startedAt: row.startedAt ?? row.createdAt,
+    endedAt: row.endedAt,
+    result: resultSummary(row.result),
+    error: row.error,
+  }));
+}
+
+function resultSummary(result: unknown): string | null {
+  if (typeof result === "string") return result.trim() || null;
+  if (result && typeof result === "object") {
+    const record = result as Record<string, unknown>;
+    for (const key of ["result", "summary", "message"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return null;
 }
 
 async function agentNameMap(teamId: string): Promise<Map<string, string>> {

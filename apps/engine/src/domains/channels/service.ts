@@ -5,6 +5,7 @@ export {
 } from "./telegram/dispatch";
 export {
   notifyRunTelegram,
+  notifyRunProgressTelegram,
   sendRunTelegramAction,
   startRunTelegramTypingHeartbeat,
 } from "./telegram/notifications";

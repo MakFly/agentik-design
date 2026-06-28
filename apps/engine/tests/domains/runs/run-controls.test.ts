@@ -4,9 +4,9 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, ne, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { genId } from "./infra/db/ids";
-import { resolveTeam } from "./domains/workflows/repo";
+import { db, schema } from "../../../src/infra/db/client";
+import { genId } from "../../../src/infra/db/ids";
+import { resolveTeam } from "../../../src/domains/workflows/repo";
 import {
   approveRun,
   createAgent,
@@ -15,9 +15,9 @@ import {
   rejectRun,
   requestRunApproval,
   resumeRun,
-} from "./domains/runs";
-import { claimTask, registerDaemon } from "./execution/daemon/repo";
-import { requestDaemonTaskApproval } from "./execution/daemon/service";
+} from "../../../src/domains/runs";
+import { claimTask, registerDaemon } from "../../../src/execution/daemon/repo";
+import { requestDaemonTaskApproval } from "../../../src/execution/daemon/service";
 
 let dbUp = false;
 try {

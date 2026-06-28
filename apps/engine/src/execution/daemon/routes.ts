@@ -32,6 +32,12 @@ import {
   reportBundleStatus,
 } from "../bundle/repo";
 import { invokeMcpTool } from "../../domains/mcp/repo";
+import {
+  buildCodexAuthorizeUrl,
+  generateOauthState,
+  generatePkce,
+} from "../../infra/oauth";
+import { connectCodexFromCode } from "../../domains/settings/providers-repo";
 import { getRunDetail, listAgentRows } from "../../domains/runs";
 import { sendAgentChatTurn } from "../../domains/chat/repo";
 import { sendOrchestratedTurn } from "../../domains/chat/orchestrator";
@@ -174,7 +180,7 @@ daemon.post("/agents/:id/run", async (c) => {
     creatorId,
     title: "Agentik TUI",
   });
-  if ("error" in res) return c.json(res, 409);
+  if ("error" in res) return c.json(res, res.error === "no_live_daemon" ? 503 : 409);
   return c.json(res, 202);
 });
 
@@ -202,8 +208,57 @@ daemon.post("/orchestrator/turn", async (c) => {
     text: body.input ?? "",
     agentHintId: body.agentHintId ?? null,
   });
-  if (routed.kind === "error") return c.json(routed, 409);
+  if (routed.kind === "error")
+    return c.json(routed, routed.error === "no_live_daemon" ? 503 : 409);
   return c.json(routed, routed.kind === "run" ? 202 : 200);
+});
+
+/* ── Codex (ChatGPT) subscription OAuth — loopback flow run by the daemon ──
+ * The daemon binds a loopback port on a machine with a browser, captures the
+ * authorization code, and relays it here. Anthropic/OpenAI only allow loopback
+ * redirect URIs for these CLI client ids, so the engine cannot host the callback. */
+daemon.post("/oauth/codex/start", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    teamId?: string;
+    redirectUri?: string;
+  };
+  const teamId = await resolveDaemonTeam(auth(c), body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  if (!body.redirectUri) return c.json({ error: "invalid_body" }, 400);
+  const pkce = generatePkce();
+  const state = generateOauthState();
+  const authorizeUrl = buildCodexAuthorizeUrl({
+    redirectUri: body.redirectUri,
+    pkce,
+    state,
+  });
+  // The daemon holds state + verifier locally and checks state on the callback.
+  return c.json({ authorizeUrl, state, codeVerifier: pkce.codeVerifier });
+});
+
+daemon.post("/oauth/codex/exchange", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    teamId?: string;
+    code?: string;
+    redirectUri?: string;
+    codeVerifier?: string;
+  };
+  const teamId = await resolveDaemonTeam(auth(c), body.teamId);
+  if (!teamId) return c.json({ error: "forbidden" }, 403);
+  if (!body.code || !body.redirectUri || !body.codeVerifier) {
+    return c.json({ error: "invalid_body" }, 400);
+  }
+  try {
+    const res = await connectCodexFromCode({
+      teamId,
+      code: body.code,
+      redirectUri: body.redirectUri,
+      codeVerifier: body.codeVerifier,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: "exchange_failed", detail: String(err) }, 502);
+  }
 });
 
 daemon.post("/runs/:id/detail", async (c) => {

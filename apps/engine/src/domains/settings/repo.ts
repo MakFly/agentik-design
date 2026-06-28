@@ -11,8 +11,10 @@ import {
   listProviderKeys,
   SUPPORTED_PROVIDERS,
   isSupportedProvider,
+  getDecryptedProviderKey,
 } from "./providers-repo";
 import { recordAudit } from "../../infra/audit";
+import { env } from "../../infra/env";
 import { PROVIDER_MODELS } from "@agentik/workflow-schema";
 
 const { appUsers, teams, orgMembers, orgInvitations } = schema;
@@ -71,9 +73,22 @@ type TeamEnvironmentSettings = {
   activeId?: string;
 };
 
+/** Which model decides agent routing for free-form orchestrator turns. */
+type TeamRouterSettings = {
+  provider?: string;
+  model?: string;
+};
+
 type TeamSettingsJson = {
   providers?: TeamProviderSettings;
   environments?: TeamEnvironmentSettings;
+  router?: TeamRouterSettings;
+};
+
+/** Default agent router: fast, cheap Anthropic Haiku. Overridable per team. */
+const DEFAULT_ROUTER: Required<TeamRouterSettings> = {
+  provider: "anthropic",
+  model: "claude-haiku-4-5",
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -601,6 +616,52 @@ export async function updateProvidersPolicy(
     },
   });
   return getProvidersSettings(teamId);
+}
+
+/* ── Agent router (LLM-based agent selection) ──────────────────────────── */
+
+export async function getRouterSettings(teamId: string) {
+  const settings = await getTeamSettings(teamId);
+  const raw = settings.router ?? {};
+  const provider =
+    raw.provider && isSupportedProvider(raw.provider)
+      ? raw.provider
+      : DEFAULT_ROUTER.provider;
+  const model = raw.model?.trim() || DEFAULT_ROUTER.model;
+  return { provider, model };
+}
+
+export async function updateRouterSettings(
+  teamId: string,
+  actorId: string,
+  patch: { provider?: string; model?: string },
+) {
+  const role = await getMembership(actorId, teamId);
+  if (!canManageMembers(role)) return { error: "forbidden" as const };
+  if (patch.provider !== undefined && !isSupportedProvider(patch.provider)) {
+    return { error: "invalid_body" as const };
+  }
+  const settings = await getTeamSettings(teamId);
+  const router = { ...(settings.router ?? {}) };
+  if (patch.provider !== undefined) router.provider = patch.provider;
+  if (patch.model !== undefined) router.model = patch.model.trim();
+  await saveTeamSettings(teamId, { ...settings, router });
+  return getRouterSettings(teamId);
+}
+
+/**
+ * Resolve the router's {provider, model, apiKey} for a team, or null when no key
+ * is available (→ caller falls back to the heuristic router). Key priority:
+ * team BYOK key for the configured provider, then the engine's system OpenAI key.
+ */
+export async function resolveRouterCredentials(
+  teamId: string,
+): Promise<{ provider: string; model: string; apiKey: string } | null> {
+  const { provider, model } = await getRouterSettings(teamId);
+  let apiKey = await getDecryptedProviderKey(teamId, provider);
+  if (!apiKey && provider === "openai") apiKey = env.OPENAI_API_KEY ?? null;
+  if (!apiKey) return null;
+  return { provider, model, apiKey };
 }
 
 export async function testProviderConnection(

@@ -32,7 +32,7 @@ export interface ToolGrantRecord {
   rateCapPerMin?: number;
   requireApproval?: boolean;
 }
-export type RunExecutor = "workflow" | "daemon";
+export type RunExecutor = "workflow" | "daemon" | "orchestrator";
 export type RunMessageType = "text" | "thinking" | "tool_use" | "tool_result" | "error";
 
 /** Map legacy agent_tasks / daemon wire status to unified {@link RunStatus}. */
@@ -73,6 +73,8 @@ export type ChannelConnectionStatus = "setup" | "active" | "disabled" | "error";
 export type ChannelTransport = "polling" | "webhook";
 export type ChannelIdentityRole = "operator" | "viewer";
 export type ChannelMessageDirection = "inbound" | "outbound";
+/** How a channel binding listens in group chats: open to all, an allowlist, or off. */
+export type ChannelGroupPolicy = "open" | "allowlist" | "off";
 /**
  * Why a task ended in `failed`. Drives retry policy: `timeout`/`runtime_offline`/
  * `runtime_recovery` are retryable; `agent_error` is terminal. v1 only produces
@@ -85,4 +87,3 @@ export type OrgRole = "owner" | "admin" | "engineer" | "operator" | "viewer";
 export type MemoryEventAction = "create" | "update" | "archive" | "restore";
 export type BundleAction = "install" | "upgrade" | "uninstall";
 export type BundleCommandStatus = "queued" | "running" | "done" | "failed";
-

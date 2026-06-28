@@ -1,7 +1,18 @@
 import { listAgentRows } from "../runs";
-import { sendAgentChatTurn } from "./repo";
+import { getRoster } from "../agents";
+import {
+  createOrchestrationRun,
+  sendAgentChatTurn,
+  startNextOrchestrationStep,
+  type OrchestrationPlanRecord,
+} from "./repo";
+import { resolveRouterCredentials } from "../settings/repo";
+import { routeAgentWithLlm } from "../../infra/llm";
 
 type AgentRow = Awaited<ReturnType<typeof listAgentRows>>[number];
+
+/** Minimum LLM confidence to auto-route; below this we fall back to the heuristic. */
+const ROUTER_MIN_CONFIDENCE = 0.6;
 
 export type OrchestratorSurface = "telegram" | "tui" | "web";
 
@@ -12,6 +23,7 @@ export type OrchestratorTurnInput = {
   threadKey: string;
   text: string;
   agentHintId?: string | null;
+  forceOrchestration?: boolean;
 };
 
 export type OrchestratorTurnResult =
@@ -24,11 +36,21 @@ export type OrchestratorTurnResult =
       confidence: number;
     }
   | {
+      kind: "orchestration";
+      runId: string;
+      childRunId?: string;
+      plan: OrchestrationPlanRecord;
+      reply: string;
+    }
+  | {
       kind: "clarify";
       question: string;
       choices: Array<{ agentId: string; handle: string; label: string }>;
     }
-  | { kind: "error"; error: "empty_input" | "no_published_agents" | "agent_unavailable" };
+  | {
+      kind: "error";
+      error: "empty_input" | "no_published_agents" | "agent_unavailable" | "no_live_daemon";
+    };
 
 export async function sendOrchestratedTurn(
   input: OrchestratorTurnInput,
@@ -41,7 +63,29 @@ export async function sendOrchestratedTurn(
   );
   if (!agents.length) return { kind: "error", error: "no_published_agents" };
 
-  const decision = chooseAgent(agents, text, input.agentHintId);
+  // Orchestration-native narrowing: when an orchestrator is in play, route within its
+  // roster. Additive — with no orchestrator (or an empty roster) candidateAgents === agents,
+  // so routing is byte-identical to before.
+  const candidateAgents = await resolveCandidateAgents(
+    input.teamId,
+    agents,
+    input.agentHintId,
+  );
+
+  const plan = maybeBuildOrchestrationPlan(candidateAgents, text, input);
+  if (plan) {
+    const parent = await createOrchestrationRun(input.teamId, plan);
+    const first = await startNextOrchestrationStep(input.teamId, parent.runId);
+    return {
+      kind: "orchestration",
+      runId: parent.runId,
+      childRunId: first && "childRunId" in first ? first.childRunId : undefined,
+      plan,
+      reply: `Orchestration started with ${plan.steps.length} steps.`,
+    };
+  }
+
+  const decision = await chooseAgent(candidateAgents, text, input.agentHintId, input.teamId);
   if (decision.kind === "clarify") return decision;
 
   const turn = await sendAgentChatTurn(input.teamId, {
@@ -50,7 +94,11 @@ export async function sendOrchestratedTurn(
     creatorId: `system:${input.surface}:${input.threadKey}:agent:${decision.agent.id}`,
     title: `${input.surface} · ${decision.agent.name}`,
   });
-  if ("error" in turn) return { kind: "error", error: "agent_unavailable" };
+  if ("error" in turn)
+    return {
+      kind: "error",
+      error: turn.error === "no_live_daemon" ? "no_live_daemon" : "agent_unavailable",
+    };
   return {
     kind: "run",
     runId: turn.runId,
@@ -61,17 +109,106 @@ export async function sendOrchestratedTurn(
   };
 }
 
-function chooseAgent(
+/**
+ * Pick the agent set to route over. If the hint resolves to a flagged orchestrator (or
+ * exactly one published orchestrator exists), narrow to that orchestrator's published
+ * roster; otherwise return every published agent — identical to pre-orchestration routing.
+ */
+async function resolveCandidateAgents(
+  teamId: string,
+  agents: AgentRow[],
+  hintId: string | null | undefined,
+): Promise<AgentRow[]> {
+  const orchestrators = agents.filter((agent) => agent.isOrchestrator);
+  if (!orchestrators.length) return agents;
+  const hinted = hintId ? agents.find((agent) => agent.id === hintId) : null;
+  const orchestrator =
+    hinted && hinted.isOrchestrator
+      ? hinted
+      : orchestrators.length === 1
+        ? orchestrators[0]!
+        : null;
+  if (!orchestrator) return agents;
+
+  const roster = await getRoster(teamId, orchestrator.id);
+  if (!roster.length) return agents;
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const rosterAgents = roster
+    .map((entry) => byId.get(entry.agentId))
+    .filter((agent): agent is AgentRow => Boolean(agent));
+  return rosterAgents.length ? rosterAgents : agents;
+}
+
+function maybeBuildOrchestrationPlan(
   agents: AgentRow[],
   text: string,
-  hintId?: string | null,
-):
+  input: OrchestratorTurnInput,
+): OrchestrationPlanRecord | null {
+  if (agents.length < 2) return null;
+  const wantsOrchestration =
+    input.forceOrchestration ||
+    /\b(orchestr|multi[-\s]?agent|plusieurs agents|puis|ensuite|apres|après|then|and then)\b/i.test(text);
+  if (!wantsOrchestration) return null;
+
+  const segments = splitGoalIntoSteps(text);
+  const selected: OrchestrationPlanRecord["steps"] = [];
+  const used = new Set<string>();
+  for (const [index, prompt] of segments.entries()) {
+    const lower = normalizeText(prompt);
+    const candidates = agents
+      .filter((agent) => !used.has(agent.id))
+      .map((agent) => ({ agent, score: scoreAgent(agent, lower, input.agentHintId) }))
+      .sort((a, b) => b.score - a.score);
+    const picked = candidates[0]?.agent ?? agents.find((agent) => !used.has(agent.id));
+    if (!picked) break;
+    used.add(picked.id);
+    selected.push({
+      index,
+      agentId: picked.id,
+      agentName: picked.name,
+      prompt: prompt.trim(),
+      status: "pending",
+    });
+  }
+
+  if (selected.length < 2) return null;
+  return {
+    goal: text,
+    source: input.surface,
+    actorId: input.actorId,
+    threadKey: input.threadKey,
+    currentIndex: -1,
+    steps: selected,
+  };
+}
+
+function splitGoalIntoSteps(text: string) {
+  const normalized = text
+    .replace(/^\/?orchestrate\s+/i, "")
+    .split(/\b(?:puis|ensuite|apres|après|then|and then)\b|[;]+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (normalized.length >= 2) return normalized.slice(0, 6);
+  return [
+    `Analyze and plan: ${text}`,
+    `Execute the next concrete recommendation from the analysis: ${text}`,
+  ];
+}
+
+type RouteResult =
   | { kind: "run"; agent: AgentRow; reason: string; confidence: number }
   | {
       kind: "clarify";
       question: string;
       choices: Array<{ agentId: string; handle: string; label: string }>;
-    } {
+    };
+
+async function chooseAgent(
+  agents: AgentRow[],
+  text: string,
+  hintId: string | null | undefined,
+  teamId: string,
+): Promise<RouteResult> {
   if (agents.length === 1) {
     return {
       kind: "run",
@@ -79,6 +216,33 @@ function chooseAgent(
       reason: "only published agent",
       confidence: 1,
     };
+  }
+
+  // LLM router (BYOK). On any miss — no key, low confidence, timeout, refusal —
+  // we drop through to the heuristic below, so routing never hard-depends on the LLM.
+  const cred = await resolveRouterCredentials(teamId);
+  if (cred) {
+    const decision = await routeAgentWithLlm({
+      ...cred,
+      agents: agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        goal: a.goal,
+      })),
+      text,
+    });
+    if (decision && decision.confidence >= ROUTER_MIN_CONFIDENCE) {
+      const agent = agents.find((a) => a.id === decision.agentId);
+      if (agent) {
+        return {
+          kind: "run",
+          agent,
+          reason: `llm: ${decision.reason}`,
+          confidence: decision.confidence,
+        };
+      }
+    }
   }
 
   const lower = normalizeText(text);

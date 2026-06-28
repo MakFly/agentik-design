@@ -9,3 +9,4 @@ export * from "./channels";
 export * from "./learning";
 export * from "./auth";
 export * from "./audit";
+export * from "./signals";

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/client";
 import { qk } from "@/lib/api/queryKeys";
 import type { AgentConfig, AgentId, RunId } from "@/types/domain";
+import type { AgentRow } from "@/features/agent-registry/types";
 import type { DraftIdentity } from "./validation";
 import type { SystemInfo } from "@/features/runtimes/types";
 
@@ -28,12 +29,17 @@ export function useRuntimeSystem(team: string) {
 export interface CreateAgentResult {
   id: AgentId;
   draftVersionId: string;
+  /** Present when `config` was sent — the server create+publishes atomically. */
+  version?: number;
 }
+
+/** Body for POST /agents. When `config` is present the server create+publishes in one call. */
+export type CreateAgentBody = DraftIdentity & { tags?: string[]; config?: AgentConfig };
 
 export function useCreateAgent(team: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: DraftIdentity & { tags?: string[] }) =>
+    mutationFn: (body: CreateAgentBody) =>
       apiFetch<CreateAgentResult>("/agents", {
         method: "POST",
         team,
@@ -41,6 +47,35 @@ export function useCreateAgent(team: string) {
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.agents.all(team) }),
+  });
+}
+
+/** PATCH partial identity (+ isOrchestrator + config) on an existing agent. */
+export function useUpdateAgent(team: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, patch }: { agentId: AgentId; patch: Partial<DraftIdentity> & { config?: AgentConfig } }) =>
+      apiFetch<AgentRow>(`/agents/${agentId}`, { method: "PATCH", team, body: patch }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: qk.agents.all(team) });
+      qc.invalidateQueries({ queryKey: qk.agents.detail(team, vars.agentId) });
+    },
+  });
+}
+
+/** Agent detail carrying the editable config (edit-mode load). Identity avatar +
+ * isOrchestrator now live on AgentRow via the Agent model. */
+export type AgentEditDetail = AgentRow & { config?: AgentConfig };
+
+/**
+ * Load an agent for the builder in edit mode. Reads the existing GET /agents/:id;
+ * the rework extends that row with `config` so the builder can hydrate without a
+ * separate version fetch.
+ */
+export function useAgentForEdit(team: string, agentId: string) {
+  return useQuery({
+    queryKey: qk.agents.detail(team, agentId),
+    queryFn: ({ signal }) => apiFetch<AgentEditDetail>(`/agents/${agentId}`, { team, signal }),
   });
 }
 

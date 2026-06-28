@@ -223,6 +223,8 @@ export async function executeCommand(
           reply:
             run.error === "not_published"
               ? "This agent is not published yet."
+              : run.error === "no_live_daemon"
+                ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
               : run.error === "empty_input"
                 ? 'Usage: /run agent:<agentId> "what should the agent do?"'
               : `Could not start agent: ${run.error}`,
@@ -264,6 +266,8 @@ export async function executeCommand(
           reply:
             run.error === "not_published"
               ? "This agent is not published yet."
+              : run.error === "no_live_daemon"
+                ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
               : run.error === "empty_input"
                 ? 'Usage: /run @agent_handle "what should the agent do?"'
               : `Could not start agent: ${run.error}`,
@@ -276,6 +280,47 @@ export async function executeCommand(
         runId: run.runId,
       };
     }
+    case "orchestrate": {
+      if (!command.input)
+        return {
+          ok: false,
+          reply: 'Usage: /orchestrate "first step puis second step"',
+        };
+      const routed = await sendOrchestratedTurn({
+        teamId: connection.teamId,
+        surface: "telegram",
+        actorId: identity.externalUserId,
+        threadKey: `${connection.id}:${identity.externalChatId}:${identity.externalUserId}`,
+        text: command.input,
+        agentHintId: identity.activeAgentId,
+        forceOrchestration: true,
+      });
+      if (routed.kind === "orchestration") {
+        return {
+          ok: true,
+          reply: [
+            `Orchestration started (${routed.plan.steps.length} steps)`,
+            routed.childRunId ? `Active child: ${routed.childRunId}` : null,
+            `Open: ${await webRunUrl(connection.teamId, routed.runId)}`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          runId: routed.runId,
+        };
+      }
+      if (routed.kind === "run") {
+        const placement = await getAgentPlacementLabel(connection.teamId, routed.agent.id);
+        return {
+          ok: true,
+          reply: startRunReply(routed.agent.name, placement, await webRunUrl(connection.teamId, routed.runId)),
+          runId: routed.runId,
+        };
+      }
+      if (routed.kind === "clarify") {
+        return { ok: true, reply: clarifyAgentReply(routed.question, routed.choices) };
+      }
+      return { ok: false, reply: "Could not start an orchestration." };
+    }
     case "freeChat": {
       const routed = await sendOrchestratedTurn({
         teamId: connection.teamId,
@@ -285,6 +330,19 @@ export async function executeCommand(
         text: command.input,
         agentHintId: identity.activeAgentId,
       });
+      if (routed.kind === "orchestration") {
+        return {
+          ok: true,
+          reply: [
+            `Orchestration started (${routed.plan.steps.length} steps)`,
+            routed.childRunId ? `Active child: ${routed.childRunId}` : null,
+            `Open: ${await webRunUrl(connection.teamId, routed.runId)}`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          runId: routed.runId,
+        };
+      }
       if (routed.kind === "run") {
         await setActiveAgent(identity.id, routed.agent.id);
         const placement = await getAgentPlacementLabel(connection.teamId, routed.agent.id);
@@ -302,7 +360,9 @@ export async function executeCommand(
         reply:
           routed.error === "no_published_agents"
             ? "No published agent is available yet."
-            : "Could not start an agent for this message.",
+            : routed.error === "no_live_daemon"
+              ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
+              : "Could not start an agent for this message.",
       };
     }
     case "runTask": {

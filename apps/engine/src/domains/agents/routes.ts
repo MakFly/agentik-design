@@ -3,16 +3,23 @@ import {
   requirePermission,
   type AuthVars,
 } from "../../app/middleware/auth";
+import { jsonValidationError, parseJsonBody } from "../../infra/validation";
 import {
+  AgentPublishError,
   createAgent,
   createTestTask,
   deleteAgent,
+  getAgentGraph,
   getAgentRow,
   getAgentTaskSnapshot,
+  getRoster,
   listAgentRows,
   publishAgent,
   runAgent,
+  setRoster,
+  updateAgent,
 } from "./repo";
+import { createAgentBody, rosterBody, updateAgentBody } from "./schemas";
 
 export const agentsRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -21,16 +28,9 @@ agentsRoutes.get("/agents", async (c) => {
   return c.json({ items, nextCursor: null, total: items.length });
 });
 
-agentsRoutes.get("/agents/:id", async (c) => {
-  const agent = await getAgentRow(c.get("teamId"), c.req.param("id"));
-  if (!agent) return c.json({ error: "not_found" }, 404);
-  return c.json(agent);
-});
-
-agentsRoutes.delete("/agents/:id", requirePermission("agent:delete"), async (c) => {
-  const ok = await deleteAgent(c.get("teamId"), c.req.param("id"));
-  if (!ok) return c.json({ error: "not_found" }, 404);
-  return c.json({ ok: true });
+// Static path — must precede "/agents/:id" so it is not captured as an id.
+agentsRoutes.get("/agents/graph", async (c) => {
+  return c.json(await getAgentGraph(c.get("teamId")));
 });
 
 agentsRoutes.get("/agent-task-snapshot", async (c) => {
@@ -38,20 +38,52 @@ agentsRoutes.get("/agent-task-snapshot", async (c) => {
 });
 
 agentsRoutes.post("/agents", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as {
-    name?: string;
-    role?: string;
-    goal?: string;
-    tags?: string[];
-  } | null;
-  if (!body?.name) return c.json({ error: "invalid_body" }, 400);
-  const res = await createAgent(c.get("teamId"), {
-    name: body.name,
-    role: body.role,
-    goal: body.goal,
-    tags: body.tags,
-  });
-  return c.json(res, 201);
+  const parsed = parseJsonBody(createAgentBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  try {
+    const res = await createAgent(c.get("teamId"), parsed.data);
+    return c.json(res, 201);
+  } catch (err) {
+    if (err instanceof AgentPublishError) {
+      return c.json({ error: err.reason }, err.reason === "daemon_not_found" ? 404 : 409);
+    }
+    throw err;
+  }
+});
+
+agentsRoutes.get("/agents/:id", async (c) => {
+  const agent = await getAgentRow(c.get("teamId"), c.req.param("id"));
+  if (!agent) return c.json({ error: "not_found" }, 404);
+  return c.json(agent);
+});
+
+agentsRoutes.patch("/agents/:id", requirePermission("agent:update"), async (c) => {
+  const parsed = parseJsonBody(updateAgentBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const agent = await updateAgent(c.get("teamId"), c.req.param("id"), parsed.data);
+  if (!agent) return c.json({ error: "not_found" }, 404);
+  return c.json(agent);
+});
+
+agentsRoutes.delete("/agents/:id", requirePermission("agent:delete"), async (c) => {
+  const res = await deleteAgent(c.get("teamId"), c.req.param("id"));
+  if (!res) return c.json({ error: "not_found" }, 404);
+  return c.json({ ok: true, ...res });
+});
+
+agentsRoutes.get("/agents/:id/subagents", async (c) => {
+  const subagents = await getRoster(c.get("teamId"), c.req.param("id"));
+  return c.json({ subagents });
+});
+
+agentsRoutes.put("/agents/:id/subagents", requirePermission("agent:update"), async (c) => {
+  const parsed = parseJsonBody(rosterBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await setRoster(c.get("teamId"), c.req.param("id"), parsed.data.subagents);
+  if ("error" in res) {
+    return c.json({ error: res.error }, res.error === "parent_not_found" ? 404 : 400);
+  }
+  return c.json({ subagents: res.roster });
 });
 
 agentsRoutes.post("/agents/:id/publish", async (c) => {
@@ -77,7 +109,10 @@ agentsRoutes.post("/agents/:id/run", requirePermission("run:run"), async (c) => 
   const res = await runAgent(c.get("teamId"), c.req.param("id"), body.input ?? "");
   if (!res) return c.json({ error: "not_found" }, 404);
   if ("error" in res) {
-    return c.json(res, res.error === "spend_limit_exceeded" ? 402 : 409);
+    return c.json(
+      res,
+      res.error === "spend_limit_exceeded" ? 402 : res.error === "no_live_daemon" ? 503 : 409,
+    );
   }
   return c.json(res, 202);
 });

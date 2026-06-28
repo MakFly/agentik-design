@@ -29,7 +29,7 @@ export type StepStatus = z.infer<typeof stepStatus>;
 export const triggerKind = z.enum(["manual", "webhook", "schedule", "api"]);
 export type TriggerKind = z.infer<typeof triggerKind>;
 
-export const runExecutor = z.enum(["workflow", "daemon"]);
+export const runExecutor = z.enum(["workflow", "daemon", "orchestrator"]);
 export type RunExecutor = z.infer<typeof runExecutor>;
 
 /** Daemon-side agent task status (apps/engine/src/db/schema.ts). */
@@ -114,6 +114,7 @@ export const run = z.object({
   stepCount: z.number().int().default(0),
   completedSteps: z.number().int().default(0),
   agentId: z.string().nullable().optional(),
+  parentRunId: z.string().nullable().optional(),
   projectId: z.string().nullable().optional(),
   projectTaskId: z.string().nullable().optional(),
   runtimeId: z.string().nullable().optional(),

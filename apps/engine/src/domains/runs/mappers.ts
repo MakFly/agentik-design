@@ -34,6 +34,20 @@ function costFromTaskResult(result: unknown): typeof ZERO_COST {
   };
 }
 
+export function runCostFromRow(
+  task: Pick<DaemonRunRowDb, "result" | "costCents">,
+): typeof ZERO_COST {
+  const fromResult = costFromTaskResult(task.result);
+  if (fromResult.money.amountCents > 0 || fromResult.tokens.total > 0) {
+    return fromResult;
+  }
+  if (!task.costCents || task.costCents <= 0) return ZERO_COST;
+  return {
+    ...ZERO_COST,
+    money: { amountCents: task.costCents, currency: "USD" as const },
+  };
+}
+
 export type WebRunStatus =
   | "queued"
   | "running"
@@ -64,7 +78,32 @@ export function daemonRunToWeb(task: DaemonRunRowDb, agentName?: string) {
     startedAt: task.startedAt ?? task.createdAt,
     endedAt: task.endedAt,
     durationMs: task.durationMs,
-    cost: costFromTaskResult(task.result),
+    cost: runCostFromRow(task),
+    traceId: task.id,
+    error: task.error
+      ? { kind: "unknown" as const, message: task.error, traceId: task.id }
+      : undefined,
+    stepCount: task.stepCount,
+    completedSteps: task.completedSteps,
+  };
+}
+
+export function orchestrationRunToWeb(task: RunRowDb) {
+  return {
+    id: task.id,
+    teamId: task.teamId,
+    env: "dev" as const,
+    subject: {
+      kind: "orchestration" as const,
+      runId: task.id,
+    },
+    subjectName: orchestrationGoal(task.input) ?? "Orchestration",
+    status: task.status as WebRunStatus,
+    trigger: { kind: "manual" as const },
+    startedAt: task.startedAt ?? task.createdAt,
+    endedAt: task.endedAt,
+    durationMs: task.durationMs,
+    cost: ZERO_COST,
     traceId: task.id,
     error: task.error
       ? { kind: "unknown" as const, message: task.error, traceId: task.id }
@@ -130,6 +169,65 @@ export function runMessageToStep(msg: RunMsgRowDb, agentName?: string) {
   };
 }
 
+export function runMessagesToSteps(messages: RunMsgRowDb[], agentName?: string) {
+  const steps: ReturnType<typeof runMessageToStep>[] = [];
+  const pendingTools: Array<{
+    message: RunMsgRowDb;
+    step: ReturnType<typeof runMessageToStep>;
+  }> = [];
+
+  for (const msg of messages) {
+    if (msg.type === "tool_use") {
+      const step = runMessageToStep(msg, agentName);
+      steps.push(step);
+      pendingTools.push({ message: msg, step });
+      continue;
+    }
+
+    if (msg.type === "tool_result") {
+      const matchIndex = pendingTools.findIndex(({ message }) =>
+        msg.tool ? message.tool === msg.tool : true,
+      );
+      if (matchIndex === -1) {
+        steps.push(runMessageToStep(msg, agentName));
+        continue;
+      }
+
+      const [match] = pendingTools.splice(matchIndex, 1);
+      if (!match) {
+        steps.push(runMessageToStep(msg, agentName));
+        continue;
+      }
+      const tool = match.message.tool ?? msg.tool ?? "tool";
+      const durationMs = Math.max(
+        0,
+        new Date(msg.createdAt).getTime() - new Date(match.message.createdAt).getTime(),
+      );
+      const call = match.step.toolCalls[0];
+      match.step.actor = { kind: "tool" as const, toolId: tool, name: tool };
+      match.step.status = "succeeded";
+      match.step.summary = `${tool} completed`;
+      match.step.endedAt = msg.createdAt;
+      match.step.durationMs = Number.isFinite(durationMs) ? durationMs : 0;
+      match.step.toolCalls = [
+        {
+          id: call?.id ?? match.message.id,
+          toolId: tool,
+          action: tool,
+          request: match.message.input ?? {},
+          response: msg.output ?? undefined,
+          status: "succeeded" as const,
+        },
+      ];
+      continue;
+    }
+
+    steps.push(runMessageToStep(msg, agentName));
+  }
+
+  return steps.map((step, index) => ({ ...step, index }));
+}
+
 export function fallbackResultStep(task: DaemonRunRowDb, agentName?: string) {
   const summary = resultSummary(task.result) || task.error || "";
   if (!summary) return null;
@@ -150,7 +248,7 @@ export function fallbackResultStep(task: DaemonRunRowDb, agentName?: string) {
     startedAt: ts,
     endedAt: task.endedAt ?? ts,
     durationMs: task.durationMs ?? 0,
-    cost: costFromTaskResult(task.result),
+    cost: runCostFromRow(task),
     attempt: 1,
     ...(task.status === "failed"
       ? {
@@ -209,6 +307,14 @@ function resultSummary(result: unknown): string {
     }
   }
   return "";
+}
+
+function orchestrationGoal(input: unknown): string | null {
+  const root = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const orchestration = root.orchestration;
+  if (!orchestration || typeof orchestration !== "object") return null;
+  const goal = (orchestration as Record<string, unknown>).goal;
+  return typeof goal === "string" && goal.trim() ? goal.trim() : null;
 }
 
 function testsFromResult(

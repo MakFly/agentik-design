@@ -19,17 +19,22 @@ import { Label } from "@/components/ui/label";
 import { KeyValueList } from "@/components/shared/key-value-list";
 import { findModel } from "@/config/models";
 import { formatMoney } from "@/lib/format";
-import { useCreateAgent, usePublishAgent } from "./api";
+import { useCreateAgent, useUpdateAgent, usePublishAgent } from "./api";
 import type { DraftIdentity } from "./validation";
 
 /**
- * Publish flow: create the agent (if new) then publish an immutable version with
- * a changelog (docs/01 §4.2). Shows a resolved-config summary before committing.
+ * Atomic publish (docs/01 §4.2). One mutation, one spinner, one toast:
+ *  - create mode → POST /agents with the full config; the server create+publishes.
+ *  - edit mode   → PATCH identity, then POST /agents/:id/publish (server-atomic).
+ * Nothing is committed on a thrown error and the local draft is only cleared on
+ * success, so a failed publish leaves the draft intact in localStorage.
  */
 export function PublishDialog({
   open,
   onOpenChange,
   team,
+  mode,
+  agentId,
   identity,
   config,
   disabled,
@@ -38,6 +43,8 @@ export function PublishDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   team: string;
+  mode: "create" | "edit";
+  agentId?: string;
   identity: DraftIdentity;
   config: AgentConfig;
   disabled: boolean;
@@ -45,20 +52,53 @@ export function PublishDialog({
   onPublished?: () => void;
 }) {
   const router = useRouter();
-  const [changelog, setChangelog] = useState("Initial version");
+  const [changelog, setChangelog] = useState(mode === "create" ? "Initial version" : "Update");
   const createAgent = useCreateAgent(team);
+  const updateAgent = useUpdateAgent(team);
   const publishAgent = usePublishAgent(team);
-  const busy = createAgent.isPending || publishAgent.isPending;
+  const busy = createAgent.isPending || updateAgent.isPending || publishAgent.isPending;
   const meta = findModel(config.model.model);
 
   async function publish() {
     try {
-      const created = await createAgent.mutateAsync({ name: identity.name, role: identity.role, goal: identity.goal });
-      const result = await publishAgent.mutateAsync({ agentId: created.id as AgentId, config, changelog });
+      if (mode === "create") {
+        // Single call: create + publish atomically (server publishes when config is sent).
+        const created = await createAgent.mutateAsync({
+          name: identity.name,
+          role: identity.role,
+          goal: identity.goal,
+          emoji: identity.emoji,
+          color: identity.color,
+          description: identity.description,
+          isOrchestrator: identity.isOrchestrator,
+          config,
+        });
+        toast.success(`Published ${identity.name}${created.version ? ` v${created.version}` : ""}`);
+        onPublished?.();
+        onOpenChange(false);
+        router.push(`/${team}/agents/${created.id}`);
+        return;
+      }
+
+      // Edit: persist identity, then publish a new immutable version.
+      const id = agentId as AgentId;
+      await updateAgent.mutateAsync({
+        agentId: id,
+        patch: {
+          name: identity.name,
+          role: identity.role,
+          goal: identity.goal,
+          emoji: identity.emoji,
+          color: identity.color,
+          description: identity.description,
+          isOrchestrator: identity.isOrchestrator,
+        },
+      });
+      const result = await publishAgent.mutateAsync({ agentId: id, config, changelog });
       toast.success(`Published ${identity.name} v${result.version}`);
       onPublished?.();
       onOpenChange(false);
-      router.push(`/${team}/agents/${created.id}`);
+      router.push(`/${team}/agents/${id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Publish failed");
     }

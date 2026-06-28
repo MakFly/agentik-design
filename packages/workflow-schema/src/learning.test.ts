@@ -7,6 +7,7 @@ import {
   proposedSkillChange,
   reviewAgentOutput,
   runtimeEvent,
+  runtimeEventV2,
   skillVersion,
 } from "./index";
 
@@ -100,6 +101,31 @@ describe("runtimeEvent", () => {
     expect(runtimeEvent.parse({ type: "text", content: "hi" }).type).toBe("text");
     expect(runtimeEvent.parse({ type: "done", result: { ok: true } }).type).toBe("done");
     expect(() => runtimeEvent.parse({ type: "nope" })).toThrow();
+  });
+
+  test("validates normalized V2 tool call events", () => {
+    const started = runtimeEventV2.parse({
+      type: "tool_call.started",
+      eventId: "evt_1",
+      seq: 1,
+      actor: { kind: "tool", toolId: "WebSearch", name: "WebSearch" },
+      toolCallId: "tc_1",
+      toolId: "WebSearch",
+      input: { query: "PPRI Lezarde" },
+    });
+    expect(started.type).toBe("tool_call.started");
+    if (started.type !== "tool_call.started") throw new Error("unexpected event");
+    expect(started.toolCallId).toBe("tc_1");
+    expect(() =>
+      runtimeEventV2.parse({
+        type: "tool_call.completed",
+        eventId: "evt_2",
+        seq: 2,
+        actor: { kind: "tool", toolId: "WebSearch" },
+        toolId: "WebSearch",
+        status: "succeeded",
+      }),
+    ).toThrow();
   });
 });
 

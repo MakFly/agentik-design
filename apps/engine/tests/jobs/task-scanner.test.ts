@@ -5,12 +5,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { genId } from "./infra/db/ids";
-import { resolveTeam } from "./domains/workflows/repo";
-import { failTask } from "./execution/daemon/service";
-import { retryRun } from "./domains/runs";
-import { scanStaleTasks, SCANNER_LOCK_KEY } from "./jobs/task-scanner";
+import { db, schema } from "../../src/infra/db/client";
+import { genId } from "../../src/infra/db/ids";
+import { resolveTeam } from "../../src/domains/workflows/repo";
+import { failTask } from "../../src/execution/daemon/service";
+import { retryRun } from "../../src/domains/runs";
+import { scanStaleTasks, SCANNER_LOCK_KEY } from "../../src/jobs/task-scanner";
 
 const { agents, runs, teams } = schema;
 

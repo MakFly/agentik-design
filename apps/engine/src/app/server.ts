@@ -8,6 +8,7 @@ import { mcpRoutes } from "../domains/mcp/routes";
 import { projectsRoutes } from "../domains/projects/routes";
 import { runsRoutes } from "../domains/runs/routes";
 import { settingsRoutes } from "../domains/settings/routes";
+import { signalsRoutes } from "../domains/signals/routes";
 import { workflowsRoutes } from "../domains/workflows/routes";
 import { daemon } from "../execution/daemon/routes";
 import { auth } from "../gateway/routes/auth";
@@ -39,6 +40,7 @@ api.route("/", learningRoutes);
 api.route("/", settingsRoutes);
 api.route("/", runsRoutes);
 api.route("/", chatRoutes);
+api.route("/", signalsRoutes);
 
 app.route("/api/v1/auth", auth);
 

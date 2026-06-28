@@ -3,8 +3,8 @@ import {
   runMessageToEvents,
   contractEventForStatus,
   contractEventForRunMessage,
-} from "./domains/runs";
-import type { runMessages } from "./infra/db/schema";
+} from "../../../src/domains/runs";
+import type { runMessages } from "../../../src/infra/db/schema";
 
 type MsgRow = typeof runMessages.$inferSelect;
 

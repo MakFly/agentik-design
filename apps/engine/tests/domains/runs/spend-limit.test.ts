@@ -37,6 +37,19 @@ d("per-team monthly spend limit", () => {
       .update(schema.agents)
       .set({ liveVersionId: "ver_test" })
       .where(eq(schema.agents.id, agentId));
+    // runAgent dispatch also requires a live daemon for the agent's runtime (echo by
+    // default) — seed one with a fresh heartbeat so dispatch isn't rejected as offline.
+    const daemonId = genId("daemon");
+    await db.insert(schema.daemons).values({
+      id: daemonId,
+      teamId,
+      name: "Spend Test Daemon",
+      status: "online",
+      lastHeartbeatAt: sql`now()`,
+    });
+    await db
+      .insert(schema.runtimes)
+      .values({ id: genId("runtime"), daemonId, teamId, kind: "echo" });
     // Seed 1500 cents of realized spend this month (+ one null-cost run, must be ignored).
     await seedRun(1000);
     await seedRun(500);
@@ -46,6 +59,7 @@ d("per-team monthly spend limit", () => {
   afterAll(async () => {
     await db.delete(schema.runs).where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
+    await db.delete(schema.daemons).where(eq(schema.daemons.teamId, teamId));
     await db.delete(schema.teams).where(eq(schema.teams.id, teamId));
   });
 

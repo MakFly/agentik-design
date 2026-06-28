@@ -24,6 +24,7 @@ export type TelegramCommand =
   | { kind: "run"; projectId: string; agentId?: string; title: string }
   | { kind: "runAgent"; agentId: string; input: string }
   | { kind: "runAgentHandle"; handle: string; input: string }
+  | { kind: "orchestrate"; input: string }
   | { kind: "freeChat"; input: string }
   | { kind: "runTask"; taskId: string; instruction?: string }
   | { kind: "runHelp"; text?: string }
@@ -54,6 +55,10 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   const tasks = clean.match(/^\/tasks(?:\s+project:([^\s]+))?$/);
   if (tasks) return { kind: "tasks", projectId: tasks[1] };
   if (clean === "/run") return { kind: "runHelp" };
+  const orchestrate = clean.match(/^\/orchestrate\s+([\s\S]+)$/);
+  if (orchestrate?.[1]) {
+    return { kind: "orchestrate", input: cleanArg(orchestrate[1]) };
+  }
   const status = clean.match(/^\/status\s+([^\s]+)$/);
   if (status?.[1]) return { kind: "status", runId: status[1] };
   const kill = clean.match(/^\/kill\s+([^\s]+)$/);
@@ -136,11 +141,14 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       title: cleanArg(run[3] ?? ""),
     };
   }
-  if (/\b(agent|agents|lance|lancer|lances|run|ex[eé]cute|start)\b/i.test(clean)) {
-    return { kind: "runHelp", text: clean };
-  }
+  // Free-form natural language (no leading slash) routes to the orchestrator,
+  // even when it mentions run-like words. The run-help nudge below only applies
+  // to a slash-prefixed command that failed to parse but looks run-related.
   if (!clean.startsWith("/")) {
     return { kind: "freeChat", input: clean };
+  }
+  if (/\b(agent|agents|lance|lancer|lances|run|ex[eé]cute|start)\b/i.test(clean)) {
+    return { kind: "runHelp", text: clean };
   }
   return { kind: "unknown", text: clean };
 }

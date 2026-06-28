@@ -38,12 +38,37 @@ export async function sendTelegramMessage(input: {
 }) {
   const token = connectionToken(input.connection);
   if (!token) return;
-  await telegramCall(token, "sendMessage", {
+  const res = await telegramCall<{ message_id?: number }>(token, "sendMessage", {
     chat_id: input.chatId,
     text: input.text,
     ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
     disable_web_page_preview: true,
   });
+  if (!res?.ok) {
+    throw new Error(res?.description ?? "telegram_send_failed");
+  }
+  return { messageId: res.result?.message_id };
+}
+
+export async function editTelegramMessage(input: {
+  connection: ChannelConnectionRow;
+  chatId: string;
+  messageId: number | string;
+  text: string;
+  parseMode?: "HTML";
+}) {
+  const token = connectionToken(input.connection);
+  if (!token) return;
+  const res = await telegramCall(token, "editMessageText", {
+    chat_id: input.chatId,
+    message_id: input.messageId,
+    text: input.text,
+    ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
+    disable_web_page_preview: true,
+  });
+  if (!res?.ok) {
+    throw new Error(res?.description ?? "telegram_edit_failed");
+  }
 }
 
 export async function sendTelegramChatAction(input: {
@@ -53,8 +78,11 @@ export async function sendTelegramChatAction(input: {
 }) {
   const token = connectionToken(input.connection);
   if (!token) return;
-  await telegramCall(token, "sendChatAction", {
+  const res = await telegramCall(token, "sendChatAction", {
     chat_id: input.chatId,
     action: input.action,
   });
+  if (!res?.ok) {
+    throw new Error(res?.description ?? "telegram_action_failed");
+  }
 }

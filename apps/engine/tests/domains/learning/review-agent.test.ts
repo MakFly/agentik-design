@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deterministicReview } from "./domains/learning/reviews/agent";
+import { deterministicReview } from "../../../src/domains/learning/reviews/agent";
 
 describe("deterministicReview (offline, propose-only)", () => {
   test("failed run → one medium-risk memory lesson, no skills", () => {

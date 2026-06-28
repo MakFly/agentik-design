@@ -13,7 +13,13 @@ export interface PersistedDraft {
 }
 
 const PREFIX = "agentik:agent-draft:";
-export const draftKey = (team: string, scope: string) => `${PREFIX}${team}:${scope}`;
+/**
+ * Per-agent draft key. Editing agent A then agent B must not collide — the old
+ * key bucketed every edit under a single `:edit` scope. `agentId` is "new" in
+ * create mode and the real id in edit mode.
+ */
+export const draftKey = (team: string, mode: "create" | "edit", agentId: string) =>
+  `${PREFIX}${team}:${mode}:${agentId}`;
 
 export function readDraft(key: string): PersistedDraft | null {
   if (typeof window === "undefined") return null;

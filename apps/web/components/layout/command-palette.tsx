@@ -39,11 +39,13 @@ export function CommandPalette({ team }: { team: string }) {
     router.push(href);
   }
 
-  const navItems = NAV_ITEMS.filter((i) => !i.permission || can(i.permission));
+  const navItems = NAV_ITEMS.filter(
+    (i) => !i.comingSoon && (!i.permission || can(i.permission)),
+  );
 
   const quickActions = [
     { key: "new-agent", label: "Create agent", href: hrefFor(team, "agents/new"), permission: "agent:create" as const },
-    { key: "new-workflow", label: "Create workflow", href: hrefFor(team, "workflows/new"), permission: "workflow:create" as const },
+    // "Create workflow" hidden while Workflows is In progress.
   ].filter((a) => can(a.permission));
 
   return (

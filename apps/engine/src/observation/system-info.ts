@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "../infra/db/client";
+import { isHeartbeatFresh } from "../infra/daemon-liveness";
 import { daemonDisplayName } from "../domains/runs/mappers";
 
 const { daemons, runtimes } = schema;
@@ -17,17 +18,10 @@ export async function getSystemInfo(teamId: string) {
       .from(runtimes)
       .where(eq(runtimes.teamId, teamId)),
   ]);
-  // Derive liveness from heartbeat freshness (daemon beats every ~5s).
-  const STALE_MS = 15_000;
+  // Derive liveness from heartbeat freshness (shared with the run-dispatch guard).
   const now = Date.now();
-  const liveStatus = (hb: string | null): "online" | "offline" => {
-    if (!hb) return "offline";
-    // Postgres emits a 2-digit offset ("+00"); Date.parse needs "+00:00".
-    const ts = Date.parse(
-      hb.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"),
-    );
-    return !Number.isNaN(ts) && now - ts <= STALE_MS ? "online" : "offline";
-  };
+  const liveStatus = (hb: string | null): "online" | "offline" =>
+    isHeartbeatFresh(hb, now) ? "online" : "offline";
   // A runtime is *available* (selectable for a new agent) when its daemon is online AND
   // the backing CLI is actually present on that host. `echo` is self-contained; kinds we
   // don't probe (custom/openai/…) are trusted from the daemon's own registration.

@@ -1,6 +1,9 @@
 {
   "name": "agentik",
   "private": true,
+  "scripts": {
+    "audit:dead-code": "bun run scripts/dead-code-audit.ts"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"

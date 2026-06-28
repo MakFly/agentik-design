@@ -1,7 +1,7 @@
 import { http, HttpResponse, delay, passthrough } from "msw";
 import { agents } from "./seed";
 import { runs, stepsByRun } from "./runs-seed";
-import { providers, fallbackOrder, costCeilingPerDay } from "./settings-seed";
+import { providers, providerKeys, fallbackOrder, costCeilingPerDay } from "./settings-seed";
 
 const API = "/api/v1";
 const SETTINGS = `${API}/settings`;
@@ -161,5 +161,33 @@ export const handlers = [
       return HttpResponse.json({ ok: false, message: "No key or base URL configured" }, { status: 422 });
     }
     return HttpResponse.json({ ok: true, latencyMs: 180 + Math.floor(performance.now() % 220) });
+  }),
+
+  // ── Settings · Provider keys ─────────────────────────────────────────────
+  // Same families as the provider cards; saving/removing a key flips `hasKey`
+  // on both the key and its matching card (id = `prov_<family>`).
+  http.get(`${SETTINGS}/provider-keys`, async () => {
+    await delay(250);
+    return HttpResponse.json({ items: providerKeys });
+  }),
+
+  http.put(`${SETTINGS}/provider-keys/:provider`, async ({ params }) => {
+    await delay(250);
+    const key = providerKeys.find((k) => k.provider === params.provider);
+    if (!key) return HttpResponse.json({ message: "Unsupported provider", kind: "not_found" }, { status: 404 });
+    key.hasKey = true;
+    key.updatedAt = new Date().toISOString();
+    const card = providers.find((p) => p.id === `prov_${params.provider}`);
+    if (card) { card.hasKey = true; card.status = "active"; }
+    return HttpResponse.json({ ok: true });
+  }),
+
+  http.delete(`${SETTINGS}/provider-keys/:provider`, async ({ params }) => {
+    await delay(250);
+    const key = providerKeys.find((k) => k.provider === params.provider);
+    if (key) { key.hasKey = false; key.updatedAt = null; }
+    const card = providers.find((p) => p.id === `prov_${params.provider}`);
+    if (card) { card.hasKey = false; card.status = "off"; }
+    return HttpResponse.json({ ok: true });
   }),
 ];

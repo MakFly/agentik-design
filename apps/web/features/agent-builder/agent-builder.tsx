@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Play, Rocket, Check, Loader2 } from "lucide-react";
-import { PageHeader } from "@/components/layout/page-header";
+import { Rocket, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { useBuilderStore } from "./store";
+import { BuilderStoreProvider, useBuilderStore } from "./store-context";
+import { IdentityHeader } from "./identity-header";
 import { SectionNav } from "./section-nav";
 import { BuilderForm } from "./builder-form";
 import { ConfigPreview } from "./config-preview";
@@ -21,11 +21,39 @@ const AUTOSAVE_MS = 800;
 export function AgentBuilder({
   team,
   mode,
+  agentId,
   initialIdentity,
   initialConfig,
 }: {
   team: string;
   mode: "create" | "edit";
+  agentId?: string;
+  initialIdentity?: Partial<DraftIdentity>;
+  initialConfig?: AgentConfig;
+}) {
+  return (
+    <BuilderStoreProvider initialIdentity={initialIdentity} initialConfig={initialConfig}>
+      <BuilderShell
+        team={team}
+        mode={mode}
+        agentId={agentId}
+        initialIdentity={initialIdentity}
+        initialConfig={initialConfig}
+      />
+    </BuilderStoreProvider>
+  );
+}
+
+function BuilderShell({
+  team,
+  mode,
+  agentId,
+  initialIdentity,
+  initialConfig,
+}: {
+  team: string;
+  mode: "create" | "edit";
+  agentId?: string;
   initialIdentity?: Partial<DraftIdentity>;
   initialConfig?: AgentConfig;
 }) {
@@ -39,7 +67,7 @@ export function AgentBuilder({
   const rev = useBuilderStore((s) => s.rev);
 
   const [publishOpen, setPublishOpen] = useState(false);
-  const key = draftKey(team, mode === "create" ? "new" : "edit");
+  const key = draftKey(team, mode, agentId ?? "new");
 
   // initialize the draft once on mount — prefer a locally-saved draft over the route's
   // initial config so unpublished work survives reload/navigation (the "Draft saved" promise).
@@ -61,28 +89,20 @@ export function AgentBuilder({
   }, [rev, saveState, setSaveState, key, identity, config]);
 
   const issues = useMemo(() => validateDraft(identity, config), [identity, config]);
-  const blocking = errorCount(issues);
-  const canPublish = blocking === 0;
+  const canPublish = errorCount(issues) === 0;
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        title={mode === "create" ? "New agent" : identity.name || "Edit agent"}
-        back={{ href: `/${team}/agents`, label: "Agents" }}
-        description={<SaveIndicator state={saveState} />}
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={() => setActiveSection("review")}>
-              <Play className="size-4" /> Review
-            </Button>
-            <Button size="sm" disabled={!canPublish} onClick={() => setPublishOpen(true)}>
-              <Rocket className="size-4" /> Publish
-            </Button>
-          </>
-        }
+    <div className="flex flex-col gap-5 pb-20 lg:pb-0">
+      <IdentityHeader
+        team={team}
+        mode={mode}
+        saveState={saveState}
+        canPublish={canPublish}
+        onReview={() => setActiveSection("review")}
+        onPublish={() => setPublishOpen(true)}
       />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[180px_minmax(0,1fr)_minmax(0,360px)]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[200px_minmax(0,1fr)_minmax(0,360px)]">
         {/* section nav */}
         <div className="lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:self-start">
           <SectionNav active={activeSection} issues={issues} onSelect={setActiveSection} />
@@ -90,7 +110,7 @@ export function AgentBuilder({
 
         {/* form */}
         <div className="min-w-0 rounded-lg border border-border bg-surface p-4 md:p-6">
-          <BuilderForm section={activeSection} issues={issues} />
+          <BuilderForm section={activeSection} issues={issues} team={team} mode={mode} agentId={agentId} />
         </div>
 
         {/* preview + test */}
@@ -110,18 +130,30 @@ export function AgentBuilder({
                 <TestHarness team={team} config={config} />
               </TabsContent>
               <TabsContent value="about" className="pt-3 text-sm text-muted-foreground">
-                The test harness runs your draft in a sandbox and streams the trace — the same view
-                you get on a real run. Publish creates an immutable version once validation passes.
+                The test harness runs your draft in a sandbox and streams the trace — the same view you get on a real run.
+                Publish creates an immutable version once validation passes.
               </TabsContent>
             </Tabs>
           </div>
         </div>
       </div>
 
+      {/* mobile sticky action bar — header buttons scroll away on long forms */}
+      <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-border bg-background/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">
+        <Button variant="outline" className="min-h-[44px] flex-1" onClick={() => setActiveSection("review")}>
+          <Play className="size-4" /> Review
+        </Button>
+        <Button className="min-h-[44px] flex-1" disabled={!canPublish} onClick={() => setPublishOpen(true)}>
+          <Rocket className="size-4" /> Publish
+        </Button>
+      </div>
+
       <PublishDialog
         open={publishOpen}
         onOpenChange={setPublishOpen}
         team={team}
+        mode={mode}
+        agentId={agentId}
         identity={identity}
         config={config}
         disabled={!canPublish}
@@ -129,21 +161,4 @@ export function AgentBuilder({
       />
     </div>
   );
-}
-
-function SaveIndicator({ state }: { state: "idle" | "dirty" | "saving" | "saved" }) {
-  if (state === "saving")
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" /> Saving…
-      </span>
-    );
-  if (state === "saved")
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-success">
-        <Check className="size-3.5" /> Draft saved
-      </span>
-    );
-  if (state === "dirty") return <span className="text-xs text-warning">Unsaved changes</span>;
-  return <span className="text-xs text-muted-foreground">Draft</span>;
 }

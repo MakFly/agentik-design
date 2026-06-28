@@ -1,9 +1,9 @@
-import type { Metadata } from "next";
-import { WorkflowBuilder } from "@/features/workflow-builder/workflow-builder";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "New workflow" };
-
+// Workflows is temporarily "In progress" — route disabled, feature code kept.
+// The page renders <WorkflowBuilder> (see @/features/workflow-builder/workflow-builder);
+// re-enable by restoring the render below and removing this redirect.
 export default async function NewWorkflowPage({ params }: { params: Promise<{ team: string }> }) {
   const { team } = await params;
-  return <WorkflowBuilder team={team} />;
+  redirect(`/${team}/command-center`);
 }

@@ -6,7 +6,9 @@ import {
 import { env } from "../../infra/env";
 import { jsonValidationError, parseJsonBody } from "../../infra/validation";
 import {
+  deleteCodexOauth,
   deleteProviderKey,
+  getCodexOauthStatus,
   isSupportedProvider,
   listProviderKeys,
   setProviderKey,
@@ -18,11 +20,13 @@ import {
   providerKeyBody,
   providerPatchBody,
   providersPolicyBody,
+  routerBody,
   workspaceBody,
 } from "./schemas";
 import {
   getEnvironmentSettings,
   getProvidersSettings,
+  getRouterSettings,
   getWorkspaceSettings,
   inviteTeamMember,
   listTeamInvitations,
@@ -33,6 +37,7 @@ import {
   updateEnvironmentSettings,
   updateProviderConfig,
   updateProvidersPolicy,
+  updateRouterSettings,
   updateTeamMemberRole,
   updateWorkspaceSettings,
 } from "./repo";
@@ -190,6 +195,37 @@ settingsRoutes.post(
   requirePermission("settings:update"),
   async (c) => {
     return c.json(await testProviderConnection(c.get("teamId"), c.req.param("id")));
+  },
+);
+
+settingsRoutes.get("/settings/router", requirePermission("settings:read"), async (c) => {
+  return c.json(await getRouterSettings(c.get("teamId")));
+});
+
+settingsRoutes.patch("/settings/router", requirePermission("settings:update"), async (c) => {
+  const parsed = parseJsonBody(routerBody, await c.req.json().catch(() => null));
+  if (!parsed.success) return jsonValidationError(c, parsed.error);
+  const res = await updateRouterSettings(
+    c.get("teamId"),
+    c.get("auth").userId,
+    parsed.data,
+  );
+  if ("error" in res) {
+    return c.json({ error: res.error }, res.error === "forbidden" ? 403 : 400);
+  }
+  return c.json(res);
+});
+
+settingsRoutes.get("/settings/oauth", requirePermission("settings:read"), async (c) => {
+  return c.json({ codex: await getCodexOauthStatus(c.get("teamId")) });
+});
+
+settingsRoutes.delete(
+  "/settings/oauth/codex",
+  requirePermission("settings:delete"),
+  async (c) => {
+    await deleteCodexOauth(c.get("teamId"));
+    return c.json({ ok: true });
   },
 );
 

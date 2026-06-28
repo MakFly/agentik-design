@@ -57,6 +57,15 @@ export const providerKeyBody = z.object({
   key: z.string().trim().min(8, "API key must be at least 8 characters"),
 });
 
+export const routerBody = z
+  .object({
+    provider: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).max(120).optional(),
+  })
+  .refine((d) => d.provider !== undefined || d.model !== undefined, {
+    message: "Provide a provider or model to update",
+  });
+
 export const environmentColorSchema = z.enum([
   "success",
   "info",

@@ -8,16 +8,17 @@ import {
   resolveInjectionContext,
   type InjectionContext,
 } from "../../domains/learning/index";
-import { resolveProviderEnv } from "../../domains/settings/providers-repo";
+import { resolveRuntimeAuth } from "../../domains/settings/providers-repo";
 import { liveRuntimeTools } from "../../domains/mcp/repo";
 import type { RunMessageType, TaskErrorReason } from "../../infra/db/schema";
-import type { RunStatus } from "@agentik/workflow-schema";
+import type { RunStatus, RuntimeEventV2 } from "@agentik/workflow-schema";
 
 const {
   daemons,
   runtimes,
   runs,
   runMessages,
+  runEvents,
   projectTasks,
   projectResources,
   projectWorkspaces,
@@ -452,9 +453,10 @@ export async function claimTask(
       tools: await liveRuntimeTools(task.teamId, task.agentId),
     };
     task.context = ctx;
-    // Inject the org's runtime provider keys so the runtime (hermes/claude…)
-    // authenticates from credentials managed entirely in the web UI.
-    task.env = await resolveProviderEnv(task.teamId);
+    // Inject the org's runtime credentials so the runtime (hermes/claude/codex…)
+    // authenticates from credentials managed entirely in the web UI: provider API
+    // keys plus any connected subscription OAuth (e.g. Codex via AGENTIK_CODEX_AUTH).
+    task.env = await resolveRuntimeAuth(task.teamId);
   }
   return task;
 }
@@ -519,6 +521,64 @@ export interface IncomingMessage {
   content?: string;
   input?: unknown;
   output?: unknown;
+}
+
+function runtimeEventForIncomingMessage(
+  runId: string,
+  message: IncomingMessage,
+): RuntimeEventV2 {
+  const eventId = `${runId}:${message.seq}`;
+  if (message.type === "tool_use") {
+    const toolId = message.tool ?? "tool";
+    return {
+      type: "tool_call.started",
+      eventId,
+      seq: message.seq,
+      actor: { kind: "tool", toolId, name: toolId },
+      toolCallId: eventId,
+      toolId,
+      input: message.input,
+    };
+  }
+  if (message.type === "tool_result") {
+    const toolId = message.tool ?? "tool";
+    return {
+      type: "tool_call.completed",
+      eventId,
+      seq: message.seq,
+      actor: { kind: "tool", toolId, name: toolId },
+      toolCallId: eventId,
+      toolId,
+      output: message.output,
+      status: "succeeded",
+    };
+  }
+  if (message.type === "thinking") {
+    return {
+      type: "thinking",
+      eventId,
+      seq: message.seq,
+      actor: { kind: "agent" },
+      content: message.content ?? "",
+    };
+  }
+  if (message.type === "error") {
+    return {
+      type: "error",
+      eventId,
+      seq: message.seq,
+      actor: { kind: "agent" },
+      message: message.content ?? "Runtime error",
+      code: message.tool,
+    };
+  }
+  return {
+    type: "message",
+    eventId,
+    seq: message.seq,
+    actor: { kind: "agent" },
+    content: message.content ?? "",
+  };
 }
 
 async function nextTaskMessageSeq(runId: string) {
@@ -633,6 +693,35 @@ export async function appendMessages(
         })),
       )
       .onConflictDoNothing({ target: [runMessages.runId, runMessages.seq] });
+
+    await db
+      .insert(runEvents)
+      .values(
+        messages.map((m) => {
+          const payload = runtimeEventForIncomingMessage(runId, m);
+          return {
+            id: genId("revt"),
+            runId,
+            seq: m.seq,
+            type: payload.type,
+            actor: payload.actor,
+            toolCallId: "toolCallId" in payload ? payload.toolCallId : null,
+            parentEventId: null,
+            payload,
+            contractEvent:
+              payload.type === "message"
+                ? "message.created"
+                : payload.type === "tool_call.started"
+                  ? "tool.started"
+                  : payload.type === "tool_call.completed"
+                    ? "tool.output"
+                    : payload.type === "error"
+                      ? "run.failed"
+                      : null,
+          };
+        }),
+      )
+      .onConflictDoNothing({ target: [runEvents.runId, runEvents.seq] });
 
     const all = await db
       .select({ type: runMessages.type })

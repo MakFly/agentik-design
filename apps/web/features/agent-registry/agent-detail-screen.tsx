@@ -3,15 +3,19 @@
 import Link from "next/link";
 import { useMemo, type ReactNode } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   Bot,
   Circle,
   Clock,
   Cpu,
   History,
+  Network,
+  Pencil,
   Play,
   RefreshCw,
   Tag,
+  Zap,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { CopyableValue } from "@/components/shared/copyable-value";
@@ -144,7 +148,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
     if (!agent || !snapshotQuery.data) return null;
     return derivePresence(snapshotQuery.data, {
       id: agent.id,
-      runtimeKind: "echo",
+      runtimeKind: agent.runtimeKind ?? "echo",
       maxConcurrentTasks: 1,
     });
   }, [agent, snapshotQuery.data]);
@@ -207,6 +211,24 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
         back={{ href: `/${team}/agents`, label: "Agents" }}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button asChild size="sm">
+              <Link href={`/${team}/agents/${agent.id}/edit`}>
+                <Pencil className="size-4" />
+                Edit in builder
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/${team}/agents/fleet`}>
+                <Network className="size-4" />
+                View in Fleet
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/${team}/automations?agent=${agent.id}`}>
+                <Zap className="size-4" />
+                Automations
+              </Link>
+            </Button>
             <Button asChild size="sm" variant="outline">
               <Link href={`/${team}/runs`}>
                 <History className="size-4" />
@@ -222,6 +244,20 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
           </div>
         }
       />
+
+      {presence && presence.availability !== "online" ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <p className="min-w-0">
+            No live daemon for this agent&apos;s runtime{" "}
+            <span className="font-mono">{agent.runtimeKind ?? "echo"}</span>. Runs are rejected until
+            a daemon comes online — start your daemon, then try again.
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <Card>
@@ -306,6 +342,18 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
           <CardContent>
             <MetaGrid>
               <MetaField label="Model">{detailLabel(agent.model)}</MetaField>
+              <MetaField label="Runtime">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="font-mono">{agent.runtimeKind ?? "echo"}</span>
+                  {presence ? (
+                    <span
+                      className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`}
+                      title={presenceToLabel(presence.availability)}
+                      aria-label={presenceToLabel(presence.availability)}
+                    />
+                  ) : null}
+                </span>
+              </MetaField>
               <MetaField label="Updated">{normalizeTimestamp(agent.updatedAt)}</MetaField>
               <MetaField label="Workload">
                 {presence ? (

@@ -4,6 +4,7 @@ import { executeCommand } from "./execute-command";
 import {
   advancePollOffset,
   findIdentity,
+  getConnectionBinding,
   getConnectionByWebhookSecret,
   pairIdentity,
   recordMessage,
@@ -12,9 +13,39 @@ import {
 import type {
   ChannelConnectionRow,
   TelegramDispatchResult,
-  TelegramSender,
+  TelegramMessage,
   TelegramUpdate,
+  TelegramSender,
 } from "./types";
+
+type ChannelBinding = NonNullable<Awaited<ReturnType<typeof getConnectionBinding>>>;
+
+function mentionsBot(message: TelegramMessage, botUsername: string | null): boolean {
+  if (!botUsername) return false;
+  return (message.text ?? "").toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+}
+
+/**
+ * Decide whether to act on an inbound message and which agent should act, based on the
+ * connection's binding. Private chats and connections without a binding keep legacy
+ * behavior (always listen, no agent override). In group chats the binding gates listening
+ * (`groupPolicy` / `requireMention`); the binding agent is only a fallback default.
+ */
+function decideBinding(
+  binding: ChannelBinding | null,
+  message: TelegramMessage,
+  connection: ChannelConnectionRow,
+): { listen: boolean; agentId: string | null } {
+  const agentId = binding?.agentId ?? null;
+  const chatType = message.chat?.type;
+  const isGroup = chatType === "group" || chatType === "supergroup";
+  if (!isGroup || !binding) return { listen: true, agentId };
+  if (binding.groupPolicy === "off") return { listen: false, agentId };
+  if (binding.requireMention && !mentionsBot(message, connection.botUsername)) {
+    return { listen: false, agentId };
+  }
+  return { listen: true, agentId };
+}
 
 export async function processTelegramUpdate(
   connection: ChannelConnectionRow,
@@ -37,6 +68,14 @@ export async function processTelegramUpdate(
     payload: update as Record<string, unknown>,
   });
 
+  // Binding-driven gate (no binding / private chat → unchanged legacy behavior).
+  const binding = await getConnectionBinding(connection.id);
+  const decision = decideBinding(binding, message, connection);
+  if (!decision.listen) {
+    await touchConnectionUpdatedAt(connection.id);
+    return { ok: true, reply: "ignored" };
+  }
+
   let result: TelegramDispatchResult;
   if (command.kind === "pair") {
     identity = await pairIdentity(connection, message, command.code);
@@ -56,7 +95,12 @@ export async function processTelegramUpdate(
       reply: `This chat is not paired.\nUse: /start ${connection.pairingCode}`,
     };
   } else {
-    result = await executeCommand(connection, identity, command);
+    // The binding agent is only a default — an explicit /agent selection still wins.
+    const actingIdentity =
+      identity.activeAgentId == null && decision.agentId
+        ? { ...identity, activeAgentId: decision.agentId }
+        : identity;
+    result = await executeCommand(connection, actingIdentity, command);
   }
 
   await recordMessage({

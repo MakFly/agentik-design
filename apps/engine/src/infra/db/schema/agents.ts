@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type {
   CreatedBy,
@@ -17,6 +17,12 @@ export const agents = pgTable("agents", {
   goal: text("goal").notNull().default(""),
   description: text("description"),
   tags: jsonb("tags").$type<string[]>().notNull().default([]),
+  /** Optional display identity surfaced in the roster/graph UIs. */
+  emoji: text("emoji"),
+  color: text("color"),
+  avatarUrl: text("avatar_url"),
+  /** When true this agent fans work out to its roster of subagents (orchestration-native). */
+  isOrchestrator: boolean("is_orchestrator").notNull().default(false),
   health: text("health").$type<AgentHealth>().notNull().default("idle"),
   /** runtime kind this agent runs on (echo | claude | …). */
   runtimeKind: text("runtime_kind").notNull().default("echo"),
@@ -49,6 +55,32 @@ export const daemons = pgTable(
     uniqueIndex("daemons_team_device_unique")
       .on(t.teamId, sql`(${t.meta} ->> 'deviceId')`)
       .where(sql`${t.meta} ->> 'deviceId' is not null`),
+  ],
+);
+
+/**
+ * Roster edge: a subagent an orchestrator can delegate to. Both sides reference
+ * `agents.id` (cascade-deleted with either parent or child). `instruction` is an
+ * optional per-edge note; `position` orders the roster.
+ */
+export const agentSubagents = pgTable(
+  "agent_subagents",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    parentAgentId: text("parent_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    subagentId: text("subagent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    instruction: text("instruction"),
+    position: integer("position").notNull().default(0),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("agent_subagents_parent_child_unique").on(t.parentAgentId, t.subagentId),
+    index("agent_subagents_team_parent_idx").on(t.teamId, t.parentAgentId),
   ],
 );
 

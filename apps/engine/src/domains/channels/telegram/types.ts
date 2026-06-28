@@ -13,11 +13,14 @@ export interface TelegramMessage {
   text?: string;
   chat?: {
     id?: number | string;
+    /** "private" | "group" | "supergroup" | "channel" — drives binding group policy. */
+    type?: string;
     title?: string;
     username?: string;
     first_name?: string;
     last_name?: string;
   };
+  entities?: Array<{ type?: string; offset?: number; length?: number }>;
   from?: {
     id?: number | string;
     username?: string;
@@ -37,6 +40,14 @@ export interface TelegramDispatchResult {
 export type TelegramSender = (input: {
   connection: ChannelConnectionRow;
   chatId: string;
+  text: string;
+  parseMode?: "HTML";
+}) => Promise<void | { messageId?: number | string }>;
+
+export type TelegramEditSender = (input: {
+  connection: ChannelConnectionRow;
+  chatId: string;
+  messageId: number | string;
   text: string;
   parseMode?: "HTML";
 }) => Promise<void>;

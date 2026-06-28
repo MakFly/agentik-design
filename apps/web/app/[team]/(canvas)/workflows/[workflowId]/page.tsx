@@ -1,13 +1,13 @@
-import type { Metadata } from "next";
-import { WorkflowEditor } from "@/features/workflow-builder/workflow-editor";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Edit workflow" };
-
+// Workflows is temporarily "In progress" — route disabled, feature code kept.
+// The page renders <WorkflowEditor> (see @/features/workflow-builder/workflow-editor);
+// re-enable by restoring the render below and removing this redirect.
 export default async function EditWorkflowPage({
   params,
 }: {
   params: Promise<{ team: string; workflowId: string }>;
 }) {
-  const { team, workflowId } = await params;
-  return <WorkflowEditor team={team} workflowId={workflowId} />;
+  const { team } = await params;
+  redirect(`/${team}/command-center`);
 }

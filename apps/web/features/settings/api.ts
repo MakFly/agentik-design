@@ -31,3 +31,52 @@ export function useTestProvider(team: string) {
       }),
   });
 }
+
+// ── Provider keys ──────────────────────────────────────────────────────────────
+// The org's encrypted API keys, one per provider family. The matching provider
+// card (`/settings/providers`) derives its `hasKey` from this same data, so saving
+// or removing a key invalidates both queries to keep the merged card in sync.
+export interface ProviderKey {
+  provider: string;
+  envVar: string;
+  hasKey: boolean;
+  updatedAt: string | null;
+}
+
+const providerKeysKey = (team: string) =>
+  ["team", team, "provider-keys"] as const;
+
+export function useProviderKeys(team: string) {
+  return useQuery({
+    queryKey: providerKeysKey(team),
+    queryFn: ({ signal }) =>
+      apiFetch<{ items: ProviderKey[] }>("/settings/provider-keys", { team, signal }),
+  });
+}
+
+function useInvalidateProviderState(team: string) {
+  const qc = useQueryClient();
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: providerKeysKey(team) }),
+      qc.invalidateQueries({ queryKey: qk.settings.providers(team) }),
+    ]);
+}
+
+export function useSetProviderKey(team: string) {
+  const invalidate = useInvalidateProviderState(team);
+  return useMutation({
+    mutationFn: ({ provider, key }: { provider: string; key: string }) =>
+      apiFetch(`/settings/provider-keys/${provider}`, { method: "PUT", team, body: { key } }),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function useRemoveProviderKey(team: string) {
+  const invalidate = useInvalidateProviderState(team);
+  return useMutation({
+    mutationFn: (provider: string) =>
+      apiFetch(`/settings/provider-keys/${provider}`, { method: "DELETE", team }),
+    onSuccess: () => invalidate(),
+  });
+}

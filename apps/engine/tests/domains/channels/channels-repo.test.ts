@@ -4,8 +4,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { resolveTeam } from "./domains/workflows/repo";
+import { db, schema } from "../../../src/infra/db/client";
+import { resolveTeam } from "../../../src/domains/workflows/repo";
 import {
   formatTelegramHtmlMessages,
   formatTelegramText,
@@ -13,12 +13,12 @@ import {
   notifyRunTelegram,
   parseTelegramCommand,
   sendRunTelegramAction,
-} from "./domains/channels/service";
-import { listChannelConnections } from "./domains/channels/repo";
-import { encryptJson } from "./infra/crypto";
-import { createProject } from "./domains/projects/repo";
-import { createAgent, publishAgent, requestRunApproval } from "./domains/runs";
-import { genId } from "./infra/db/ids";
+} from "../../../src/domains/channels/service";
+import { listChannelConnections } from "../../../src/domains/channels/repo";
+import { encryptJson } from "../../../src/infra/crypto";
+import { createProject } from "../../../src/domains/projects/repo";
+import { createAgent, publishAgent, requestRunApproval } from "../../../src/domains/runs";
+import { genId } from "../../../src/infra/db/ids";
 
 let dbUp = false;
 try {
@@ -60,6 +60,19 @@ d("telegram channel control", () => {
       pairingCode,
       createdBy: "usr_test",
     });
+    // Free-chat / /run routing enqueues a run, which now requires a live daemon for the
+    // echo runtime — seed one with a fresh heartbeat so routing isn't rejected as offline.
+    const daemonId = genId("daemon");
+    await db.insert(schema.daemons).values({
+      id: daemonId,
+      teamId,
+      name: "Telegram Test Daemon",
+      status: "online",
+      lastHeartbeatAt: sql`now()`,
+    });
+    await db
+      .insert(schema.runtimes)
+      .values({ id: genId("runtime"), daemonId, teamId, kind: "echo" });
     const project = await createProject(teamId, "usr_test", {
       name: "Telegram Ops",
       type: "ops",
@@ -79,6 +92,7 @@ d("telegram channel control", () => {
       .delete(schema.runs)
       .where(eq(schema.runs.teamId, teamId));
     await db.delete(schema.agents).where(eq(schema.agents.teamId, teamId));
+    await db.delete(schema.daemons).where(eq(schema.daemons.teamId, teamId));
     await db
       .delete(schema.memoryEntries)
       .where(eq(schema.memoryEntries.teamId, teamId));
@@ -114,6 +128,10 @@ d("telegram channel control", () => {
       handle: "telegram_controller",
       input: "Inspect leads",
     });
+    expect(parseTelegramCommand('/orchestrate "Research puis implement"')).toEqual({
+      kind: "orchestrate",
+      input: "Research puis implement",
+    });
     expect(parseTelegramCommand("@telegram_controller Inspect leads")).toEqual({
       kind: "runAgentHandle",
       handle: "telegram_controller",
@@ -130,6 +148,17 @@ d("telegram channel control", () => {
     expect(parseTelegramCommand("hello")).toEqual({
       kind: "freeChat",
       input: "hello",
+    });
+    // Free-form NL containing run-like words must still route to the orchestrator,
+    // not be intercepted as a run-help nudge.
+    expect(parseTelegramCommand("lance un audit SEO du site")).toEqual({
+      kind: "freeChat",
+      input: "lance un audit SEO du site",
+    });
+    // A slash-prefixed command that fails to parse but looks run-related → run help.
+    expect(parseTelegramCommand("/run wat")).toEqual({
+      kind: "runHelp",
+      text: "/run wat",
     });
     expect(
       parseTelegramCommand('/run project:proj_1 agent:agt_1 "Fix checkout"'),
@@ -195,7 +224,7 @@ d("telegram channel control", () => {
     expect(connections[0]?.identityCount).toBe(1);
   });
 
-  test("guides natural run requests instead of returning unknown command", async () => {
+  test("routes a run-like natural request to the orchestrator instead of pinned help", async () => {
     const sender = async ({ text }: { text: string }) => {
       sent.push(text);
     };
@@ -227,8 +256,10 @@ d("telegram channel control", () => {
 
     expect(res.ok).toBe(true);
     expect(res.reply).not.toContain("Unknown command");
-    expect(res.reply).toContain("/run @agent_handle");
-    expect(res.reply).toContain("Telegram Controller");
+    // The run-like wording ("lancer un agent") used to be intercepted as a /run
+    // help nudge; it must now route to the orchestrator and start the agent.
+    expect(res.reply).not.toContain("/run @agent_handle");
+    expect(res.reply).toContain("🧠 Telegram Controller is on it.");
   });
 
   test("lists agents from Telegram", async () => {

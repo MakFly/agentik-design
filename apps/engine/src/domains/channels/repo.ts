@@ -6,7 +6,8 @@ import { genId } from "../../infra/db/ids";
 import { connectionToken, telegramCall } from "./telegram/client";
 import type { ChannelConnectionRow, ChannelIdentityRow, TelegramMessage } from "./telegram/types";
 
-const { channelConnections, channelIdentities, channelMessages } = schema;
+const { agents, channelBindings, channelConnections, channelIdentities, channelMessages } =
+  schema;
 
 function randomToken(bytes = 18) {
   return randomBytes(bytes).toString("base64url");
@@ -255,6 +256,179 @@ export async function setActiveAgent(identityId: string, agentId: string | null)
     .update(channelIdentities)
     .set({ activeAgentId: agentId, updatedAt: sql`now()` })
     .where(eq(channelIdentities.id, identityId));
+}
+
+/* ── Channel bindings: per-connection agent + group-chat routing policy ──────── */
+
+type ChannelBindingRowDb = typeof channelBindings.$inferSelect;
+type ChannelGroupPolicy = ChannelBindingRowDb["groupPolicy"];
+
+type ChannelBindingView = {
+  id: string;
+  connectionId: string;
+  agentId: string | null;
+  agentName: string | undefined;
+  groupPolicy: ChannelGroupPolicy;
+  requireMention: boolean;
+  config: Record<string, unknown>;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function toBindingRow(row: ChannelBindingRowDb, agentName?: string | null): ChannelBindingView {
+  return {
+    id: row.id,
+    connectionId: row.connectionId,
+    agentId: row.agentId,
+    agentName: agentName ?? undefined,
+    groupPolicy: row.groupPolicy,
+    requireMention: row.requireMention,
+    config: row.config,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function agentNameFor(teamId: string, agentId: string | null) {
+  if (!agentId) return undefined;
+  const [row] = await db
+    .select({ name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
+    .limit(1);
+  return row?.name;
+}
+
+export async function listBindings(teamId: string, connectionId: string) {
+  const rows = await db
+    .select({ binding: channelBindings, agentName: agents.name })
+    .from(channelBindings)
+    .leftJoin(agents, eq(agents.id, channelBindings.agentId))
+    .where(
+      and(
+        eq(channelBindings.teamId, teamId),
+        eq(channelBindings.connectionId, connectionId),
+      ),
+    )
+    .orderBy(desc(channelBindings.createdAt));
+  return rows.map((r) => toBindingRow(r.binding, r.agentName));
+}
+
+export async function createBinding(
+  teamId: string,
+  connectionId: string,
+  input: {
+    agentId?: string | null;
+    groupPolicy: ChannelGroupPolicy;
+    requireMention: boolean;
+    config?: Record<string, unknown>;
+  },
+): Promise<
+  | { error: "connection_not_found" | "agent_not_found" | "binding_exists" }
+  | { binding: ChannelBindingView }
+> {
+  const [conn] = await db
+    .select({ id: channelConnections.id })
+    .from(channelConnections)
+    .where(and(eq(channelConnections.teamId, teamId), eq(channelConnections.id, connectionId)))
+    .limit(1);
+  if (!conn) return { error: "connection_not_found" as const };
+  if (input.agentId) {
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.teamId, teamId), eq(agents.id, input.agentId)))
+      .limit(1);
+    if (!agent) return { error: "agent_not_found" as const };
+    const [dupe] = await db
+      .select({ id: channelBindings.id })
+      .from(channelBindings)
+      .where(
+        and(
+          eq(channelBindings.connectionId, connectionId),
+          eq(channelBindings.agentId, input.agentId),
+        ),
+      )
+      .limit(1);
+    if (dupe) return { error: "binding_exists" as const };
+  }
+  const [row] = await db
+    .insert(channelBindings)
+    .values({
+      id: genId("chbind"),
+      teamId,
+      connectionId,
+      agentId: input.agentId ?? null,
+      groupPolicy: input.groupPolicy,
+      requireMention: input.requireMention,
+      config: input.config ?? {},
+    })
+    .returning();
+  return { binding: toBindingRow(row!, await agentNameFor(teamId, row!.agentId)) };
+}
+
+export async function updateBinding(
+  teamId: string,
+  bindingId: string,
+  patch: {
+    agentId?: string | null;
+    groupPolicy?: ChannelGroupPolicy;
+    requireMention?: boolean;
+    config?: Record<string, unknown>;
+    status?: string;
+  },
+): Promise<null | { error: "agent_not_found" } | { binding: ChannelBindingView }> {
+  if (patch.agentId) {
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.teamId, teamId), eq(agents.id, patch.agentId)))
+      .limit(1);
+    if (!agent) return { error: "agent_not_found" as const };
+  }
+  const set: Record<string, unknown> = { updatedAt: sql`now()` };
+  if (patch.agentId !== undefined) set.agentId = patch.agentId;
+  if (patch.groupPolicy !== undefined) set.groupPolicy = patch.groupPolicy;
+  if (patch.requireMention !== undefined) set.requireMention = patch.requireMention;
+  if (patch.config !== undefined) set.config = patch.config;
+  if (patch.status !== undefined) set.status = patch.status;
+  const [row] = await db
+    .update(channelBindings)
+    .set(set)
+    .where(and(eq(channelBindings.teamId, teamId), eq(channelBindings.id, bindingId)))
+    .returning();
+  if (!row) return null;
+  return { binding: toBindingRow(row, await agentNameFor(teamId, row.agentId)) };
+}
+
+export async function deleteBinding(teamId: string, bindingId: string) {
+  const deleted = await db
+    .delete(channelBindings)
+    .where(and(eq(channelBindings.teamId, teamId), eq(channelBindings.id, bindingId)))
+    .returning({ id: channelBindings.id });
+  return deleted.length > 0;
+}
+
+/**
+ * The effective binding driving a Telegram connection's listen/act policy. A
+ * connection can hold several agent bindings; the most recently updated active one
+ * wins. Returns null when none exists — callers must then keep legacy behavior.
+ */
+export async function getConnectionBinding(connectionId: string) {
+  const [row] = await db
+    .select()
+    .from(channelBindings)
+    .where(
+      and(
+        eq(channelBindings.connectionId, connectionId),
+        eq(channelBindings.status, "active"),
+      ),
+    )
+    .orderBy(desc(channelBindings.updatedAt))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function activeTelegramRecipients(teamId: string) {

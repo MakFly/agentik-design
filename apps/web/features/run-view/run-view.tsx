@@ -112,6 +112,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
       <RunDetailHeader team={team} run={run} steps={steps} placement={data.placement} isLive={isLive} connection={connection} />
 
       {data.projectContext ? <ProjectContextStrip team={team} context={data.projectContext} /> : null}
+      {data.children?.length ? <ChildRunsStrip team={team} childrenRuns={data.children} /> : null}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 pt-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
         <div className="min-h-0 rounded-lg border border-border bg-surface lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:max-h-[calc(100dvh-var(--navbar-h)-2rem)]">
@@ -244,6 +245,45 @@ function ProjectContextStrip({ team, context }: { team: string; context: RunProj
       <div className="flex items-center gap-2 px-2 py-1.5">
         <Badge variant="outline">{context.project.type}</Badge>
         <Badge variant="secondary">{context.task.priority}</Badge>
+      </div>
+    </section>
+  );
+}
+
+function ChildRunsStrip({
+  team,
+  childrenRuns,
+}: {
+  team: string;
+  childrenRuns: NonNullable<RunDetail["children"]>;
+}) {
+  return (
+    <section className="mt-3 rounded-lg border border-border bg-surface p-2">
+      <div className="flex h-8 items-center gap-2 px-2">
+        <Workflow className="size-4 text-muted-foreground" />
+        <h2 className="text-xs font-medium">Child runs</h2>
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{childrenRuns.length}</span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {childrenRuns.map((child) => (
+          <Link
+            key={child.id}
+            href={`/${team}/runs/${child.id}`}
+            className="min-w-0 rounded-md border border-border bg-background px-3 py-2 transition-colors hover:bg-surface-2"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate text-sm font-medium">{child.agentName ?? child.agentId ?? "Agent"}</span>
+              <StatusBadge status={child.status as Run["status"]} size="sm" />
+            </div>
+            <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{child.id}</p>
+            {child.result || child.error ? (
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                {child.error ?? child.result}
+              </p>
+            ) : null}
+          </Link>
+        ))}
       </div>
     </section>
   );

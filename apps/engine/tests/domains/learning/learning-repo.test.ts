@@ -4,8 +4,8 @@ import {
   buildInjectionPreamble,
   selectMemoriesForInjection,
   selectSkillsForInjection,
-} from "./domains/learning/memory/injection";
-import { nextVersion } from "./domains/learning/shared";
+} from "../../../src/domains/learning/memory/injection";
+import { nextVersion } from "../../../src/domains/learning/shared";
 
 describe("nextVersion (monotonicity)", () => {
   test("starts at 1 with no prior versions", () => {

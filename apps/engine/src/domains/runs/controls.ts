@@ -4,6 +4,7 @@ import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
 
 const { runs, runMessages, projectTasks } = schema;
+const ACTIVE_CHILD_STATUSES = ["queued", "running", "paused", "waiting_approval"] as const;
 
 async function nextRunMessageSeq(runId: string) {
   const rows = (await db.execute(sql`
@@ -47,6 +48,7 @@ export async function cancelRun(
   teamId: string,
   id: string,
 ): Promise<boolean> {
+  const childId = await activeChildRunId(teamId, id);
   const updated = await db
     .update(runs)
     .set({ status: "cancelled", endedAt: sql`now()` })
@@ -69,6 +71,7 @@ export async function cancelRun(
       projectTaskId: runs.projectTaskId,
     });
   if (!updated[0]) return false;
+  if (childId) await cancelRun(teamId, childId).catch(() => false);
   await appendRunControlMessage(teamId, id, "Run cancelled by operator.");
   if (updated[0].projectTaskId) {
     await db
@@ -94,6 +97,7 @@ export async function pauseRun(
   id: string,
   reason?: string,
 ): Promise<boolean> {
+  const childId = await activeChildRunId(teamId, id);
   const updated = await db
     .update(runs)
     .set({ status: "paused" })
@@ -101,11 +105,12 @@ export async function pauseRun(
       and(
         eq(runs.id, id),
         eq(runs.teamId, teamId),
-        eq(runs.status, "queued"),
+        inArray(runs.status, ["queued", "running", "waiting_approval"]),
       ),
     )
     .returning({ id: runs.id, teamId: runs.teamId });
   if (!updated[0]) return false;
+  if (childId) await pauseRun(teamId, childId, reason).catch(() => false);
   await appendRunControlMessage(
     teamId,
     id,
@@ -121,6 +126,7 @@ export async function resumeRun(
   id: string,
   reason?: string,
 ): Promise<boolean> {
+  const childId = await activeChildRunId(teamId, id);
   const updated = await db
     .update(runs)
     .set({ status: "queued" })
@@ -133,6 +139,7 @@ export async function resumeRun(
     )
     .returning({ id: runs.id, teamId: runs.teamId });
   if (!updated[0]) return false;
+  if (childId) await resumeRun(teamId, childId, reason).catch(() => false);
   await appendRunControlMessage(
     teamId,
     id,
@@ -174,6 +181,8 @@ export async function approveRun(
   id: string,
   reason?: string,
 ): Promise<boolean> {
+  const childId = await activeChildRunId(teamId, id, ["waiting_approval"]);
+  if (childId) return approveRun(teamId, childId, reason);
   const [task] = await db
     .select({
       input: runs.input,
@@ -252,6 +261,8 @@ export async function rejectRun(
   id: string,
   reason?: string,
 ): Promise<boolean> {
+  const childId = await activeChildRunId(teamId, id, ["waiting_approval"]);
+  if (childId) return rejectRun(teamId, childId, reason);
   const updated = await db
     .update(runs)
     .set({ status: "cancelled", endedAt: sql`now()` })
@@ -287,6 +298,36 @@ export async function rejectRun(
   }
   hub.publish(teamId, { kind: "run", action: "cancelled", runId: id });
   return true;
+}
+
+async function activeChildRunId(
+  teamId: string,
+  parentRunId: string,
+  statuses: readonly string[] = ACTIVE_CHILD_STATUSES,
+): Promise<string | null> {
+  const rows = await db
+    .select({ id: runs.id, status: runs.status, createdAt: runs.createdAt })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.teamId, teamId),
+        eq(runs.parentRunId, parentRunId),
+        inArray(runs.status, statuses as typeof runs.$inferSelect.status[]),
+      ),
+    );
+  const priority = new Map([
+    ["waiting_approval", 0],
+    ["running", 1],
+    ["queued", 2],
+    ["paused", 3],
+  ]);
+  return (
+    rows.sort((a, b) => {
+      const statusDiff = (priority.get(a.status) ?? 10) - (priority.get(b.status) ?? 10);
+      if (statusDiff !== 0) return statusDiff;
+      return a.createdAt > b.createdAt ? -1 : a.createdAt < b.createdAt ? 1 : 0;
+    })[0]?.id ?? null
+  );
 }
 
 /**

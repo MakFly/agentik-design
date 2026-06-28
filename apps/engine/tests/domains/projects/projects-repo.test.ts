@@ -4,12 +4,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, ne, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { resolveTeam } from "./domains/workflows/repo";
-import { createAgent, getRunDetail, publishAgent } from "./domains/runs";
-import { addProjectResource, createProject, createProjectTask, runProjectTask } from "./domains/projects/repo";
-import { insertConfirmedMemory } from "./domains/learning/memory/service";
-import { claimTask, registerDaemon } from "./execution/daemon/repo";
+import { db, schema } from "../../../src/infra/db/client";
+import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { createAgent, getRunDetail, publishAgent } from "../../../src/domains/runs";
+import { addProjectResource, createProject, createProjectTask, runProjectTask } from "../../../src/domains/projects/repo";
+import { insertConfirmedMemory } from "../../../src/domains/learning/memory/service";
+import { claimTask, registerDaemon } from "../../../src/execution/daemon/repo";
 
 let dbUp = false;
 try {

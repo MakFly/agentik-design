@@ -133,6 +133,11 @@ export interface Agent extends Audited {
   role: string;
   goal: string;
   description?: string;
+  /** Identity avatar (OpenClaw-style) for rosters and the Fleet graph. */
+  emoji?: string;
+  color?: string;
+  /** Orchestrators delegate to a roster of subagents. */
+  isOrchestrator?: boolean;
   tags: string[];
   owner: UserId;
   health: AgentHealth;
@@ -511,7 +516,8 @@ export interface Step {
 
 export type RunSubject =
   | { kind: "agent"; agentId: AgentId; versionId: VersionId }
-  | { kind: "workflow"; workflowId: WorkflowId; versionId: VersionId };
+  | { kind: "workflow"; workflowId: WorkflowId; versionId: VersionId }
+  | { kind: "orchestration"; runId: RunId };
 
 export interface Run {
   id: RunId;

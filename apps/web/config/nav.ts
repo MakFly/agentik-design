@@ -11,6 +11,8 @@ import {
   LayoutDashboard,
   Monitor,
   BookOpenText,
+  Network,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import type { Permission } from "./permissions";
@@ -35,6 +37,8 @@ export interface NavItem {
   permission?: Permission;
   /** live-count badge source key (resolved from realtime/session) */
   badge?: "activeRuns" | "approvals";
+  /** feature shipped but temporarily disabled — shown as non-clickable "In progress" */
+  comingSoon?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -78,6 +82,15 @@ export const NAV_ITEMS: NavItem[] = [
     hotkey: "a",
     permission: "agent:read",
   },
+  {
+    key: "fleet",
+    label: "Fleet",
+    segment: "agents/fleet",
+    icon: Network,
+    group: "control",
+    hotkey: "f",
+    permission: "agent:read",
+  },
   // BUILD
   {
     key: "workflows",
@@ -87,6 +100,16 @@ export const NAV_ITEMS: NavItem[] = [
     group: "build",
     hotkey: "w",
     permission: "workflow:read",
+    comingSoon: true,
+  },
+  {
+    key: "automations",
+    label: "Automations",
+    segment: "automations",
+    icon: Zap,
+    group: "build",
+    hotkey: "z",
+    permission: "agent:read",
   },
   {
     key: "tools",

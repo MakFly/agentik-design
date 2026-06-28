@@ -24,6 +24,7 @@ export function StepFocusPanel({
 }) {
   const running = step.status === "running";
   const reasoning = liveReasoning ?? step.reasoning;
+  const showReasoning = Boolean(reasoning) || (running && step.actor.kind === "agent");
   const agentOutput =
     step.actor.kind === "agent" && !reasoning && !step.error && step.summary
       ? step.summary
@@ -51,7 +52,7 @@ export function StepFocusPanel({
 
       {step.approval ? <ApprovalCard approval={step.approval} onDecide={onDecide} /> : null}
 
-      {reasoning || running ? <ReasoningStream text={reasoning} streaming={running} /> : null}
+      {showReasoning ? <ReasoningStream text={reasoning} streaming={running && step.actor.kind === "agent"} /> : null}
 
       {agentOutput ? (
         <section className="rounded-md border border-border bg-surface-2/60 p-3" aria-label="Agent output">

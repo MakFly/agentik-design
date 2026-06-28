@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "./infra/db/client";
-import { deleteDaemon, registerDaemon } from "./execution/daemon/repo";
+import { db, schema } from "../../../src/infra/db/client";
+import { deleteDaemon, registerDaemon } from "../../../src/execution/daemon/repo";
 
 let dbUp = false;
 try {
