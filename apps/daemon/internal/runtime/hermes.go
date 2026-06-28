@@ -18,8 +18,10 @@ import (
 // Hermes runs the Nous Research "hermes" CLI in single-query quiet mode (`-q -Q`)
 // and maps its final answer onto a task message. Like Claude it can execute
 // arbitrary code, so it is hardened identically: isolated work dir, env allowlist,
-// hard timeout, and process-group kill on cancel. Hermes authenticates via its own
-// ~/.hermes config (provider key / OAuth), so no API key flows through the engine.
+// hard timeout, and process-group kill on cancel. Auth: when the engine injects a
+// managed provider API key, it is written into an isolated HERMES_HOME/config.yaml;
+// otherwise the run falls back to the machine's own ~/.hermes config. Note: unlike
+// Codex, Hermes has no ChatGPT-OAuth path — it consumes API keys only.
 type Hermes struct {
 	WorkRoot  string
 	Model     string

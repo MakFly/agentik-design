@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -17,8 +18,9 @@ import (
 
 // Codex runs OpenAI's "codex" CLI non-interactively (`codex exec`). Like the other
 // real runtimes it is hardened: isolated work dir, env allowlist, hard timeout, and
-// process-group kill on cancel. Codex authenticates from its own ~/.codex session
-// (or an injected OPENAI_API_KEY), so no key has to flow from the engine.
+// process-group kill on cancel. Auth precedence: subscription OAuth injected by the
+// engine (AGENTIK_CODEX_AUTH → an isolated ~/.codex/auth.json) wins; otherwise the
+// run falls back to the machine's own ~/.codex session or an injected OPENAI_API_KEY.
 type Codex struct {
 	WorkRoot  string
 	Model     string
@@ -42,6 +44,53 @@ func codexEnv() []string {
 		}
 	}
 	return env
+}
+
+// writeCodexHome materializes an isolated HOME with a ~/.codex/auth.json built
+// from the subscription OAuth tokens the engine injected (AGENTIK_CODEX_AUTH), so
+// a run authenticates from the team's connected ChatGPT account instead of the
+// machine's own ~/.codex. Returns the home path (empty when no OAuth was injected,
+// so the run falls back to the machine session or OPENAI_API_KEY).
+func writeCodexHome(dir string, env map[string]string) (string, error) {
+	raw := env["AGENTIK_CODEX_AUTH"]
+	if raw == "" {
+		return "", nil
+	}
+	var blob struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		AccountID    string `json:"account_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &blob); err != nil {
+		return "", fmt.Errorf("parse codex oauth: %w", err)
+	}
+	if blob.AccessToken == "" {
+		return "", nil
+	}
+	home := filepath.Join(dir, "codex-home")
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		return "", err
+	}
+	authFile := map[string]any{
+		"OPENAI_API_KEY": nil,
+		"tokens": map[string]any{
+			"id_token":      blob.IDToken,
+			"access_token":  blob.AccessToken,
+			"refresh_token": blob.RefreshToken,
+			"account_id":    blob.AccountID,
+		},
+		"last_refresh": time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(authFile)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), b, 0o600); err != nil {
+		return "", err
+	}
+	return home, nil
 }
 
 func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error) {
@@ -88,9 +137,19 @@ func (c Codex) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (a
 	// positional argument codex would otherwise misparse as an unknown flag.
 	args = append(args, "-")
 
+	// Materialize the team's connected ChatGPT session into an isolated HOME when
+	// the engine injected subscription OAuth; otherwise keep the machine session.
+	codexHome, err := writeCodexHome(dir, task.Env)
+	if err != nil {
+		return nil, fmt.Errorf("codex auth: %w", err)
+	}
+
 	cmd := exec.CommandContext(runCtx, "codex", args...)
 	cmd.Dir = dir
 	cmd.Env = withTaskEnv(codexEnv(), task.Env)
+	if codexHome != "" {
+		cmd.Env = append(cmd.Env, "HOME="+codexHome)
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // own process group
 	// Kill the whole group (CLI + any children it spawned), not just the leader.

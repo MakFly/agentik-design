@@ -62,6 +62,8 @@ func runCLI(args []string) error {
 		return runSetup(args[2:])
 	case "disconnect":
 		return runDisconnect(args[2:])
+	case "login":
+		return runLogin(args[2:])
 	case "doctor":
 		return runDoctor(args[2:])
 	case "tui":
@@ -112,6 +114,7 @@ Usage:
   agentik setup --url http://localhost:8787 --token dtkn_... --start
   agentik 'agentik://setup?url=http%3A%2F%2Flocalhost%3A8787&token=dtkn_...&start=1'
   agentik disconnect
+  agentik login codex          Connect a ChatGPT subscription for Codex runs
   agentik doctor [--json]
   agentik tui
   agentik daemon start [--background]
