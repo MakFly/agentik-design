@@ -49,7 +49,9 @@ func TestUpgradeResolved_codexNpmLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgradeResolved: %v", err)
 	}
-	want := [][]string{{"npm", "install", "-g", "--prefix", "/home/kev/.local", "@openai/codex@latest"}}
+	// Codex is version-pinned (see codexPinnedVersion): an upgrade reinstalls the
+	// pinned ref, not a moving @latest, so a breaking CLI release can't land silently.
+	want := [][]string{{"npm", "install", "-g", "--prefix", "/home/kev/.local", "@openai/codex@" + codexPinnedVersion}}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("steps = %v, want %v", steps, want)
 	}
@@ -62,7 +64,7 @@ func TestUpgradeResolved_codexBun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgradeResolved: %v", err)
 	}
-	want := [][]string{{"bun", "add", "--global", "@openai/codex@latest"}}
+	want := [][]string{{"bun", "add", "--global", "@openai/codex@" + codexPinnedVersion}}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("steps = %v, want %v", steps, want)
 	}

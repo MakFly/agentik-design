@@ -33,13 +33,29 @@ const (
 	methodHermesSelfUpdate
 )
 
+// codexPinnedVersion pins the @openai/codex CLI. The daemon reverse-engineers the
+// CLI's auth.json shape and its --json event stream (see runtime/codex.go), so a
+// silent @latest bump can break OAuth materialization or output parsing without any
+// code change here. Bump deliberately after re-checking the auth.json contract test.
+const codexPinnedVersion = "0.142.3"
+
 // cliSpec describes one installable CLI kind. Package names are compile-time constants.
 type cliSpec struct {
 	bin            string
 	npmPkg         string
+	npmVersion     string // pinned npm version; "" means @latest
 	pipPkg         string
 	defaultInstall [][]string
 	uninstall      [][]string
+}
+
+// pkgRef returns the npm install ref (pkg@version), honouring npmVersion when set so
+// an unattended install/upgrade pulls the pinned version instead of a moving @latest.
+func (sp cliSpec) pkgRef() string {
+	if sp.npmVersion != "" {
+		return sp.npmPkg + "@" + sp.npmVersion
+	}
+	return sp.npmPkg + "@latest"
 }
 
 var hermesInstall = [][]string{
@@ -58,7 +74,8 @@ var clis = map[string]cliSpec{
 	"codex": {
 		bin:            "codex",
 		npmPkg:         "@openai/codex",
-		defaultInstall: [][]string{{"bun", "add", "--global", "@openai/codex@latest"}},
+		npmVersion:     codexPinnedVersion,
+		defaultInstall: [][]string{{"bun", "add", "--global", "@openai/codex@" + codexPinnedVersion}},
 		uninstall:      [][]string{{"bun", "remove", "--global", "@openai/codex"}},
 	},
 	"hermes": {
@@ -177,7 +194,7 @@ func upgradeResolved(kind string, sp cliSpec, real string) ([][]string, error) {
 		if err := requireOnPath("bun"); err != nil {
 			return nil, err
 		}
-		return [][]string{{"bun", "add", "--global", sp.npmPkg + "@latest"}}, nil
+		return [][]string{{"bun", "add", "--global", sp.pkgRef()}}, nil
 
 	case methodNpmPrefix:
 		if sp.npmPkg == "" {
@@ -192,7 +209,7 @@ func upgradeResolved(kind string, sp cliSpec, real string) ([][]string, error) {
 		if err := requireOnPath("npm"); err != nil {
 			return nil, err
 		}
-		return [][]string{{"npm", "install", "-g", "--prefix", prefix, sp.npmPkg + "@latest"}}, nil
+		return [][]string{{"npm", "install", "-g", "--prefix", prefix, sp.pkgRef()}}, nil
 
 	case methodClaudeSelfUpdate:
 		return [][]string{{"claude", "update"}}, nil
