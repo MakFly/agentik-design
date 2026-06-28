@@ -12,9 +12,9 @@ import { createAgent, publishAgent } from "../../../src/domains/runs";
 import {
   createRule,
   createSignal,
-  dispatchSignal,
   listDeliveries,
 } from "../../../src/domains/signals/repo";
+import { dispatchSignal } from "../../../src/domains/signals/service";
 import { createRuleBody } from "../../../src/domains/signals/schemas";
 
 describe("rule action schema (discriminated union)", () => {

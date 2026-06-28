@@ -1,8 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
-import { sendOrchestratedTurn } from "../chat/orchestrator";
-import { runAgent } from "../runs";
 import type {
   CreateRuleInput,
   CreateSignalInput,
@@ -12,21 +10,9 @@ import type {
 
 const { agents, assistantRules, signalDeliveries, signals } = schema;
 
-type DeliveryStatus = "received" | "matched" | "started" | "ignored" | "failed";
-
-/** Map an orchestrator turn result onto a delivery outcome. */
-function routedToDelivery(
-  routed: Awaited<ReturnType<typeof sendOrchestratedTurn>>,
-): { status: DeliveryStatus; runId: string | null; error: string | null } {
-  if (routed.kind === "orchestration" || routed.kind === "run") {
-    return { status: "started", runId: routed.runId, error: null };
-  }
-  return {
-    status: "failed",
-    runId: null,
-    error: routed.kind === "error" ? routed.error : "clarification_required",
-  };
-}
+export type DeliveryStatus = "received" | "matched" | "started" | "ignored" | "failed";
+export type SignalRow = typeof signals.$inferSelect;
+export type AssistantRuleRow = typeof assistantRules.$inferSelect;
 
 export async function listSignals(teamId: string) {
   return db
@@ -94,19 +80,17 @@ export async function deleteRule(teamId: string, id: string) {
   return Boolean(deleted[0]);
 }
 
-export async function dispatchSignal(
-  teamId: string,
-  signalId: string,
-  input: { payload: Record<string, unknown> },
-) {
+export async function getSignal(teamId: string, signalId: string) {
   const [signal] = await db
     .select()
     .from(signals)
     .where(and(eq(signals.id, signalId), eq(signals.teamId, teamId)))
     .limit(1);
-  if (!signal) return null;
+  return signal ?? null;
+}
 
-  const rules = await db
+export async function getActiveRulesForSignal(teamId: string, signalId: string) {
+  return db
     .select()
     .from(assistantRules)
     .where(
@@ -117,74 +101,22 @@ export async function dispatchSignal(
       ),
     )
     .orderBy(desc(assistantRules.createdAt));
+}
 
-  const payloadText = JSON.stringify(input.payload ?? {});
-  const deliveries = [];
-  for (const rule of rules.length ? rules : [null]) {
-    const deliveryId = genId("sdel");
-    let status: DeliveryStatus = rule ? "matched" : "received";
-    let runId: string | null = null;
-    let error: string | null = null;
-
-    if (rule) {
-      const action = objectRecord(rule.action);
-      const actionType = typeof action.type === "string" ? action.type : null;
-      const actionInput = typeof action.input === "string" ? action.input.trim() : "";
-      const threadKey = `signal:${signalId}:rule:${rule.id}`;
-
-      if (rule.targetAgentId) {
-        // Deterministic route: run exactly this agent, no orchestration/router involved.
-        const run = await runAgent(teamId, rule.targetAgentId, actionInput || payloadText);
-        if (run === null) {
-          status = "ignored"; // agent was deleted/unknown — skip rather than fail loudly
-          error = "target_agent_missing";
-        } else if ("error" in run) {
-          status = "failed";
-          error = run.error ?? null;
-        } else {
-          status = "started";
-          runId = run.runId;
-        }
-      } else if (actionType === "run_agent" && actionInput) {
-        // Single-agent intent: let the router pick, but never force a multi-step plan.
-        const routed = await sendOrchestratedTurn({
-          teamId,
-          surface: "web",
-          actorId: `signal:${signalId}`,
-          threadKey,
-          text: actionInput,
-        });
-        ({ status, runId, error } = routedToDelivery(routed));
-      } else if (actionType === "orchestrate" && actionInput) {
-        const routed = await sendOrchestratedTurn({
-          teamId,
-          surface: "web",
-          actorId: `signal:${signalId}`,
-          threadKey,
-          text: actionInput,
-          forceOrchestration: true,
-        });
-        ({ status, runId, error } = routedToDelivery(routed));
-      }
-    }
-
-    const [delivery] = await db
-      .insert(signalDeliveries)
-      .values({
-        id: deliveryId,
-        teamId,
-        signalId,
-        ruleId: rule?.id ?? null,
-        status,
-        payload: input.payload,
-        runId,
-        error,
-      })
-      .returning();
-    deliveries.push(delivery!);
-  }
-
-  return { signal, deliveries };
+export async function insertSignalDelivery(values: {
+  teamId: string;
+  signalId: string;
+  ruleId: string | null;
+  status: DeliveryStatus;
+  payload: Record<string, unknown>;
+  runId: string | null;
+  error: string | null;
+}) {
+  const [delivery] = await db
+    .insert(signalDeliveries)
+    .values({ id: genId("sdel"), ...values })
+    .returning();
+  return delivery!;
 }
 
 /** Recent signal deliveries with signal/rule/agent names joined for the activity feed. */
@@ -224,8 +156,4 @@ export async function listDeliveries(teamId: string) {
     createdAt: r.createdAt,
   }));
   return { items, total: items.length };
-}
-
-function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }

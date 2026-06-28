@@ -9,13 +9,13 @@ import {
   createSignal,
   deleteRule,
   deleteSignal,
-  dispatchSignal,
   listDeliveries,
   listRules,
   listSignals,
   updateRule,
   updateSignal,
 } from "./repo";
+import { dispatchSignal } from "./service";
 import {
   createRuleBody,
   createSignalBody,
