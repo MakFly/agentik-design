@@ -13,6 +13,7 @@ import { workflowsRoutes } from "../domains/workflows/routes";
 import { daemon } from "../execution/daemon/routes";
 import { auth } from "../gateway/routes/auth";
 import { handleTelegramWebhookSecret } from "../domains/channels/service";
+import { ingestSignalWebhook } from "../domains/signals/service";
 import { observationRoutes } from "../observation/routes";
 import { withAuth, type AuthVars } from "./middleware/auth";
 import { rateLimit } from "./middleware/rate-limit";
@@ -59,6 +60,15 @@ app.post("/api/v1/channels/telegram/:secret/webhook", async (c) => {
   if (result.reply === "connection_not_found")
     return c.json({ ok: false, error: "not_found" }, 404);
   return c.json({ ok: result.ok });
+});
+
+// Unauthenticated external signal ingestion (Gmail push / CRM / Stripe …). The
+// per-signal token authorizes; no session. Mounted on app so it bypasses withAuth.
+app.post("/api/v1/signals/ingest/:token", async (c) => {
+  const payload = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const result = await ingestSignalWebhook(c.req.param("token"), payload);
+  if (!result) return c.json({ ok: false, error: "unknown_token" }, 404);
+  return c.json({ ok: true, ...result });
 });
 
 app.route("/api/v1", api);

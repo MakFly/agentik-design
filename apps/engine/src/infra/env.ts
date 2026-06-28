@@ -33,6 +33,11 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v !== "false"),
+  /** Opt-in cron scheduler for schedule-kind signals. Off unless "true". */
+  SCHEDULER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
 });
 
 const parsed = schema.safeParse(process.env);

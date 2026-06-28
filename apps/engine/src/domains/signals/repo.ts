@@ -80,6 +80,17 @@ export async function deleteRule(teamId: string, id: string) {
   return Boolean(deleted[0]);
 }
 
+/** Resolve an ACTIVE signal by its per-signal webhook token (stored in config.webhookToken). */
+export async function getSignalByWebhookToken(token: string) {
+  if (!token) return null;
+  const [row] = await db
+    .select()
+    .from(signals)
+    .where(and(eq(signals.status, "active"), sql`${signals.config} ->> 'webhookToken' = ${token}`))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function getSignal(teamId: string, signalId: string) {
   const [signal] = await db
     .select()
@@ -87,6 +98,14 @@ export async function getSignal(teamId: string, signalId: string) {
     .where(and(eq(signals.id, signalId), eq(signals.teamId, teamId)))
     .limit(1);
   return signal ?? null;
+}
+
+/** All ACTIVE schedule-kind signals across teams (the cron scheduler's work-list). */
+export async function listScheduledSignals() {
+  return db
+    .select()
+    .from(signals)
+    .where(and(eq(signals.status, "active"), eq(signals.kind, "schedule")));
 }
 
 export async function getActiveRulesForSignal(teamId: string, signalId: string) {

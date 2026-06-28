@@ -1,12 +1,16 @@
 import { sendOrchestratedTurn } from "../chat/orchestrator";
 import { runAgent } from "../runs";
 import { matchesCondition } from "./condition";
+import { cronMatches } from "./cron";
 import {
   type AssistantRuleRow,
   type DeliveryStatus,
+  type SignalRow,
   getActiveRulesForSignal,
   getSignal,
+  getSignalByWebhookToken,
   insertSignalDelivery,
+  listScheduledSignals,
 } from "./repo";
 
 function objectRecord(value: unknown): Record<string, unknown> {
@@ -123,4 +127,73 @@ export async function dispatchSignal(
   }
 
   return { signal, deliveries };
+}
+
+/** Re-read a Date's wall-clock fields in a named timezone (for cron `tz`). */
+function inZone(date: Date, tz: string): Date {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+    const f = Object.fromEntries(parts.map((p) => [p.type, p.value])) as Record<string, string>;
+    return new Date(
+      Number(f.year),
+      Number(f.month) - 1,
+      Number(f.day),
+      Number(f.hour) % 24,
+      Number(f.minute),
+      Number(f.second),
+    );
+  } catch {
+    return date; // unknown tz → fall back to process-local time
+  }
+}
+
+/** Active schedule signals whose cron expression matches `now` (minute granularity). */
+export async function dueScheduledSignals(now: Date): Promise<SignalRow[]> {
+  const scheduled = await listScheduledSignals();
+  return scheduled.filter((s) => {
+    const config = (s.config ?? {}) as { cron?: unknown; tz?: unknown };
+    if (typeof config.cron !== "string") return false;
+    const when = typeof config.tz === "string" ? inZone(now, config.tz) : now;
+    return cronMatches(config.cron, when);
+  });
+}
+
+/** Fire every due scheduled signal once. Used by the scheduler tick and by tests. */
+export async function fireDueScheduledSignals(
+  now: Date,
+): Promise<Array<{ signalId: string; deliveries: number }>> {
+  const due = await dueScheduledSignals(now);
+  const fired: Array<{ signalId: string; deliveries: number }> = [];
+  for (const signal of due) {
+    const result = await dispatchSignal(signal.teamId, signal.id, {
+      payload: { trigger: "cron", firedAt: now.toISOString() },
+    });
+    if (result) fired.push({ signalId: signal.id, deliveries: result.deliveries.length });
+  }
+  return fired;
+}
+
+/**
+ * Unauthenticated external ingestion: an outside system (Gmail push, CRM, Stripe…)
+ * posts to /signals/ingest/:token. The token resolves the signal (no session), then
+ * normal condition-gated dispatch runs. Returns null if the token matches nothing.
+ */
+export async function ingestSignalWebhook(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<{ signalId: string; deliveries: number } | null> {
+  const signal = await getSignalByWebhookToken(token);
+  if (!signal) return null;
+  const result = await dispatchSignal(signal.teamId, signal.id, { payload });
+  if (!result) return null;
+  return { signalId: signal.id, deliveries: result.deliveries.length };
 }
