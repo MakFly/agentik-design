@@ -14,6 +14,8 @@ import { auth } from "../gateway/routes/auth";
 import { handleTelegramWebhookSecret } from "../domains/channels/service";
 import { observationRoutes } from "../observation/routes";
 import { withAuth, type AuthVars } from "./middleware/auth";
+import { rateLimit } from "./middleware/rate-limit";
+import { env } from "../infra/env";
 
 const app = new Hono();
 
@@ -23,6 +25,9 @@ app.get("/api/v1/health", (c) => c.json({ ok: true, service: "engine" }));
 
 const api = new Hono<{ Variables: AuthVars }>();
 api.use("*", withAuth);
+// Per-team throttle on the authenticated API (after auth so we key by tenant).
+// /daemon and /health are mounted elsewhere and stay unthrottled.
+api.use("*", rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, max: env.RATE_LIMIT_MAX }));
 
 api.route("/", workflowsRoutes);
 api.route("/", agentsRoutes);

@@ -17,6 +17,9 @@ const schema = z.object({
   /** Default Google OAuth2 app credentials (used unless a credential overrides). */
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  /** Per-team API rate limit: max authenticated requests per window (fixed window). */
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60_000),
   /** Agent-execution harness. The daemon authenticates with this shared token. */
   DAEMON_ENABLED: z.coerce.boolean().default(false),
   DAEMON_AUTH_TOKEN: z.string().min(16).optional(),
