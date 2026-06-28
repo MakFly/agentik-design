@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, unique } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, integer, jsonb, pgTable, text, unique } from "drizzle-orm/pg-core";
 import type {
   ProposedMemoryChange,
   ProposedSkillChange,
@@ -39,8 +39,11 @@ export const runs = pgTable("runs", {
   error: text("error"),
   /** Daemon run: agent that executes this run. Null for workflow runs. */
   agentId: text("agent_id"),
-  /** Orchestration run tree: null for root runs, set on child runs. */
-  parentRunId: text("parent_run_id"),
+  /** Orchestration run tree: null for root runs, set on child runs.
+   *  Self-referencing FK so a deleted/cancelled parent orphans (SET NULL), never zombies. */
+  parentRunId: text("parent_run_id").references((): AnyPgColumn => runs.id, {
+    onDelete: "set null",
+  }),
   /** Daemon run: product context when backing a project task. */
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
   projectTaskId: text("project_task_id").references(() => projectTasks.id, { onDelete: "set null" }),

@@ -267,6 +267,13 @@
       "when": 1782554400000,
       "tag": "0037_channel_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1782558000000,
+      "tag": "0038_run_parent_fk",
+      "breakpoints": true
     }
   ]
 }
