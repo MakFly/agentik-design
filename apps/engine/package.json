@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "sim:telegram": "bun run scripts/telegram-sim.ts"
   },
   "dependencies": {
     "@agentik/workflow-engine": "workspace:*",
