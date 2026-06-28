@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Engine (typecheck + test)
+    runs-on: ubuntu-latest
+    # DB tests auto-skip when Postgres is unreachable; a dummy URL satisfies env
+    # validation so the process boots and the DB-backed tests skip cleanly.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5599/none
+      REDIS_URL: redis://localhost:6399
+      CREDENTIALS_ENCRYPTION_KEY: ci_dummy_key_min_16_chars_long_0000
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: apps/engine
+        run: bunx tsc --noEmit
+      - name: Test
+        working-directory: apps/engine
+        run: bun test
+
+  web:
+    name: Web (typecheck + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: apps/web
+        run: bunx tsc --noEmit
+      - name: Test
+        working-directory: apps/web
+        run: bun run test
+
+  daemon:
+    name: Daemon (build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: apps/daemon/go.sum
+      - name: Build
+        working-directory: apps/daemon
+        run: go build ./...
+      - name: Test
+        working-directory: apps/daemon
+        run: go test ./...
+
+  deps-audit:
+    name: Dependency audit (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Audit
+        run: bun audit
