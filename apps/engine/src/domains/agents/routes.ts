@@ -37,7 +37,7 @@ agentsRoutes.get("/agent-task-snapshot", async (c) => {
   return c.json(await getAgentTaskSnapshot(c.get("teamId")));
 });
 
-agentsRoutes.post("/agents", async (c) => {
+agentsRoutes.post("/agents", requirePermission("agent:create"), async (c) => {
   const parsed = parseJsonBody(createAgentBody, await c.req.json().catch(() => null));
   if (!parsed.success) return jsonValidationError(c, parsed.error);
   try {
@@ -86,7 +86,7 @@ agentsRoutes.put("/agents/:id/subagents", requirePermission("agent:update"), asy
   return c.json({ subagents: res.roster });
 });
 
-agentsRoutes.post("/agents/:id/publish", async (c) => {
+agentsRoutes.post("/agents/:id/publish", requirePermission("agent:update"), async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     config?: unknown;
     changelog?: string;
