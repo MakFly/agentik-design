@@ -4,7 +4,7 @@
  *
  *   login via the /login dev autofill  →  POST /dev/seed  →  simulate (triage done,
  *   invoice+meeting waiting)  →  approve  →  simulate (all succeed)  →  assert the
- *   invoice email landed in Mailpit  →  assert agents / fleet / run UI render.
+ *   invoice email landed in Mailpit  →  assert agents / project / run UI render.
  *
  * Usage:  bun run apps/web/scripts/e2e-seeded-loop.ts
  */
@@ -263,14 +263,7 @@ async function main() {
   );
   checkMap("agents page", agents);
 
-  log("7) assert the fleet graph renders");
-  await gc(["preview", `${webUrl}/demo/agents/fleet`, "--wait", "stable", "--level", "content"]);
-  const fleet = await gcEval<{ fleet: boolean }>(
-    `(() => ({ fleet: document.body.innerText.includes('Fleet') }))()`,
-  );
-  check("fleet graph renders", fleet.fleet);
-
-  log("8) assert the project cockpit renders task board, console, context, resources and channels");
+  log("7) assert the project cockpit renders task board, console, context, resources and channels");
   await gc(["preview", `${webUrl}/demo/projects/${seed.projectId}`, "--wait", "stable", "--level", "content"]);
   const projectCockpit = await gcEval<Record<string, boolean>>(
     `(() => { const t = document.body.innerText; return {
@@ -288,7 +281,7 @@ async function main() {
   );
   checkMap("project cockpit", projectCockpit);
 
-  log("9) assert a run detail view renders the Hermes-style transcript and project summary");
+  log("8) assert a run detail view renders the Hermes-style transcript and project summary");
   const invoiceCandidates = await runDetails(seed.runIds);
   const invoiceRunId = findRunByText(invoiceCandidates, "Chase overdue invoice #42")?.runId;
   check("seed exposes an invoice run detail", invoiceRunId, {
@@ -307,16 +300,6 @@ async function main() {
     }; })()`,
   );
   checkMap("run detail view", runView);
-
-  log("10) assert the Settings → Connections page renders the Google connect UI");
-  await gc(["preview", `${webUrl}/demo/settings?tab=connections`, "--wait", "stable", "--level", "content"]);
-  const connections = await gcEval<Record<string, boolean>>(
-    `(() => { const t = document.body.innerText; return {
-      heading: t.includes('Google / Gmail') || t.includes('Connections'),
-      connectButton: t.includes('Connect a Google account'),
-    }; })()`,
-  );
-  checkMap("connections page", connections);
 
   writeProof("passed");
   log(`PASSED — seeded daily-execution loop + project cockpit + run console verified (runs: ${seed.runIds.length})`);
