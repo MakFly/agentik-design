@@ -665,6 +665,80 @@ export async function requestDaemonTaskApproval(
   return { teamId: task.teamId, message };
 }
 
+/** Build run_events ledger rows from incoming messages. Shared by the live
+ *  dual-write and the backfill so both produce identical events. */
+function runEventRowsFor(
+  runId: string,
+  messages: IncomingMessage[],
+): (typeof runEvents.$inferInsert)[] {
+  return messages.map((m) => {
+    const payload = runtimeEventForIncomingMessage(runId, m);
+    return {
+      id: genId("revt"),
+      runId,
+      seq: m.seq,
+      type: payload.type,
+      actor: payload.actor,
+      toolCallId: "toolCallId" in payload ? payload.toolCallId : null,
+      parentEventId: null,
+      payload,
+      contractEvent:
+        payload.type === "message"
+          ? "message.created"
+          : payload.type === "tool_call.started"
+            ? "tool.started"
+            : payload.type === "tool_call.completed"
+              ? "tool.output"
+              : payload.type === "error"
+                ? "run.failed"
+                : null,
+    };
+  });
+}
+
+/**
+ * Backfill the run_events ledger for ONE run from its run_messages, idempotently
+ * (onConflictDoNothing on (runId, seq)). Reuses the exact live dual-write mapping
+ * so backfilled rows are indistinguishable from newly-written ones. Returns the
+ * number of rows inserted.
+ *
+ * This is step (a) of the ledger migration (give every historical run a complete
+ * run_events history for the V2 /runs/:id/events reader). Step (b) — switching the
+ * SSE live projection off run_messages — is intentionally NOT done here: the live
+ * projection emits multiple events per message (runMessageToEvents) while the
+ * ledger stores one per message, so the switch is a behavior change that needs
+ * end-to-end verification with a real run, not a silent flip.
+ */
+export async function backfillRunEvents(runId: string): Promise<number> {
+  const msgs = await db
+    .select({
+      seq: runMessages.seq,
+      type: runMessages.type,
+      tool: runMessages.tool,
+      content: runMessages.content,
+      input: runMessages.input,
+      output: runMessages.output,
+    })
+    .from(runMessages)
+    .where(eq(runMessages.runId, runId))
+    .orderBy(runMessages.seq);
+  if (msgs.length === 0) return 0;
+  const incoming: IncomingMessage[] = msgs.map((m) => ({
+    seq: m.seq,
+    type: m.type,
+    tool: m.tool ?? undefined,
+    content: m.content ?? undefined,
+    input: m.input ?? undefined,
+    output: m.output ?? undefined,
+  }));
+  const inserted = await db
+    .insert(runEvents)
+    .values(runEventRowsFor(runId, incoming))
+    .onConflictDoNothing({ target: [runEvents.runId, runEvents.seq] })
+    .returning({ seq: runEvents.seq });
+  return inserted.length;
+}
+
 /**
  * Append a batch of streamed messages (idempotent on (runId, seq)), recompute
  * progress counters, and tell the daemon whether the task was cancelled meanwhile.
@@ -697,31 +771,7 @@ export async function appendMessages(
 
     await db
       .insert(runEvents)
-      .values(
-        messages.map((m) => {
-          const payload = runtimeEventForIncomingMessage(runId, m);
-          return {
-            id: genId("revt"),
-            runId,
-            seq: m.seq,
-            type: payload.type,
-            actor: payload.actor,
-            toolCallId: "toolCallId" in payload ? payload.toolCallId : null,
-            parentEventId: null,
-            payload,
-            contractEvent:
-              payload.type === "message"
-                ? "message.created"
-                : payload.type === "tool_call.started"
-                  ? "tool.started"
-                  : payload.type === "tool_call.completed"
-                    ? "tool.output"
-                    : payload.type === "error"
-                      ? "run.failed"
-                      : null,
-          };
-        }),
-      )
+      .values(runEventRowsFor(runId, messages))
       .onConflictDoNothing({ target: [runEvents.runId, runEvents.seq] });
 
     const all = await db
