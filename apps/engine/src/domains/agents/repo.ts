@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { daemonDisplayName, runCostFromRow } from "../runs/mappers";
@@ -135,24 +135,50 @@ function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[]) {
   };
 }
 
-export async function listAgentRows(teamId: string) {
+export interface ListAgentsOptions {
+  q?: string;
+  status?: string;
+  limit?: number;
+}
+
+export async function listAgentRows(teamId: string, opts: ListAgentsOptions = {}) {
   await ensureDevAgents(teamId);
+  const conditions = [eq(agents.teamId, teamId)];
+  if (opts.q) {
+    const like = `%${opts.q}%`;
+    conditions.push(or(ilike(agents.name, like), ilike(agents.role, like))!);
+  }
+  if (opts.status) conditions.push(eq(agents.health, opts.status as never));
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+
   const rows = await db
     .select()
     .from(agents)
-    .where(eq(agents.teamId, teamId))
-    .orderBy(desc(agents.updatedAt));
-  const tasks = await db
-    .select({
-      agentId: runs.agentId,
-      status: runs.status,
-      durationMs: runs.durationMs,
-      createdAt: runs.createdAt,
-      result: runs.result,
-      costCents: runs.costCents,
-    })
-    .from(runs)
-    .where(and(eq(runs.teamId, teamId), eq(runs.executor, "daemon")));
+    .where(and(...conditions))
+    .orderBy(desc(agents.updatedAt))
+    .limit(limit);
+
+  // Stats: only load runs for the agents we actually return (not the whole team).
+  const agentIds = rows.map((r) => r.id);
+  const tasks = agentIds.length
+    ? await db
+        .select({
+          agentId: runs.agentId,
+          status: runs.status,
+          durationMs: runs.durationMs,
+          createdAt: runs.createdAt,
+          result: runs.result,
+          costCents: runs.costCents,
+        })
+        .from(runs)
+        .where(
+          and(
+            eq(runs.teamId, teamId),
+            eq(runs.executor, "daemon"),
+            inArray(runs.agentId, agentIds),
+          ),
+        )
+    : [];
 
   return rows.map((a) => toAgentRow(a, tasks));
 }

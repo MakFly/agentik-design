@@ -76,4 +76,17 @@ d("agents repo stats", () => {
     expect(listRow?.stats.avgCost).toEqual({ amountCents: 100, currency: "USD" });
     expect(detail?.stats.successRate).toBe(0.5);
   });
+
+  test("listAgentRows filters by q (name/role) in SQL and respects limit", async () => {
+    await createAgent(teamId, { name: "ZephyrUnique Finder", role: "scout" });
+    const hit = await listAgentRows(teamId, { q: "ZephyrUnique" });
+    expect(hit.length).toBeGreaterThanOrEqual(1);
+    expect(hit.every((a) => /zephyrunique/i.test(`${a.name} ${a.role}`))).toBe(true);
+
+    const miss = await listAgentRows(teamId, { q: "no-such-agent-xyz" });
+    expect(miss.length).toBe(0);
+
+    const limited = await listAgentRows(teamId, { limit: 1 });
+    expect(limited.length).toBe(1);
+  });
 });

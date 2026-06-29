@@ -26,7 +26,14 @@ import { recordAudit } from "../../infra/audit";
 export const agentsRoutes = new Hono<{ Variables: AuthVars }>();
 
 agentsRoutes.get("/agents", async (c) => {
-  const items = await listAgentRows(c.get("teamId"));
+  const q = c.req.query("q")?.trim() || undefined;
+  const status = c.req.query("status")?.trim() || undefined;
+  const limitRaw = Number(c.req.query("limit"));
+  const items = await listAgentRows(c.get("teamId"), {
+    q,
+    status,
+    limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
+  });
   return c.json({ items, nextCursor: null, total: items.length });
 });
 
