@@ -11,6 +11,7 @@
     "models:check": "bun run scripts/check-model-catalog.ts",
     "test": "vitest run",
     "test:e2e": "bun run scripts/e2e-ghostchrome.ts",
+    "test:e2e:pw": "playwright test",
     "test:watch": "vitest",
     "format": "prettier --write .",
     "test:e2e:loop": "bun run scripts/e2e-seeded-loop.ts"
