@@ -41,17 +41,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  // CONTROL PLANE
-  {
-    key: "command-center",
-    label: "Command Center",
-    segment: "command-center",
-    icon: LayoutDashboard,
-    group: "control",
-    hotkey: "g",
-    permission: "run:read",
-    badge: "approvals",
-  },
+  // CONTROL PLANE — Projects are the center of the product (North Star), so they
+  // lead the nav; the Command Center dashboard follows.
   {
     key: "projects",
     label: "Projects",
@@ -61,6 +52,16 @@ export const NAV_ITEMS: NavItem[] = [
     hotkey: "p",
     permission: "run:read",
     badge: "activeRuns",
+  },
+  {
+    key: "command-center",
+    label: "Command Center",
+    segment: "command-center",
+    icon: LayoutDashboard,
+    group: "control",
+    hotkey: "g",
+    permission: "run:read",
+    badge: "approvals",
   },
   {
     key: "runs",
@@ -178,8 +179,8 @@ export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
 
 /** Items shown in the mobile bottom tab bar (max 5; last is "More"). */
 export const MOBILE_NAV_KEYS = [
-  "command-center",
   "projects",
+  "command-center",
   "runs",
   "agents",
 ] as const;
