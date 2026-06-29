@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
-import { listMemory } from "../learning/memory/repo";
+import { listMemory } from "../learning/index";
 import type { ProjectResourceType, ProjectTaskPriority, ProjectTaskStatus, ProjectType } from "../../infra/db/schema";
 
 const { projects, projectResources, projectTasks, projectTaskComments, projectWorkspaces, runs, agents } = schema;
@@ -201,6 +201,23 @@ export async function getProjectTaskRow(teamId: string, taskId: string) {
     .where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.id, taskId)))
     .limit(1);
   return task ?? null;
+}
+
+/** Move a task to review after its run succeeded. Cross-domain entry point for the
+ *  runs domain — keeps projectTasks writes inside the projects repo (invariant #2). */
+export async function markProjectTaskReview(teamId: string, taskId: string): Promise<void> {
+  await db
+    .update(projectTasks)
+    .set({ status: "review", updatedAt: sql`now()` })
+    .where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.id, taskId)));
+}
+
+/** Move a task to blocked after its run failed. Cross-domain entry point for runs. */
+export async function markProjectTaskBlocked(teamId: string, taskId: string): Promise<void> {
+  await db
+    .update(projectTasks)
+    .set({ status: "blocked", updatedAt: sql`now()` })
+    .where(and(eq(projectTasks.teamId, teamId), eq(projectTasks.id, taskId)));
 }
 
 export async function getRunnableAgent(teamId: string, agentId: string) {

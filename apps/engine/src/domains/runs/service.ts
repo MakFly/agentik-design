@@ -354,15 +354,8 @@ export async function onRunCompleted(
 
   hub.publish(teamId, { kind: "run", action: "succeeded", runId });
   if (ctx.projectTaskId) {
-    await db
-      .update(schema.projectTasks)
-      .set({ status: "review", updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(schema.projectTasks.id, ctx.projectTaskId),
-          eq(schema.projectTasks.teamId, teamId),
-        ),
-      );
+    const { markProjectTaskReview } = await import("../projects/index");
+    await markProjectTaskReview(teamId, ctx.projectTaskId);
   }
   if (ctx.chatSessionId) {
     await appendAssistantTurn(
@@ -394,15 +387,8 @@ export async function onRunFailed(
 
   hub.publish(teamId, { kind: "run", action: "failed", runId });
   if (ctx.projectTaskId) {
-    await db
-      .update(schema.projectTasks)
-      .set({ status: "blocked", updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(schema.projectTasks.id, ctx.projectTaskId),
-          eq(schema.projectTasks.teamId, teamId),
-        ),
-      );
+    const { markProjectTaskBlocked } = await import("../projects/index");
+    await markProjectTaskBlocked(teamId, ctx.projectTaskId);
   }
   const { handleOrchestrationChildFailed } = await import("../chat/repo");
   await handleOrchestrationChildFailed(teamId, runId, error).catch(() => undefined);

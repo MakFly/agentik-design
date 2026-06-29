@@ -10,6 +10,8 @@ export {
   updateProjectTask,
   listProjectTaskComments,
   addProjectTaskComment,
+  markProjectTaskReview,
+  markProjectTaskBlocked,
 } from "./repo";
 export { runProjectTask } from "./service";
 export * from "./schemas";
