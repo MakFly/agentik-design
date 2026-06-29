@@ -52,6 +52,9 @@ apps/engine/.env
 *.jpeg
 *.gif
 *.webp
+# …except real app assets shipped with the landing page
+!apps/web/public/landing/*.jpg
+!apps/web/public/landing/*.png
 
 # ── Misc ─────────────────────────────────────────────────────
 .vercel
