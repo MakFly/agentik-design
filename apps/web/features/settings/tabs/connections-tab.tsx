@@ -26,6 +26,13 @@ import {
 const DEFAULT_SCOPES =
   "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
 
+/** The OAuth callback lives on the ENGINE origin (not the web app), so the redirect
+ *  URI to register in Google Cloud must point at the engine. */
+const ENGINE_ORIGIN =
+  process.env.NEXT_PUBLIC_ENGINE_URL ??
+  (typeof window !== "undefined" ? window.location.origin : "");
+const REDIRECT_URI = `${ENGINE_ORIGIN}/api/v1/oauth/google/callback`;
+
 /** Open the engine OAuth consent flow in a popup (same-origin → proxied to engine). */
 function openOAuthPopup(credentialId: string) {
   window.open(
@@ -94,7 +101,7 @@ export function ConnectionsTab({ team }: { team: string }) {
         Connect a Google account so your agents can send and read email through Gmail.
         Create an OAuth client in Google Cloud (redirect URI{" "}
         <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[11px]">
-          {`${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/oauth/google/callback`}
+          {REDIRECT_URI}
         </code>
         ), paste its client ID/secret below, then authorize. Tokens are stored encrypted
         and never displayed.
