@@ -43,7 +43,14 @@ d("tokenless telegram send capture", () => {
       .select()
       .from(schema.channelConnections)
       .where(eq(schema.channelConnections.id, connectionId));
-    await sendTelegramMessage({ connection: connection!, chatId: "12345", text: "hello operator" });
+    await sendTelegramMessage({
+      connection: connection!,
+      chatId: "12345",
+      text: "hello operator",
+      replyMarkup: {
+        inline_keyboard: [[{ text: "Approuver", callback_data: "run:approve:run_123" }]],
+      },
+    });
 
     const deliveries = await db
       .select()
@@ -52,5 +59,10 @@ d("tokenless telegram send capture", () => {
     expect(deliveries.length).toBe(1);
     expect(deliveries[0]!.status).toBe("simulated");
     expect((deliveries[0]!.payload as { text?: string }).text).toBe("hello operator");
+    expect(deliveries[0]!.payload).toMatchObject({
+      replyMarkup: {
+        inline_keyboard: [[{ text: "Approuver", callback_data: "run:approve:run_123" }]],
+      },
+    });
   });
 });

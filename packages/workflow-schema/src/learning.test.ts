@@ -36,7 +36,7 @@ describe("agentVersion", () => {
         version: 0,
         instructions: "",
         tools: [],
-        runtimeKind: "echo",
+        runtimeKind: "claude",
         memoryPolicy: DEFAULT_MEMORY_POLICY,
         skillPolicy: DEFAULT_SKILL_POLICY,
         createdBy: "user",

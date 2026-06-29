@@ -43,7 +43,7 @@ export interface RunChildSummary {
   agentName: string | null;
   status: string;
   kind: string | null;
-  startedAt: string;
+  startedAt: string | null;
   endedAt: string | null;
   result: string | null;
   error: string | null;

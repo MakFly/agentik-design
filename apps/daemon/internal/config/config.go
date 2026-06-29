@@ -147,7 +147,7 @@ func LoadWithOptions(opts Options) (*Config, error) {
 			return nil, fmt.Errorf("read config file: %w", err)
 		}
 	}
-	runtimeKinds := first(opts.RuntimeKinds, os.Getenv("RUNTIME_KINDS"), joinKinds(file.Runtimes), "echo")
+	runtimeKinds := first(opts.RuntimeKinds, os.Getenv("RUNTIME_KINDS"), joinKinds(file.Runtimes), "claude")
 	taskTimeoutMs := 300000
 	if n, ok := envInt("TASK_TIMEOUT_MS"); ok {
 		taskTimeoutMs = n

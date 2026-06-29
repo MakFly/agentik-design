@@ -10,7 +10,7 @@ import type {
   PromptVariable,
   RuntimeKind,
 } from "@/types/domain";
-import { defaultAgentConfig } from "./default-config";
+import { normalizeAgentConfig } from "./default-config";
 import type { BuilderSectionKey, DraftIdentity } from "./validation";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved";
@@ -56,7 +56,7 @@ export function createBuilderStore(
 ) {
   return createStore<BuilderState>((set) => ({
     identity: { ...EMPTY_IDENTITY, ...initialIdentity },
-    config: initialConfig ?? defaultAgentConfig(),
+    config: normalizeAgentConfig(initialConfig),
     activeSection: "persona",
     saveState: "idle",
     rev: 0,
@@ -64,7 +64,7 @@ export function createBuilderStore(
     init: (identity, config) =>
       set({
         identity: { ...EMPTY_IDENTITY, ...identity },
-        config: config ?? defaultAgentConfig(),
+        config: normalizeAgentConfig(config),
         activeSection: "persona",
         saveState: "idle",
         rev: 0,

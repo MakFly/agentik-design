@@ -53,10 +53,10 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     expect(res.daemonId).toBeTruthy();
-    expect(res.runtimes.map((r) => r.kind)).toEqual(["echo"]);
+    expect(res.runtimes.map((r) => r.kind)).toEqual(["claude"]);
   });
 
   test("re-register with the same deviceId updates in place (no duplicate)", async () => {
@@ -65,14 +65,14 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     const before = await countDaemons();
     const second = await registerDaemon({
       teamId,
       name: `${dev}-renamed · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }, { kind: "claude" }],
+      runtimes: [{ kind: "codex" }, { kind: "claude" }],
     });
     expect(second.daemonId).toBe(first.daemonId);
     expect(await countDaemons()).toBe(before);
@@ -89,7 +89,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${host} · ${slug}`,
       meta: { mode: "personal" },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     const before = await countDaemons();
     // New binary: UUID identity + reports the legacy hostname.
@@ -98,7 +98,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       name: `${uuid} · ${slug}`,
       legacyNames: [`${host} · ${slug}`],
       meta: { deviceId: uuid },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     expect(upgraded.daemonId).toBe(legacy.daemonId); // adopted, not duplicated
     expect(await countDaemons()).toBe(before);
@@ -111,7 +111,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${uuid} · ${slug}`,
       meta: { deviceId: uuid },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     expect(again.daemonId).toBe(legacy.daemonId);
     expect(await countDaemons()).toBe(before);
@@ -123,14 +123,14 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     // Matched by name, but the payload omits deviceId.
     await registerDaemon({
       teamId,
       name: `${dev} · ${slug}`,
       meta: { mode: "personal" },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     const row = await rowById(first.daemonId);
     expect(row).toBeDefined();
@@ -150,7 +150,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     expect(await deleteDaemon(teamId, reg.daemonId)).toEqual({
       ok: false,
@@ -164,7 +164,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     await db
       .update(schema.daemons)
@@ -190,7 +190,7 @@ d("daemon-repo — register dedup & delete guards", () => {
       teamId,
       name: `${dev} · ${slug}`,
       meta: { deviceId: dev },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     await db
       .update(schema.daemons)

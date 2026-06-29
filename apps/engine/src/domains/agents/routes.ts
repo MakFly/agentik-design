@@ -162,7 +162,7 @@ agentsRoutes.post("/agents/test", async (c) => {
     c.get("teamId"),
     body.config,
     body.input ?? "",
-    body.runtime ?? "echo",
+    body.runtime ?? "claude",
   );
   return c.json(res, 202);
 });

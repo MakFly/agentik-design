@@ -17,6 +17,7 @@ dist/
 
 # ── Testing / coverage ───────────────────────────────────────
 coverage/
+artifacts/acceptance/*.json
 
 # ── Environment ──────────────────────────────────────────────
 .env

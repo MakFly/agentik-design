@@ -22,7 +22,7 @@ export const agentVersions = pgTable(
     instructions: text("instructions").notNull().default(""),
     tools: jsonb("tools").$type<string[]>().notNull().default([]),
     toolGrants: jsonb("tool_grants").$type<ToolGrantRecord[]>().notNull().default([]),
-    runtimeKind: text("runtime_kind").$type<RuntimeKind>().notNull().default("echo"),
+    runtimeKind: text("runtime_kind").$type<RuntimeKind>().notNull().default("claude"),
     memoryPolicy: jsonb("memory_policy").$type<MemoryPolicy>().notNull(),
     skillPolicy: jsonb("skill_policy").$type<SkillPolicy>().notNull(),
     createdBy: text("created_by").$type<CreatedBy>().notNull().default("user"),

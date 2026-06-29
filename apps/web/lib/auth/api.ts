@@ -24,16 +24,6 @@ export type UiPreferences = {
   theme?: "light" | "dark" | "system";
 };
 
-export type NotificationPreferences = {
-  emailRunComplete?: boolean;
-  emailRunFailed?: boolean;
-  emailApprovalNeeded?: boolean;
-  emailInvitations?: boolean;
-  inAppRuns?: boolean;
-  inAppApprovals?: boolean;
-  inAppMentions?: boolean;
-};
-
 import { normalizeResponse } from "@/lib/api/errors";
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
@@ -81,7 +71,6 @@ export const authApi = {
   async me(): Promise<{
     user: AuthUser & {
       uiPreferences?: UiPreferences;
-      notificationPreferences?: NotificationPreferences;
     };
     orgs: Org[];
     activeOrgId: string | null;
@@ -97,11 +86,6 @@ export const authApi = {
   }) => patch<{ ok: boolean; user: { name: string; email: string } }>("me", body),
   updatePreferences: (body: UiPreferences) =>
     patch<{ uiPreferences: UiPreferences }>("me/preferences", body),
-  updateNotifications: (body: NotificationPreferences) =>
-    patch<{ notificationPreferences: NotificationPreferences }>(
-      "me/notifications",
-      body,
-    ),
   /** DEV ONLY: seeded demo accounts for one-click login (empty in production). */
   async devUsers(): Promise<{ email: string; password: string; role: string; org: string }[]> {
     const res = await fetch(`/api/v1/auth/dev/users`);

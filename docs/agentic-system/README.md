@@ -16,7 +16,7 @@ Agent Control Plane
         |
         v
 Execution Layer
-  Codex | Claude Code | OpenAI BYOK | Anthropic BYOK | OpenRouter BYOK
+  Codex | Claude Code | OpenAI BYOK | Anthropic BYOK
         |
         v
 Live Console
@@ -57,7 +57,6 @@ Live Console
 
 ## Documents
 
-- `MULTICA_OPENCLAW_HERMES_BLUEPRINT.md` explains the practical fusion: Multica product model, OpenClaw channels, Hermes TUI/skills, and how SEO/Leads/Code agents work.
 - `ORCHESTRATOR.md` defines the control loop and ownership boundaries.
 - `SUBAGENTS.md` defines the standard specialist agents.
 - `BUILD_GUIDELINE.md` defines the rebuild phases and acceptance rules.

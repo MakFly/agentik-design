@@ -23,7 +23,7 @@ func TestLoadRequiresExactlyOneAuthMode(t *testing.T) {
 func TestLoadPersonalMode(t *testing.T) {
 	t.Setenv("DAEMON_AUTH_TOKEN", "")
 	t.Setenv("DAEMON_USER_TOKEN", "user-token")
-	t.Setenv("RUNTIME_KINDS", "echo, claude")
+	t.Setenv("RUNTIME_KINDS", "codex, claude")
 	t.Setenv("DAEMON_MAX_CONCURRENCY", "3")
 
 	cfg, err := LoadWithOptions(Options{SkipConfigFile: true})
@@ -33,7 +33,7 @@ func TestLoadPersonalMode(t *testing.T) {
 	if cfg.UserToken != "user-token" || cfg.AuthToken != "" {
 		t.Fatalf("unexpected auth fields: user=%q org=%q", cfg.UserToken, cfg.AuthToken)
 	}
-	if got := strings.Join(cfg.RuntimeKinds, ","); got != "echo,claude" {
+	if got := strings.Join(cfg.RuntimeKinds, ","); got != "codex,claude" {
 		t.Fatalf("runtime kinds = %q", got)
 	}
 	if cfg.MaxConcurrent != 3 {
@@ -57,7 +57,7 @@ func TestLoadReadsPersonalConfigFile(t *testing.T) {
 	if err := SaveFile(path, File{
 		EngineURL:      "https://engine.example",
 		Token:          "dtkn_file",
-		Runtimes:       []string{"echo", "claude"},
+		Runtimes:       []string{"codex", "claude"},
 		WorkRoot:       "/tmp/agentik-file",
 		MaxConcurrency: 4,
 	}); err != nil {
@@ -71,7 +71,7 @@ func TestLoadReadsPersonalConfigFile(t *testing.T) {
 	if cfg.EngineURL != "https://engine.example" || cfg.UserToken != "dtkn_file" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	if got := strings.Join(cfg.RuntimeKinds, ","); got != "echo,claude" {
+	if got := strings.Join(cfg.RuntimeKinds, ","); got != "codex,claude" {
 		t.Fatalf("runtime kinds = %q", got)
 	}
 	if cfg.WorkRoot != "/tmp/agentik-file" || cfg.MaxConcurrent != 4 {
@@ -86,7 +86,7 @@ func TestLoadOptionOverridesConfigFile(t *testing.T) {
 	if err := SaveFile(path, File{
 		EngineURL: "https://engine.example",
 		Token:     "dtkn_file",
-		Runtimes:  []string{"echo"},
+		Runtimes:  []string{"claude"},
 	}); err != nil {
 		t.Fatalf("SaveFile() error = %v", err)
 	}

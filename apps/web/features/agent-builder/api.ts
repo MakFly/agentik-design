@@ -135,7 +135,7 @@ export function useTestRun(team: string) {
         method: "POST",
         team,
         // Test on the selected runtime so the harness matches what publish will run.
-        body: { config, input, runtime: config.runtimeKind ?? "echo" },
+        body: { config, input, runtime: config.runtimeKind ?? "claude" },
         headers: { "idempotency-key": crypto.randomUUID() },
       }),
   });

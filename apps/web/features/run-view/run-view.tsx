@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, Clock, Coins, FolderKanban, GitBranch, ListTodo, TerminalSquare, Workflow } from "lucide-react";
-import { useRun, type RunDetail } from "./api";
-import { Timeline } from "./timeline";
-import { StepFocusPanel } from "./step-focus-panel";
+import { ArrowLeft, Bot, ChevronRight, Clock, Coins, ListTodo, TerminalSquare, Workflow } from "lucide-react";
+import { useRun, useRuns, type RunDetail } from "./api";
+import { RunTranscript } from "./run-transcript";
 import { RunSummary } from "./run-summary";
 import { RunControls } from "./run-controls";
 import { ConnectionBadge } from "./connection-badge";
@@ -13,30 +12,26 @@ import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ErrorState } from "@/components/shared/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import { formatDuration, formatMoney } from "@/lib/format";
+import { formatDuration, formatMoney, formatRelativeTime, formatShortId, formatTokens } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { useRunStream } from "@/lib/realtime/use-run-stream";
 import { useRunStreamStore, useRunSteps, useRunConnection, useStepReasoning } from "@/lib/stores/runStream.store";
 import { approveStep } from "@/lib/realtime/run-control";
 import type { Step, Run, RunId, StepId } from "@/types/domain";
-import type { RunProjectContext } from "@/features/projects/types";
 import type { LogLineItem } from "@/components/shared/log-stream";
 
 const LIVE_STATUSES = new Set(["queued", "running", "paused", "waiting_approval"]);
+const NO_TASK = "__no_task__";
 
-function defaultStep(steps: Step[]): string | null {
-  if (!steps.length) return null;
-  return (
-    steps.find((s) => s.status === "failed")?.id ??
-    steps.find((s) => s.status === "running")?.id ??
-    steps.find((s) => s.status === "pending")?.id ??
-    steps[steps.length - 1].id
-  );
+interface RunNavTaskGroup {
+  key: string;
+  title: string | null;
+  runs: Run[];
 }
 
 export function RunView({ team, runId }: { team: string; runId: string }) {
   const { data, isLoading, isError, error, refetch } = useRun(team, runId);
-  const [selected, setSelected] = useState<string | null>(null);
+  const runsQuery = useRuns(team);
 
   const snapshotSteps = useMemo(() => data?.steps ?? [], [data]);
   const isLive = data?.run ? LIVE_STATUSES.has(data.run.status) : false;
@@ -59,10 +54,8 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   // live → stream is authoritative; replay → REST snapshot
   const steps = isLive && streamSteps.length ? streamSteps : snapshotSteps;
 
-  const autoSelected = useMemo(() => defaultStep(steps), [steps]);
-  const selectedId = selected ?? autoSelected;
-  const selectedStep = steps.find((s) => s.id === selectedId) ?? null;
-  const liveReasoning = useStepReasoning(runId, selectedId);
+  const runningStepId = useMemo(() => steps.find((s) => s.status === "running")?.id ?? null, [steps]);
+  const liveReasoning = useStepReasoning(runId, runningStepId);
 
   if (isError) {
     return (
@@ -77,7 +70,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title="Run" back={{ href: `/${team}/runs`, label: "Runs" }} />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr_300px]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr_300px]">
           <Skeleton className="h-96" />
           <Skeleton className="h-96" />
           <Skeleton className="h-96" />
@@ -104,46 +97,185 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   };
   const stepLogs: LogLineItem[] | undefined =
     isLive && streamState
-      ? streamState.logs.filter((l) => !l.stepId || l.stepId === selectedId).map((l) => ({ ts: l.ts, level: l.level, message: l.message }))
+      ? streamState.logs.filter((l) => !l.stepId || l.stepId === runningStepId).map((l) => ({ ts: l.ts, level: l.level, message: l.message }))
       : undefined;
 
   return (
     <div className="flex min-h-[calc(100dvh-var(--navbar-h)-3rem)] flex-col md:min-h-[calc(100dvh-var(--navbar-h)-4rem)]">
       <RunDetailHeader team={team} run={run} steps={steps} placement={data.placement} isLive={isLive} connection={connection} />
 
-      {data.projectContext ? <ProjectContextStrip team={team} context={data.projectContext} /> : null}
-      {data.children?.length ? <ChildRunsStrip team={team} childrenRuns={data.children} /> : null}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 pt-4 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
+        <RunNavigator
+          team={team}
+          currentRun={run}
+          runs={runsQuery.data?.items ?? []}
+          isLoading={runsQuery.isLoading}
+        />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 pt-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
-        <div className="min-h-0 rounded-lg border border-border bg-surface lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:max-h-[calc(100dvh-var(--navbar-h)-2rem)]">
-          <div className="flex h-10 items-center gap-2 border-b border-border px-3">
+        {/* Operator console: the run read top-to-bottom. */}
+        <div className="min-h-0">
+          <div className="mb-2 flex h-8 items-center gap-2">
             <ListTodo className="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <h2 className="text-xs font-medium">Execution log</h2>
-            <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
-              {steps.length}
-            </span>
+            <h2 className="text-xs font-medium">Execution transcript</h2>
+            <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">{steps.length}</span>
           </div>
-          <div className="max-h-[calc(100dvh-var(--navbar-h)-5.5rem)] overflow-y-auto p-2">
-            <Timeline steps={steps} selectedId={selectedId} onSelect={setSelected} />
-          </div>
+          <RunTranscript
+            steps={steps}
+            runningStepId={runningStepId}
+            liveReasoning={isLive ? liveReasoning : undefined}
+            logs={stepLogs}
+            isLive={isLive}
+            onDecide={(stepId, decision, reason) =>
+              approveStep(run.id as RunId, stepId as StepId, decision, reason)
+            }
+          />
         </div>
 
-        <div className="min-h-0 rounded-lg border border-border bg-surface p-4">
-          {selectedStep ? (
-            <StepFocusPanel
-              step={selectedStep}
-              liveReasoning={isLive ? liveReasoning : undefined}
-              logs={stepLogs}
-              onDecide={(decision, reason) => approveStep(run.id as RunId, selectedStep.id as StepId, decision, reason)}
-            />
+        {/* Details rail: collapses below the transcript on mobile. */}
+        <aside className="lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:max-h-[calc(100dvh-var(--navbar-h)-2rem)] lg:self-start lg:overflow-y-auto">
+          <RunSummary team={team} run={run} projectContext={data.projectContext} />
+          {data.children?.length ? <ChildRunsSection team={team} childrenRuns={data.children} /> : null}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function subjectNavKey(run: Run): string {
+  if (run.subject.kind === "agent") return `agent:${run.subject.agentId}`;
+  if (run.subject.kind === "workflow") return `workflow:${run.subject.workflowId}`;
+  return `orchestration:${run.subject.runId}`;
+}
+
+function byStartedDesc(a: Run, b: Run): number {
+  const left = a.startedAt ?? "";
+  const right = b.startedAt ?? "";
+  return left > right ? -1 : left < right ? 1 : 0;
+}
+
+function buildRunNavGroups(runs: Run[], currentRun: Run): RunNavTaskGroup[] {
+  const currentKey = subjectNavKey(currentRun);
+  const unique = new Map<string, Run>();
+  unique.set(currentRun.id, currentRun);
+  for (const run of runs) {
+    if (subjectNavKey(run) === currentKey) unique.set(run.id, run);
+  }
+
+  const sorted = Array.from(unique.values()).sort(byStartedDesc);
+  const taskMap = new Map<string, RunNavTaskGroup>();
+  for (const run of sorted) {
+    const key = run.taskId ?? NO_TASK;
+    let group = taskMap.get(key);
+    if (!group) {
+      group = { key, title: run.taskTitle ?? null, runs: [] };
+      taskMap.set(key, group);
+    }
+    group.runs.push(run);
+  }
+
+  return Array.from(taskMap.values()).sort((a, b) => byStartedDesc(a.runs[0]!, b.runs[0]!));
+}
+
+function RunNavigator({
+  team,
+  currentRun,
+  runs,
+  isLoading,
+}: {
+  team: string;
+  currentRun: Run;
+  runs: Run[];
+  isLoading: boolean;
+}) {
+  const groups = useMemo(() => buildRunNavGroups(runs, currentRun), [runs, currentRun]);
+  const total = groups.reduce((sum, group) => sum + group.runs.length, 0);
+  const Icon = currentRun.subject.kind === "workflow" ? Workflow : Bot;
+
+  return (
+    <aside className="min-w-0 lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:max-h-[calc(100dvh-var(--navbar-h)-2rem)] lg:self-start lg:overflow-y-auto">
+      <section className="rounded-lg border border-border bg-surface">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+          <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 className="truncate text-xs font-medium">Run navigator</h2>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {currentRun.subjectName ?? "Current subject"}
+            </p>
+          </div>
+          <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">{total}</span>
+        </div>
+
+        <div className="flex max-h-72 gap-2 overflow-auto p-2 lg:max-h-none lg:flex-col lg:overflow-x-visible lg:overflow-y-visible">
+          {isLoading ? (
+            <>
+              <Skeleton className="h-16 min-w-64 flex-1 lg:min-w-0" />
+              <Skeleton className="h-16 min-w-64 flex-1 lg:min-w-0" />
+            </>
           ) : (
-            <EmptyOperatorConsole run={run} projectContext={data.projectContext} />
+            groups.map((group) => (
+              <RunNavGroup
+                key={group.key}
+                team={team}
+                group={group}
+                currentRunId={currentRun.id}
+              />
+            ))
           )}
         </div>
+      </section>
+    </aside>
+  );
+}
 
-        <div className="lg:sticky lg:top-[calc(var(--navbar-h)+1rem)] lg:self-start">
-          <RunSummary team={team} run={run} projectContext={data.projectContext} artifacts={data.artifacts} />
-        </div>
+function RunNavGroup({
+  team,
+  group,
+  currentRunId,
+}: {
+  team: string;
+  group: RunNavTaskGroup;
+  currentRunId: string;
+}) {
+  return (
+    <div className="flex min-w-72 flex-col gap-1 rounded-md border border-border/70 bg-background p-2 lg:min-w-0">
+      <div className="flex items-center gap-1.5 px-1 text-[11px] font-medium text-muted-foreground">
+        <ListTodo className="size-3 shrink-0" aria-hidden="true" />
+        <span className="truncate">{group.title ?? "Ad-hoc run"}</span>
+        <span className="ml-auto font-mono tabular-nums text-muted-foreground/70">{group.runs.length}</span>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {group.runs.map((run, index) => {
+          const current = run.id === currentRunId;
+          return (
+            <Link
+              key={run.id}
+              href={`/${team}/runs/${run.id}`}
+              aria-current={current ? "page" : undefined}
+              className={cn(
+                "group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                current ? "bg-accent text-accent-foreground" : "hover:bg-surface-2",
+              )}
+            >
+              <StatusBadge status={run.status} size="sm" iconOnly />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-mono text-xs">{formatShortId(run.id)}</span>
+                  {index === 0 ? (
+                    <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground group-aria-[current=page]:bg-background/70">
+                      latest
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="tabular-nums">{run.startedAt ? formatRelativeTime(run.startedAt) : "En queue"}</span>
+                  <span aria-hidden="true">/</span>
+                  <span className="tabular-nums">{formatDuration(run.durationMs)}</span>
+                </div>
+              </div>
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground opacity-60" aria-hidden="true" />
+            </Link>
+          );
+        })}
       </div>
     </div>
   );
@@ -215,42 +347,17 @@ function RunDetailHeader({
           <Coins className="size-3.5" />
           <span className="tabular-nums">{formatMoney(run.cost.money)}</span>
         </span>
+        <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-muted-foreground">
+          <TerminalSquare className="size-3.5" />
+          <span className="tabular-nums">{formatTokens(run.cost.tokens)} tok</span>
+        </span>
         <RunControls run={run} />
       </div>
     </header>
   );
 }
 
-function ProjectContextStrip({ team, context }: { team: string; context: RunProjectContext }) {
-  const primaryResource = context.resources.find((resource) => resource.type === "git_repo") ?? context.resources[0];
-
-  return (
-    <section className="mt-3 grid gap-3 rounded-lg border border-border bg-surface p-2 text-sm md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
-      <Link href={`/${team}/projects/${context.project.id}`} className="flex min-w-0 items-center gap-3 rounded-md px-2 py-1.5 hover:bg-surface-2">
-        <FolderKanban className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0">
-          <span className="block truncate font-medium">{context.project.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{context.task.title}</span>
-        </span>
-      </Link>
-      <div className="flex min-w-0 items-center gap-3 rounded-md px-2 py-1.5">
-        <GitBranch className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0">
-          <span className="block truncate font-mono text-xs">{primaryResource?.ref ?? "No resource attached"}</span>
-          <span className="block text-xs text-muted-foreground">
-            {context.resources.length} resources · {context.workspaces.length} workspaces
-          </span>
-        </span>
-      </div>
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <Badge variant="outline">{context.project.type}</Badge>
-        <Badge variant="secondary">{context.task.priority}</Badge>
-      </div>
-    </section>
-  );
-}
-
-function ChildRunsStrip({
+function ChildRunsSection({
   team,
   childrenRuns,
 }: {
@@ -258,13 +365,13 @@ function ChildRunsStrip({
   childrenRuns: NonNullable<RunDetail["children"]>;
 }) {
   return (
-    <section className="mt-3 rounded-lg border border-border bg-surface p-2">
-      <div className="flex h-8 items-center gap-2 px-2">
-        <Workflow className="size-4 text-muted-foreground" />
-        <h2 className="text-xs font-medium">Child runs</h2>
-        <span className="ml-auto font-mono text-[11px] text-muted-foreground">{childrenRuns.length}</span>
+    <section className="mt-4 rounded-lg border border-border bg-surface p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Workflow className="size-3.5 text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Child runs</h3>
+        <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">{childrenRuns.length}</span>
       </div>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      <div className="flex flex-col gap-2">
         {childrenRuns.map((child) => (
           <Link
             key={child.id}
@@ -276,9 +383,8 @@ function ChildRunsStrip({
               <span className="truncate text-sm font-medium">{child.agentName ?? child.agentId ?? "Agent"}</span>
               <StatusBadge status={child.status as Run["status"]} size="sm" />
             </div>
-            <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{child.id}</p>
             {child.result || child.error ? (
-              <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
                 {child.error ?? child.result}
               </p>
             ) : null}
@@ -286,28 +392,5 @@ function ChildRunsStrip({
         ))}
       </div>
     </section>
-  );
-}
-
-function EmptyOperatorConsole({
-  run,
-  projectContext,
-}: {
-  run: Run;
-  projectContext?: RunProjectContext;
-}) {
-  return (
-    <div className="flex min-h-[360px] flex-col items-center justify-center rounded-md border border-dashed border-border bg-background px-6 py-10 text-center">
-      <TerminalSquare className="mb-3 size-7 text-muted-foreground" />
-      <h2 className="text-sm font-semibold">Waiting for runtime output</h2>
-      <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-        The run is queued or has not emitted steps yet. When the daemon streams tool calls, reasoning, approvals, or errors, they appear in this operator console.
-      </p>
-      <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
-        <Badge variant="outline">{run.status}</Badge>
-        {projectContext ? <Badge variant="secondary">{projectContext.project.name}</Badge> : null}
-        <Badge variant="outline">{run.subjectName ?? run.subject.kind}</Badge>
-      </div>
-    </div>
   );
 }

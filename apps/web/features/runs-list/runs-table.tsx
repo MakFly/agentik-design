@@ -33,8 +33,12 @@ const columns: ColumnDef<Run>[] = [
   {
     id: "started",
     header: "Started",
-    accessorFn: (r) => r.startedAt,
-    cell: ({ row }) => <span className="text-muted-foreground">{formatRelativeTime(row.original.startedAt)}</span>,
+    accessorFn: (r) => r.startedAt ?? "",
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">
+        {row.original.startedAt ? formatRelativeTime(row.original.startedAt) : "En queue"}
+      </span>
+    ),
   },
   {
     id: "duration",

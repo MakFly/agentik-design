@@ -145,6 +145,21 @@ export interface Agent extends Audited {
   preferredDaemonId?: string | null;
   liveVersionId: VersionId | null;
   draftVersionId: VersionId | null;
+  instructions?: string;
+  tools?: string[];
+  configSkills?: string[];
+  toolGrants?: ToolGrant[];
+  memoryPolicy?: {
+    inject: boolean;
+    scopes: Array<"agent" | "team" | "project">;
+    maxEntries: number;
+    minConfidence: number;
+  } | null;
+  skillPolicy?: {
+    inject: boolean;
+    scopes: Array<"agent" | "team" | "project">;
+    maxSkills: number;
+  } | null;
   stats: AgentStats;
 }
 
@@ -252,7 +267,7 @@ export interface RuntimeBinding {
 }
 
 export interface AgentConfig {
-  /** Which daemon runtime executes this agent (echo/claude/hermes/…). Defaults to echo. */
+  /** Which daemon runtime executes this agent (claude/codex/hermes/…). Defaults to claude. */
   runtimeKind?: RuntimeKind;
   runtimeBinding?: RuntimeBinding;
   model: ModelConfig;
@@ -524,13 +539,14 @@ export interface Run {
   teamId: TeamId;
   env: Env;
   subject: RunSubject;
+  input?: JsonSchema | null;
   status: RunStatus;
   trigger: {
     kind: "manual" | "webhook" | "schedule" | "api";
     by?: UserId;
     payloadRef?: string;
   };
-  startedAt: ISODate;
+  startedAt: ISODate | null;
   endedAt: ISODate | null;
   durationMs: number | null;
   cost: Cost;
@@ -541,6 +557,10 @@ export interface Run {
   completedSteps: number;
   /** denormalized label for lists */
   subjectName?: string;
+  /** project task that triggered this run, when any (daemon runs) */
+  taskId?: string;
+  /** denormalized task title for grouping runs under their task */
+  taskTitle?: string;
 }
 
 /* ────────────────── Tool · Memory · Eval ──────────────────────── */

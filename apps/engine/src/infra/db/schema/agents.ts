@@ -24,8 +24,8 @@ export const agents = pgTable("agents", {
   /** When true this agent fans work out to its roster of subagents (orchestration-native). */
   isOrchestrator: boolean("is_orchestrator").notNull().default(false),
   health: text("health").$type<AgentHealth>().notNull().default("idle"),
-  /** runtime kind this agent runs on (echo | claude | …). */
-  runtimeKind: text("runtime_kind").notNull().default("echo"),
+  /** runtime kind this agent runs on (claude | codex | …) — all require real auth. */
+  runtimeKind: text("runtime_kind").notNull().default("claude"),
   /** Optional machine pin: when set, only this daemon may claim the agent's tasks. */
   preferredDaemonId: text("preferred_daemon_id").references(() => daemons.id, { onDelete: "set null" }),
   liveVersionId: text("live_version_id"),
@@ -93,7 +93,7 @@ export const runtimes = pgTable("runtimes", {
     .notNull()
     .references(() => daemons.id, { onDelete: "cascade" }),
   teamId: text("team_id").notNull(),
-  kind: text("kind").notNull(), // echo | claude
+  kind: text("kind").notNull(), // claude | codex | hermes | …
   status: text("status").$type<RuntimeStatus>().notNull().default("online"),
   capabilities: jsonb("capabilities").$type<{ maxConcurrent?: number; agentKinds?: string[] }>(),
   createdAt: ts("created_at").notNull().defaultNow(),

@@ -24,7 +24,7 @@ export const providerKeys = pgTable(
   {
     id: text("id").primaryKey(),
     teamId: text("team_id").notNull(),
-    provider: text("provider").notNull(), // openrouter | openai | anthropic | google
+    provider: text("provider").notNull(), // openai | anthropic | google
     secret: text("secret").notNull(),
     createdAt: ts("created_at").notNull().defaultNow(),
     updatedAt: ts("updated_at").notNull().defaultNow(),

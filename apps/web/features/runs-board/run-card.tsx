@@ -27,12 +27,13 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
   return <span className="tabular-nums">{formatElapsed(Math.max(0, now - Date.parse(startedAt)))}</span>;
 }
 
-export const RunCardContent = memo(function RunCardContent({ run }: { run: Run }) {
+export const RunCardContent = memo(function RunCardContent({ run, count = 1 }: { run: Run; count?: number }) {
   const isAgent = run.subject.kind === "agent";
   const SubjectIcon = isAgent ? Bot : Workflow;
   const TriggerIcon = TRIGGER_ICON[run.trigger.kind];
-  const live = run.status === "running" || run.status === "waiting_approval" || run.status === "paused";
+  const live = Boolean(run.startedAt) && (run.status === "running" || run.status === "waiting_approval" || run.status === "paused");
   const progress = run.stepCount > 0 ? run.completedSteps / run.stepCount : 0;
+  const merged = count > 1;
 
   return (
     <div className="rounded-lg border border-border bg-card px-2.5 py-3 shadow-[0_3px_6px_-2px_rgba(0,0,0,0.02),0_1px_1px_0_rgba(0,0,0,0.04)] transition-colors group-hover/card:border-accent group-hover/card:bg-accent">
@@ -41,14 +42,24 @@ export const RunCardContent = memo(function RunCardContent({ run }: { run: Run }
         <div className="flex min-w-0 items-center gap-1.5">
           <SubjectIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span className="truncate text-sm font-medium leading-snug">{run.subjectName ?? run.id}</span>
+          {merged ? (
+            <span
+              className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground"
+              title={`${count} runs in this status`}
+            >
+              ×{count}
+            </span>
+          ) : null}
         </div>
         <span className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {run.env}
         </span>
       </div>
 
-      {/* Row 2: run id */}
-      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{run.id}</p>
+      {/* Row 2: task title (when any) else run id */}
+      <p className="mt-0.5 truncate text-[11px] text-muted-foreground" title={run.taskTitle ?? run.id}>
+        {run.taskTitle ?? run.id}
+      </p>
 
       {/* Progress bar */}
       <div className="mt-2 flex items-center gap-2">
@@ -74,11 +85,11 @@ export const RunCardContent = memo(function RunCardContent({ run }: { run: Run }
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <TriggerIcon className="size-3 shrink-0" aria-hidden="true" />
-          {formatRelativeTime(run.startedAt)}
+          {run.startedAt ? formatRelativeTime(run.startedAt) : "En queue"}
         </span>
         <span className="ml-auto inline-flex items-center gap-1">
           <Clock className="size-3 shrink-0" aria-hidden="true" />
-          {live ? <LiveElapsed startedAt={run.startedAt} /> : formatDuration(run.durationMs)}
+          {live && run.startedAt ? <LiveElapsed startedAt={run.startedAt} /> : formatDuration(run.durationMs)}
         </span>
         <span className="inline-flex items-center gap-1 tabular-nums">
           <Coins className="size-3 shrink-0" aria-hidden="true" />
@@ -95,7 +106,15 @@ const animateLayoutChanges: AnimateLayoutChanges = (args) => {
   return defaultAnimateLayoutChanges(args);
 };
 
-export const DraggableRunCard = memo(function DraggableRunCard({ run, team }: { run: Run; team: string }) {
+export const DraggableRunCard = memo(function DraggableRunCard({
+  run,
+  team,
+  count = 1,
+}: {
+  run: Run;
+  team: string;
+  count?: number;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: run.id,
     data: { status: run.status },
@@ -117,7 +136,7 @@ export const DraggableRunCard = memo(function DraggableRunCard({ run, team }: { 
         draggable={false}
         className={cn("block", isDragging && "pointer-events-none")}
       >
-        <RunCardContent run={run} />
+        <RunCardContent run={run} count={count} />
       </Link>
     </div>
   );

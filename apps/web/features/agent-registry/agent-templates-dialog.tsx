@@ -32,7 +32,7 @@ export function TemplatesButton({ team }: { team: string }) {
   return (
     <RbacGate permission="agent:create">
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <LayoutTemplate className="size-4" /> From template
+        <LayoutTemplate className="size-4" /> Depuis un modèle
       </Button>
       <TemplatesDialog team={team} open={open} onOpenChange={setOpen} />
     </RbacGate>
@@ -86,9 +86,9 @@ function TemplatesDialog({
     >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Start from a template</DialogTitle>
+          <DialogTitle>Démarrer depuis un modèle</DialogTitle>
           <DialogDescription>
-            Pick a harness and a pre-built agent. You&apos;ll land in the builder, pre-filled and ready to review.
+            Choisis un harness et un agent préconfiguré. Le builder s'ouvrira avec une base prête à relire.
           </DialogDescription>
         </DialogHeader>
 
@@ -130,16 +130,16 @@ function TemplatesDialog({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search templates…"
+            placeholder="Rechercher un modèle..."
             className="pl-9"
-            aria-label="Search templates"
+            aria-label="Rechercher un modèle"
           />
         </div>
 
         {/* Template gallery */}
         <div className="-mx-1 max-h-[48dvh] overflow-y-auto px-1">
           {total === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">No templates match &ldquo;{query}&rdquo;.</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">Aucun modèle ne correspond à &ldquo;{query}&rdquo;.</p>
           ) : (
             <div className="flex flex-col gap-4">
               {groups.map((g) => (
@@ -194,10 +194,10 @@ function TemplatesDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            Annuler
           </Button>
           <Button onClick={openInBuilder} disabled={!templateId}>
-            Open in builder <ArrowRight className="size-4" />
+            Ouvrir dans le builder <ArrowRight className="size-4" />
           </Button>
         </DialogFooter>
       </DialogContent>

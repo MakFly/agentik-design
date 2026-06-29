@@ -13,7 +13,6 @@ const { providerKeys, runtimeOauthTokens } = schema;
  * key just appears in the runtime's environment (Hermes/claude read it natively).
  */
 const PROVIDER_ENV: Record<string, string> = {
-  openrouter: "OPENROUTER_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   google: "GOOGLE_API_KEY",

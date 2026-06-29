@@ -46,7 +46,7 @@ type authSpec struct {
 var authSpecs = map[string]authSpec{
 	"claude": {files: []string{".claude.json", ".claude/.credentials.json"}, env: []string{"ANTHROPIC_API_KEY"}},
 	"codex":  {files: []string{".codex/auth.json"}, env: []string{"OPENAI_API_KEY"}},
-	"hermes": {files: []string{".hermes/auth.json", ".hermes/config.yaml", ".config/hermes/config.yaml"}, env: []string{"NOUS_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}},
+	"hermes": {files: []string{".hermes/auth.json", ".hermes/config.yaml", ".config/hermes/config.yaml"}, env: []string{"NOUS_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}},
 	"gemini": {files: []string{".gemini/oauth_creds.json", ".config/gemini/oauth_creds.json"}, env: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}},
 }
 

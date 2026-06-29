@@ -29,11 +29,11 @@ function RuntimeField() {
   const setRuntimeBinding = useBuilderStore((s) => s.setRuntimeBinding);
   const { team } = useParams<{ team: string }>();
   const { data: system, isLoading } = useRuntimeSystem(team);
-  const current = config.runtimeKind ?? "echo";
+  const current = config.runtimeKind ?? "claude";
   const available = system?.availableRuntimes ?? [];
   const targets = system?.runnableTargets ?? [];
   const options = [...new Set([current, ...available, ...targets.map((target) => target.runtimeKind)])];
-  const currentOffline = current !== "echo" && !available.includes(current);
+  const currentOffline = !available.includes(current);
   const compatibleTargets = targets.filter((target) => target.runtimeKind === current);
   const daemonId = config.runtimeBinding?.daemonId ?? null;
   const selectedTarget = compatibleTargets.find((target) => target.daemonId === daemonId);
@@ -55,7 +55,7 @@ function RuntimeField() {
             {options.map((k) => (
               <SelectItem key={k} value={k}>
                 {k}
-                {k !== "echo" && !available.includes(k) ? " · offline" : ""}
+                {!available.includes(k) ? " · offline" : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -128,7 +128,7 @@ export function RuntimeSection({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
-      <SectionHeading title="Runtime & model" hint="Where it runs and which model drives it. Models are hot-swappable." />
+      <SectionHeading title="Model & Execution" hint="Where it runs and which model drives it. Models are hot-swappable." />
       <RuntimeField />
 
       <div className={fieldRow}>

@@ -108,7 +108,7 @@ export const run = z.object({
   trigger: triggerKind,
   payload: z.unknown().nullable(),
   error: z.string().nullable(),
-  startedAt: z.string(),
+  startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
   durationMs: z.number().int().nullable(),
   stepCount: z.number().int().default(0),

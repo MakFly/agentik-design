@@ -12,15 +12,20 @@ import type { BuilderSectionKey, Issue } from "./validation";
 import { issuesForSection } from "./validation";
 import { cn } from "@/lib/utils";
 
+/**
+ * Section keys are stable (validation/issuesForSection depend on them); only the
+ * labels + order follow the OpenClaw × Hermes operator vocabulary. Delegation
+ * (subagents) sits before Channels, mirroring Hermes' config grouping.
+ */
 export const SECTIONS: Array<{ key: BuilderSectionKey; label: string }> = [
-  { key: "persona", label: "Persona" },
-  { key: "runtime", label: "Runtime & model" },
-  { key: "tools", label: "Tools" },
-  { key: "memory", label: "Memory" },
-  { key: "reactivity", label: "Reactivity" },
-  { key: "policy", label: "Policy & approval" },
-  { key: "delegation", label: "Delegation" },
-  { key: "review", label: "Review" },
+  { key: "persona", label: "Identity & Personality" },
+  { key: "runtime", label: "Model & Execution" },
+  { key: "tools", label: "Skills & Tools" },
+  { key: "memory", label: "Memory & Context" },
+  { key: "delegation", label: "Subagents" },
+  { key: "reactivity", label: "Channels" },
+  { key: "policy", label: "Policy & Access" },
+  { key: "review", label: "Review & Publish" },
 ];
 
 function statusOf(issues: Issue[], key: BuilderSectionKey) {
@@ -74,7 +79,9 @@ export function SectionNav({
               aria-current={isActive ? "step" : undefined}
               className={cn(
                 "flex min-h-[44px] items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                isActive ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                isActive
+                  ? "bg-accent font-medium text-accent-foreground"
+                  : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
               )}
             >
               <span

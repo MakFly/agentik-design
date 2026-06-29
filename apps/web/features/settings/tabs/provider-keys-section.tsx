@@ -17,7 +17,6 @@ interface ProviderKey {
 }
 
 const LABELS: Record<string, string> = {
-  openrouter: "OpenRouter",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",

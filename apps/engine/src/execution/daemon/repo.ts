@@ -406,6 +406,7 @@ export async function claimTask(
         AND at.team_id = ${rt.teamId}
         AND at.status = 'queued'
         AND at.dispatched_at IS NULL
+        AND NOT (at.input ? 'simulate')
         AND a.runtime_kind = ${rt.kind}
         AND (a.preferred_daemon_id IS NULL OR a.preferred_daemon_id = ${rt.daemonId})
       ORDER BY at.priority DESC, at.created_at ASC
@@ -757,10 +758,11 @@ export async function appendMessages(
 }
 
 /** Pull the runtime's reported `cost_usd` (dollars float) out of a result blob and
- *  round to integer cents. Null when absent/invalid (echo and other runtimes omit it). */
+ *  round to integer cents. Null when absent/invalid (some runtimes omit it). */
 function costCentsFromResult(result: unknown): number | null {
   if (!result || typeof result !== "object") return null;
-  const usd = (result as Record<string, unknown>).cost_usd;
+  const r = result as Record<string, unknown>;
+  const usd = r.cost_usd ?? r.costUsd ?? r.total_cost_usd ?? r.totalCostUsd;
   if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return null;
   return Math.round(usd * 100);
 }

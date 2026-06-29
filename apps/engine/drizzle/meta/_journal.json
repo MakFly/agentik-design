@@ -288,6 +288,20 @@
       "when": 1782565200000,
       "tag": "0040_agent_run_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1782568800000,
+      "tag": "0041_drop_echo_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1782572400000,
+      "tag": "0042_drop_notification_preferences",
+      "breakpoints": true
     }
   ]
 }

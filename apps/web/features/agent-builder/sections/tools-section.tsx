@@ -42,7 +42,7 @@ export function ToolsSection({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
-      <SectionHeading title="Tools" hint="Grant least-privilege scopes; gate writes behind approval." />
+      <SectionHeading title="Skills & Tools" hint="Grant least-privilege scopes; gate writes behind approval." />
       {isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />

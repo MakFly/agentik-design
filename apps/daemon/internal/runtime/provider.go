@@ -367,13 +367,9 @@ func (p Provider) openAIConfig(env map[string]string, inputModel string) (key, b
 		key = strings.TrimSpace(env["OPENAI_API_KEY"])
 		baseURL = pick(p.BaseURL, env["OPENAI_BASE_URL"], "https://api.openai.com/v1")
 		model = pick(inputModel, p.Model, "gpt-5.4-mini")
-	case "openrouter":
-		key = strings.TrimSpace(env["OPENROUTER_API_KEY"])
-		baseURL = pick(p.BaseURL, env["OPENROUTER_BASE_URL"], "https://openrouter.ai/api/v1")
-		model = pick(inputModel, p.Model, "openrouter/auto")
 	case "custom":
-		key = strings.TrimSpace(pick(env["CUSTOM_API_KEY"], env["OPENROUTER_API_KEY"], env["OPENAI_API_KEY"]))
-		baseURL = pick(p.BaseURL, env["CUSTOM_BASE_URL"], env["OPENAI_BASE_URL"], env["OPENROUTER_BASE_URL"])
+		key = strings.TrimSpace(pick(env["CUSTOM_API_KEY"], env["OPENAI_API_KEY"]))
+		baseURL = pick(p.BaseURL, env["CUSTOM_BASE_URL"], env["OPENAI_BASE_URL"])
 		model = pick(inputModel, p.Model, "gpt-5.4-mini")
 	default:
 		return "", "", "", fmt.Errorf("unsupported provider runtime %q", p.KindName)

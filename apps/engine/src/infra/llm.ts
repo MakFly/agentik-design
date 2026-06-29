@@ -14,7 +14,6 @@ import { generateObject, type LanguageModel } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 
 export type RouterAgent = {
@@ -43,7 +42,6 @@ function buildRouterModel(
   provider: string,
   model: string,
   apiKey: string,
-  baseURL?: string,
 ): LanguageModel | null {
   switch (provider) {
     case "anthropic":
@@ -52,12 +50,6 @@ function buildRouterModel(
       return createOpenAI({ apiKey })(model);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(model);
-    case "openrouter":
-      return createOpenAICompatible({
-        name: "openrouter",
-        apiKey,
-        baseURL: baseURL ?? "https://openrouter.ai/api/v1",
-      })(model);
     default:
       return null;
   }
@@ -115,7 +107,7 @@ export async function routeAgentWithLlm(opts: {
   text: string;
 }): Promise<RouteDecision | null> {
   if (opts.agents.length === 0) return null;
-  const model = buildRouterModel(opts.provider, opts.model, opts.apiKey, opts.baseURL);
+  const model = buildRouterModel(opts.provider, opts.model, opts.apiKey);
   if (!model) return null;
   try {
     const { object } = await generateObject({

@@ -18,8 +18,6 @@ export const appUsers = pgTable("app_users", {
   onboardingQuestionnaire: jsonb("onboarding_questionnaire").notNull().default({}),
   /** Client UI prefs synced across devices (reduce motion, submit mode, theme). */
   uiPreferences: jsonb("ui_preferences").notNull().default({}),
-  /** Email / in-app notification toggles. */
-  notificationPreferences: jsonb("notification_preferences").notNull().default({}),
   /** Personal daemon token metadata. The token itself is revealed once and stored as a hash only. */
   daemonTokenHash: text("daemon_token_hash"),
   daemonTokenPrefix: text("daemon_token_prefix").unique(),

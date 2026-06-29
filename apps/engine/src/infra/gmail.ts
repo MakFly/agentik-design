@@ -9,20 +9,73 @@ import { db, schema } from "./db/client";
 import { decryptJson, encryptJson } from "./crypto";
 import { env } from "./env";
 import { refreshGoogleToken } from "./oauth";
-import { sendMail, type OutboundMail } from "./mailer";
+import { buildMailMessage, sendMail, type OutboundMail } from "./mailer";
 
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-function toRfc822(mail: OutboundMail): string {
-  return [
-    `From: ${mail.from}`,
-    `To: ${mail.to}`,
-    `Subject: ${mail.subject}`,
-    "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=utf-8",
-    "",
-    mail.text,
-  ].join("\r\n");
+export interface GmailMessageSummary {
+  id: string;
+  from: string;
+  subject: string;
+  date: string;
+  snippet: string;
+}
+
+function header(headers: Array<{ name: string; value: string }>, name: string): string {
+  return headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+/**
+ * List the latest inbox messages for the team's connected Gmail account.
+ * Reuses `resolveGmailAccessToken` (handles refresh). Requires the credential to
+ * carry the `gmail.readonly` scope — otherwise Gmail returns 403 and we surface
+ * a clear, actionable error instead of failing silently.
+ */
+export async function listGmailMessages(
+  teamId: string,
+  opts: { maxResults?: number } = {},
+): Promise<GmailMessageSummary[]> {
+  const token = await resolveGmailAccessToken(teamId);
+  if (!token) throw new Error("gmail_not_connected: no Google credential for this team");
+  const max = Math.min(Math.max(opts.maxResults ?? 5, 1), 25);
+
+  const listRes = await fetch(`${GMAIL_API}/messages?maxResults=${max}&labelIds=INBOX`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!listRes.ok) {
+    const body = await listRes.text().catch(() => "");
+    if (listRes.status === 403 && /has not been used|is disabled|SERVICE_DISABLED/i.test(body)) {
+      throw new Error(`gmail_api_disabled: enable the Gmail API in your Google Cloud project, then retry. (${body.slice(0, 160)})`);
+    }
+    if (listRes.status === 403 || listRes.status === 401) {
+      throw new Error(`gmail_scope_missing: reading needs the gmail.readonly scope — reconnect Gmail with it. (${body.slice(0, 160)})`);
+    }
+    throw new Error(`gmail_list_failed: ${listRes.status} ${body.slice(0, 160)}`);
+  }
+  const { messages = [] } = (await listRes.json()) as { messages?: Array<{ id: string }> };
+
+  const out: GmailMessageSummary[] = [];
+  for (const { id } of messages) {
+    const msgRes = await fetch(
+      `${GMAIL_API}/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (!msgRes.ok) continue;
+    const msg = (await msgRes.json()) as {
+      snippet?: string;
+      payload?: { headers?: Array<{ name: string; value: string }> };
+    };
+    const headers = msg.payload?.headers ?? [];
+    out.push({
+      id,
+      from: header(headers, "From"),
+      subject: header(headers, "Subject"),
+      date: header(headers, "Date"),
+      snippet: msg.snippet ?? "",
+    });
+  }
+  return out;
 }
 
 /** Resolve a fresh Gmail access token for the team's connected Google credential. */
@@ -63,7 +116,7 @@ export async function resolveGmailAccessToken(teamId: string): Promise<string | 
 }
 
 async function sendViaGmailApi(accessToken: string, mail: OutboundMail): Promise<void> {
-  const raw = Buffer.from(toRfc822(mail)).toString("base64url");
+  const raw = Buffer.from(buildMailMessage(mail)).toString("base64url");
   const res = await fetch(GMAIL_SEND_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },

@@ -1,24 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  Brain,
   Circle,
   Clock,
   Cpu,
+  Database,
   History,
+  ListTodo,
   Network,
   Pencil,
-  Play,
-  RefreshCw,
+  ShieldCheck,
   Tag,
-  Zap,
+  Wrench,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
-import { CopyableValue } from "@/components/shared/copyable-value";
 import { ErrorState } from "@/components/shared/error-state";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -40,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useInjectionPreview } from "@/features/memory/api";
 import { useAgent, useAgentTaskSnapshot } from "./api";
 import { useRuns } from "@/features/run-view/api";
 import { derivePresence } from "@/lib/agents/presence";
@@ -48,10 +50,8 @@ import {
   formatDuration,
   formatMoney,
   formatPercent,
-  formatRelativeTime,
   formatShortId,
 } from "@/lib/format";
-import { useSessionStore } from "@/lib/stores/session.store";
 import { cn } from "@/lib/utils";
 import type { Run } from "@/types/domain";
 import type { AgentRow } from "./types";
@@ -62,12 +62,51 @@ const AVAILABILITY_CLASS: Record<"online" | "unstable" | "offline", string> = {
   offline: "bg-muted-foreground/40",
 };
 
+const HEALTH_LABEL: Record<AgentRow["health"], string> = {
+  healthy: "Prêt",
+  degraded: "Dégradé",
+  error: "Erreur",
+  idle: "Disponible",
+  disabled: "Désactivé",
+};
+
+const HEALTH_CLASS: Record<AgentRow["health"], string> = {
+  healthy: "bg-success/10 text-success",
+  degraded: "bg-warning/10 text-warning",
+  error: "bg-danger/10 text-danger",
+  idle: "bg-surface-2 text-muted-foreground",
+  disabled: "bg-surface-2 text-muted-foreground",
+};
+
+const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+  ["year", 31_536_000_000],
+  ["month", 2_592_000_000],
+  ["day", 86_400_000],
+  ["hour", 3_600_000],
+  ["minute", 60_000],
+  ["second", 1000],
+];
+
+function formatRelativeTimeFr(input: string | number | Date, now: number = Date.now()): string {
+  const parse = (s: string) => Date.parse(s.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  const ts = input instanceof Date ? input.getTime() : typeof input === "number" ? input : parse(input);
+  if (Number.isNaN(ts)) return "—";
+  const diff = ts - now;
+  const rtf = new Intl.RelativeTimeFormat("fr", { numeric: "auto", style: "short" });
+  for (const [unit, msPerUnit] of RELATIVE_UNITS) {
+    if (Math.abs(diff) >= msPerUnit || unit === "second") {
+      return rtf.format(Math.round(diff / msPerUnit), unit);
+    }
+  }
+  return "maintenant";
+}
+
 function normalizeTimestamp(value: string | null | undefined): string {
   if (!value) return "—";
   const normalized = value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
   const parsed = Date.parse(normalized);
   if (Number.isNaN(parsed)) return value;
-  return new Date(parsed).toLocaleString("en-US", {
+  return new Date(parsed).toLocaleString("fr-FR", {
     dateStyle: "medium",
     timeStyle: "short",
   });
@@ -78,12 +117,17 @@ function detailLabel(value: string | null | undefined) {
 }
 
 function presenceToLabel(availability: "online" | "unstable" | "offline") {
-  return availability === "online" ? "Online" : availability === "unstable" ? "Unstable" : "Offline";
+  return availability === "online" ? "En ligne" : availability === "unstable" ? "Instable" : "Hors ligne";
+}
+
+function workloadLabel(running: number, queued: number) {
+  if (running || queued) return `${running} en cours · ${queued} en file`;
+  return "Disponible";
 }
 
 function runStartedAt(run: Run) {
   if (!run.startedAt) return "—";
-  return formatRelativeTime(run.startedAt);
+  return formatRelativeTimeFr(run.startedAt);
 }
 
 function MetaField({
@@ -113,7 +157,7 @@ function MetaGrid({ children, className }: { children: ReactNode; className?: st
 
 function MetricTile({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex min-h-[4.75rem] flex-col justify-between rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+    <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-border bg-surface-2 px-3 py-2.5">
       <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
         {label}
       </p>
@@ -122,24 +166,188 @@ function MetricTile({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function AgentHealthBadge({ status }: { status: AgentRow["health"] }) {
+  return (
+    <Badge className={cn("rounded-full px-2 py-0.5 text-xs", HEALTH_CLASS[status])}>
+      {HEALTH_LABEL[status]}
+    </Badge>
+  );
+}
+
 function AgentMetrics({ agent }: { agent: AgentRow }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <MetricTile label="Success rate (7d)" value={formatPercent(agent.stats.successRate)} />
-      <MetricTile label="Avg. latency" value={formatDuration(agent.stats.avgLatencyMs)} />
-      <MetricTile label="Avg. cost/run" value={formatMoney(agent.stats.avgCost)} />
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <MetricTile label="Réussite 7j" value={formatPercent(agent.stats.successRate)} />
+      <MetricTile label="Latence moy." value={formatDuration(agent.stats.avgLatencyMs)} />
+      <MetricTile label="Coût moyen" value={formatMoney(agent.stats.avgCost)} />
       <MetricTile label="Runs / 24h" value={formatCompactNumber(agent.stats.runs24h)} />
       <MetricTile
-        label="Last run"
-        value={agent.stats.lastRunAt ? formatRelativeTime(agent.stats.lastRunAt) : "—"}
+        label="Dernier run"
+        value={agent.stats.lastRunAt ? formatRelativeTimeFr(agent.stats.lastRunAt) : "—"}
       />
-      <MetricTile label="Model" value={<span className="text-base font-medium">{agent.model}</span>} />
     </div>
   );
 }
 
+function CapabilityPanel({ agent }: { agent: AgentRow }) {
+  const capabilities = [
+    ...(agent.configSkills ?? []).map((id) => ({
+      id,
+      kind: "Skill config",
+      approval: false,
+      scopes: [] as string[],
+    })),
+    ...(agent.tools ?? []).map((id) => {
+      const grant = agent.toolGrants?.find((item) => item.toolId === id);
+      return {
+        id,
+        kind: "Outil",
+        approval: Boolean(grant?.requireApproval),
+        scopes: grant?.scopes ?? [],
+      };
+    }),
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Wrench className="size-4 text-primary" />
+          Capacités
+        </CardTitle>
+        <CardDescription>Outils et skills déclarées dans la version publiée.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {capabilities.length ? (
+          <div className="grid gap-2">
+            {capabilities.map((capability) => (
+              <div key={`${capability.kind}-${capability.id}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-xs">{capability.id}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {capability.kind}
+                    {capability.scopes.length ? ` · ${capability.scopes.join(", ")}` : ""}
+                  </p>
+                </div>
+                {capability.approval ? (
+                  <Badge variant="outline" className="shrink-0 gap-1 rounded-full">
+                    <ShieldCheck className="size-3.5" />
+                    Approbation
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="shrink-0 rounded-full">Actif</Badge>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            icon={Wrench}
+            title="Aucune capacité publiée"
+            description="Publie une version avec outils ou skills pour activer cette surface."
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MemoryInjectionPanel({ team, agent }: { team: string; agent: AgentRow }) {
+  const previewQuery = useInjectionPreview(team, agent.id);
+  const preview = previewQuery.data;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Brain className="size-4 text-primary" />
+          Mémoire Hermes
+        </CardTitle>
+        <CardDescription>Contexte approuvé injecté au prochain run de cet agent.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {previewQuery.isLoading ? (
+          <Skeleton className="h-32" />
+        ) : previewQuery.isError ? (
+          <ErrorState error={previewQuery.error} onRetry={() => previewQuery.refetch()} inline />
+        ) : preview ? (
+          <>
+            <MetaGrid>
+              <MetaField label="Mémoire">
+                {preview.memoryPolicy.inject ? (
+                  <span>{preview.memoryPolicy.maxEntries} max · confiance ≥ {preview.memoryPolicy.minConfidence}</span>
+                ) : (
+                  "Désactivée"
+                )}
+              </MetaField>
+              <MetaField label="Scopes mémoire">{preview.memoryPolicy.scopes.join(", ")}</MetaField>
+              <MetaField label="Skills">
+                {preview.skillPolicy.inject ? `${preview.skillPolicy.maxSkills} max` : "Désactivées"}
+              </MetaField>
+              <MetaField label="Scopes skills">{preview.skillPolicy.scopes.join(", ")}</MetaField>
+            </MetaGrid>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border border-border p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                  <Database className="size-4 text-muted-foreground" />
+                  Souvenirs injectés
+                  <Badge variant="outline" className="ml-auto rounded-full tabular-nums">
+                    {preview.memories.length}
+                  </Badge>
+                </div>
+                {preview.memories.length ? (
+                  <ul className="space-y-2">
+                    {preview.memories.slice(0, 4).map((memory, index) => (
+                      <li key={`${memory.scope}-${index}`} className="text-sm leading-relaxed text-muted-foreground">
+                        <span className="font-medium text-foreground">{memory.scope}</span> · {memory.content}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Aucun souvenir injecté. Les prochaines revues approuvées alimenteront ce contexte.
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                  <BookIcon />
+                  Skills injectées
+                  <Badge variant="outline" className="ml-auto rounded-full tabular-nums">
+                    {preview.skills.length}
+                  </Badge>
+                </div>
+                {preview.skills.length ? (
+                  <ul className="space-y-2">
+                    {preview.skills.slice(0, 4).map((skill) => (
+                      <li key={skill.name} className="text-sm leading-relaxed text-muted-foreground">
+                        <span className="font-medium text-foreground">{skill.name}</span>
+                        {skill.triggerConditions.length ? ` · ${skill.triggerConditions.join(", ")}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Aucune skill apprise n'est encore sélectionnée pour cet agent.
+                  </p>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Aucune version publiée ne permet encore de prévisualiser l'injection.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BookIcon() {
+  return <Brain className="size-4 text-muted-foreground" aria-hidden="true" />;
+}
+
 export function AgentDetailScreen({ team, agentId }: { team: string; agentId: string }) {
-  const session = useSessionStore((s) => s.session);
   const agentQuery = useAgent(team, agentId);
   const snapshotQuery = useAgentTaskSnapshot(team);
   const runsQuery = useRuns(team);
@@ -148,7 +356,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
     if (!agent || !snapshotQuery.data) return null;
     return derivePresence(snapshotQuery.data, {
       id: agent.id,
-      runtimeKind: agent.runtimeKind ?? "echo",
+      runtimeKind: agent.runtimeKind ?? "claude",
       maxConcurrentTasks: 1,
     });
   }, [agent, snapshotQuery.data]);
@@ -158,29 +366,51 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
     return runsQuery.data.items
       .filter((run) => run.subject.kind === "agent" && run.subject.agentId === agent.id)
       .sort((a, b) => {
-        const right = Date.parse(b.startedAt.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
-        const left = Date.parse(a.startedAt.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+        const right = b.startedAt
+          ? Date.parse(b.startedAt.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"))
+          : 0;
+        const left = a.startedAt
+          ? Date.parse(a.startedAt.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"))
+          : 0;
         if (Number.isNaN(left) || Number.isNaN(right)) return 0;
         return right - left;
       });
   }, [agent, runsQuery.data]);
 
+  const displayTaskGroups = useMemo(() => {
+    const map = new Map<string, { title: string | null; runs: Run[] }>();
+    for (const run of agentRuns) {
+      const key = run.taskId ?? "__no_task__";
+      const group = map.get(key) ?? { title: run.taskTitle ?? null, runs: [] };
+      group.runs.push(run);
+      map.set(key, group);
+    }
+    let budget = 8;
+    const out: { title: string | null; total: number; runs: Run[] }[] = [];
+    for (const group of map.values()) {
+      if (budget <= 0) break;
+      out.push({ title: group.title, total: group.runs.length, runs: group.runs.slice(0, budget) });
+      budget -= Math.min(budget, group.runs.length);
+    }
+    return out;
+  }, [agentRuns]);
+
   if (agentQuery.isLoading || (!agentQuery.data && agentQuery.isFetching)) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader
-          title="Loading agent"
+          title="Chargement de l'agent"
           back={{ href: `/${team}/agents`, label: "Agents" }}
           actions={
             <Button asChild size="sm" variant="outline">
               <Link href={`/${team}/agents`}>
                 <ArrowLeft className="size-4" />
-                Back
+                Retour
               </Link>
             </Button>
           }
         />
-        <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
           <Skeleton className="h-72" />
           <Skeleton className="h-72" />
         </div>
@@ -201,44 +431,36 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
     );
   }
 
-  const workspaceName = session?.team.name ?? team;
-
   return (
     <div className="flex min-h-[calc(100dvh-var(--navbar-h)-3rem)] flex-col gap-6 md:min-h-[calc(100dvh-var(--navbar-h)-4rem)]">
       <PageHeader
         title={agent.name}
-        description="Identity, health, config, runs, and runtime status."
+        description="Mission, runtime, capacités, mémoire injectée et historique d'exécution."
         back={{ href: `/${team}/agents`, label: "Agents" }}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm">
               <Link href={`/${team}/agents/${agent.id}/edit`}>
                 <Pencil className="size-4" />
-                Edit in builder
+                Modifier
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link href={`/${team}/agents/fleet`}>
                 <Network className="size-4" />
-                View in Fleet
+                Fleet
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/automations?agent=${agent.id}`}>
-                <Zap className="size-4" />
-                Automations
+              <Link href={`/${team}/memory?agent=${agent.id}`}>
+                <Brain className="size-4" />
+                Mémoire
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
               <Link href={`/${team}/runs`}>
                 <History className="size-4" />
-                All runs
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/agents/new`}>
-                <Play className="size-4" />
-                New agent
+                Runs
               </Link>
             </Button>
           </div>
@@ -252,35 +474,33 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
         >
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p className="min-w-0">
-            No live daemon for this agent&apos;s runtime{" "}
-            <span className="font-mono">{agent.runtimeKind ?? "echo"}</span>. Runs are rejected until
-            a daemon comes online — start your daemon, then try again.
+            Aucun daemon vivant pour le runtime{" "}
+            <span className="font-mono">{agent.runtimeKind ?? "claude"}</span>. Les runs seront rejetés tant qu'un
+            daemon compatible n'est pas en ligne.
           </p>
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Bot className="size-4 text-primary" />
-              Agent profile
+              Mission
             </CardTitle>
-            <CardDescription>Identity, ownership, and lifecycle.</CardDescription>
+            <CardDescription>Rôle, objectif et contexte métier de l'agent.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={agent.health} />
+              <AgentHealthBadge status={agent.health} />
               <Badge variant="outline" className="rounded-full">
                 {presence ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <span
-                      className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`}
-                    />
+                    <span className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`} />
                     {presenceToLabel(presence.availability)}
                   </span>
                 ) : (
-                  "Presence unknown"
+                  "Présence inconnue"
                 )}
               </Badge>
               <Badge variant="secondary" className="rounded-full tabular-nums">
@@ -288,17 +508,18 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               </Badge>
             </div>
 
-            <div className="grid gap-3 rounded-lg border border-border bg-surface/40 p-3">
-              <MetaField label="Role">{detailLabel(agent.role)}</MetaField>
-              <MetaField label="Goal">
+            <MetaGrid>
+              <MetaField label="Rôle">{detailLabel(agent.role)}</MetaField>
+              <MetaField label="Créé le">{normalizeTimestamp(agent.createdAt)}</MetaField>
+              <MetaField label="Objectif" className="sm:col-span-2">
                 <span className="leading-relaxed text-muted-foreground">{detailLabel(agent.goal)}</span>
               </MetaField>
               {agent.description ? (
-                <MetaField label="Description">
+                <MetaField label="Description" className="sm:col-span-2">
                   <span className="leading-relaxed text-muted-foreground">{agent.description}</span>
                 </MetaField>
               ) : null}
-            </div>
+            </MetaGrid>
 
             <div className="flex flex-wrap items-center gap-2">
               {agent.tags.length ? (
@@ -309,25 +530,9 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
                   </Badge>
                 ))
               ) : (
-                <span className="text-xs text-muted-foreground">No tags</span>
+                <span className="text-xs text-muted-foreground">Aucun tag</span>
               )}
             </div>
-
-            <MetaGrid>
-              <MetaField label="Agent ID">
-                <CopyableValue value={agent.id} />
-              </MetaField>
-              <MetaField label="Workspace">
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <span>{workspaceName}</span>
-                  <CopyableValue value={agent.teamId} className="text-muted-foreground" />
-                </div>
-              </MetaField>
-              <MetaField label="Owner">
-                <CopyableValue value={agent.owner} />
-              </MetaField>
-              <MetaField label="Created">{normalizeTimestamp(agent.createdAt)}</MetaField>
-            </MetaGrid>
           </CardContent>
         </Card>
 
@@ -335,16 +540,16 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Cpu className="size-4 text-primary" />
-              Runtime
+              Exécution
             </CardTitle>
-            <CardDescription>Model, workload, and version bindings.</CardDescription>
+            <CardDescription>Runtime, modèle, charge et signaux opérationnels.</CardDescription>
           </CardHeader>
           <CardContent>
             <MetaGrid>
-              <MetaField label="Model">{detailLabel(agent.model)}</MetaField>
+              <MetaField label="Modèle">{detailLabel(agent.model)}</MetaField>
               <MetaField label="Runtime">
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="font-mono">{agent.runtimeKind ?? "echo"}</span>
+                  <span className="font-mono">{agent.runtimeKind ?? "claude"}</span>
                   {presence ? (
                     <span
                       className={`size-1.5 rounded-full ${AVAILABILITY_CLASS[presence.availability]}`}
@@ -354,31 +559,17 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
                   ) : null}
                 </span>
               </MetaField>
-              <MetaField label="Updated">{normalizeTimestamp(agent.updatedAt)}</MetaField>
-              <MetaField label="Workload">
+              <MetaField label="Mis à jour">{normalizeTimestamp(agent.updatedAt)}</MetaField>
+              <MetaField label="Charge">
                 {presence ? (
                   <span className="inline-flex items-center gap-1.5">
                     <Circle className="size-3.5 text-muted-foreground" />
                     <span className="tabular-nums">
-                      {presence.runningCount} running · {presence.queuedCount} queued
+                      {workloadLabel(presence.runningCount, presence.queuedCount)}
                     </span>
                   </span>
                 ) : (
-                  <span className="text-muted-foreground">Waiting for snapshot…</span>
-                )}
-              </MetaField>
-              <MetaField label="Live version">
-                {agent.liveVersionId ? (
-                  <CopyableValue value={agent.liveVersionId} />
-                ) : (
-                  "—"
-                )}
-              </MetaField>
-              <MetaField label="Draft version" className="sm:col-span-2">
-                {agent.draftVersionId ? (
-                  <CopyableValue value={agent.draftVersionId} />
-                ) : (
-                  "—"
+                  <span className="text-muted-foreground">Snapshot en attente...</span>
                 )}
               </MetaField>
             </MetaGrid>
@@ -386,13 +577,18 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
         </Card>
       </div>
 
+      <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
+        <CapabilityPanel agent={agent} />
+        <MemoryInjectionPanel team={team} agent={agent} />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <RefreshCw className="size-4 text-primary" />
-            Metrics
+            <Clock className="size-4 text-primary" />
+            Signaux opérationnels
           </CardTitle>
-          <CardDescription>Operational performance and economics for this agent.</CardDescription>
+          <CardDescription>Performance récente sans exposer les identifiants techniques.</CardDescription>
         </CardHeader>
         <CardContent>
           <AgentMetrics agent={agent} />
@@ -403,9 +599,9 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Clock className="size-4 text-primary" />
-            Recent runs
+            Runs récents
           </CardTitle>
-          <CardDescription>Last executions for this agent.</CardDescription>
+          <CardDescription>Exécutions regroupées par tâche déclenchante.</CardDescription>
         </CardHeader>
         <CardContent>
           {runsQuery.isLoading ? (
@@ -415,8 +611,8 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
           ) : !agentRuns.length ? (
             <EmptyState
               icon={Clock}
-              title="No runs yet"
-              description="Runs for this agent will show up here once executions start."
+              title="Aucun run"
+              description="Les exécutions de cet agent apparaîtront ici."
             />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border">
@@ -424,50 +620,70 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
                 <TableHeader>
                   <TableRow>
                     <TableHead>Run</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Trigger</TableHead>
-                    <TableHead>Started</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead>État</TableHead>
+                    <TableHead>Déclencheur</TableHead>
+                    <TableHead>Démarrage</TableHead>
+                    <TableHead className="text-right">Coût</TableHead>
                     <TableHead>Env</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {agentRuns.slice(0, 8).map((run) => (
-                    <TableRow key={run.id}>
-                      <TableCell>
-                        <Link
-                          href={`/${team}/runs/${run.id}`}
-                          className="font-mono text-xs hover:underline"
-                          title={run.id}
-                        >
-                          {formatShortId(run.id)}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={run.status} size="sm" />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{run.trigger.kind}</Badge>
-                      </TableCell>
-                      <TableCell
-                        className="text-muted-foreground"
-                        title={normalizeTimestamp(run.startedAt)}
-                      >
-                        {runStartedAt(run)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(run.cost.money)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground uppercase">{run.env}</TableCell>
-                    </TableRow>
+                  {displayTaskGroups.map((group, gi) => (
+                    <Fragment key={group.title ?? `task-${gi}`}>
+                      <TableRow className="bg-surface-2/50 hover:bg-surface-2/50">
+                        <TableCell colSpan={6} className="py-1.5">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <ListTodo className="size-3.5" aria-hidden="true" />
+                            <span className="truncate">{group.title ?? "Hors tâche"}</span>
+                            <span className="tabular-nums text-muted-foreground/60">
+                              · {group.total} {group.total > 1 ? "runs" : "run"}
+                            </span>
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                      {group.runs.map((run, i) => (
+                        <TableRow key={run.id}>
+                          <TableCell>
+                            <Link
+                              href={`/${team}/runs/${run.id}`}
+                              className="inline-flex items-center gap-1.5 font-mono text-xs hover:underline"
+                              title={run.id}
+                            >
+                              {group.total > 1 ? (
+                                <span className="rounded bg-surface-2 px-1 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                                  #{group.total - i}
+                                </span>
+                              ) : null}
+                              {formatShortId(run.id)}
+                            </Link>
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge status={run.status} size="sm" />
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{run.trigger.kind}</Badge>
+                          </TableCell>
+                          <TableCell
+                            className="text-muted-foreground"
+                            title={normalizeTimestamp(run.startedAt)}
+                          >
+                            {runStartedAt(run)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(run.cost.money)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground uppercase">{run.env}</TableCell>
+                        </TableRow>
+                      ))}
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>
               {agentRuns.length > 8 ? (
                 <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                  Showing 8 of {formatCompactNumber(agentRuns.length)} runs.{" "}
+                  8 runs affichés sur {formatCompactNumber(agentRuns.length)}.{" "}
                   <Link href={`/${team}/runs`} className="text-primary hover:underline">
-                    View all
+                    Tout voir
                   </Link>
                 </div>
               ) : null}

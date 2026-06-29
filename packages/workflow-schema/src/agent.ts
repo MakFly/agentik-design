@@ -73,7 +73,7 @@ export const createAgentVersionInput = z.object({
   instructions: z.string().default(""),
   tools: z.array(z.string()).default([]),
   toolGrants: z.array(toolGrant).default([]),
-  runtimeKind: runtimeKindSchema.default("echo"),
+  runtimeKind: runtimeKindSchema.default("claude"),
   memoryPolicy: memoryPolicy.default(DEFAULT_MEMORY_POLICY),
   skillPolicy: skillPolicy.default(DEFAULT_SKILL_POLICY),
   changelog: z.string().optional(),

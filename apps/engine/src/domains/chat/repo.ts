@@ -3,6 +3,7 @@ import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
 import { hasLiveDaemonForAgent } from "../../infra/daemon-liveness";
+import { tryBuiltinSkill } from "./skills";
 
 const { chatSessions, chatMessages, agents, runs } = schema;
 
@@ -87,7 +88,7 @@ export async function sendChatMessage(
   sessionId: string,
   content: string,
   opts: { parentRunId?: string | null; inputMeta?: Record<string, unknown> } = {},
-): Promise<{ taskId: string } | null> {
+): Promise<{ taskId: string; completed?: boolean } | null> {
   const [session] = await db
     .select({ agentId: chatSessions.agentId })
     .from(chatSessions)
@@ -98,6 +99,28 @@ export async function sendChatMessage(
   const userMessageId = genId("cmsg");
   await db.insert(chatMessages).values({ id: userMessageId, chatSessionId: sessionId, role: "user", content });
   const prompt = await buildChatPrompt(sessionId, userMessageId, content);
+
+  // Deterministic built-in skills (e.g. real Gmail read) are fulfilled server-side
+  // instead of being echoed by the daemon. Falls through when not applicable.
+  const [agentRow] = await db
+    .select({ config: agents.config })
+    .from(agents)
+    .where(and(eq(agents.id, session.agentId), eq(agents.teamId, teamId)))
+    .limit(1);
+  const handled = await tryBuiltinSkill({
+    teamId,
+    sessionId,
+    agentId: session.agentId,
+    config: agentRow?.config,
+    content,
+    prompt,
+    parentRunId: opts.parentRunId,
+    inputMeta: opts.inputMeta,
+  });
+  if (handled) {
+    await db.update(chatSessions).set({ updatedAt: sql`now()` }).where(eq(chatSessions.id, sessionId));
+    return handled;
+  }
 
   const runId = genId("run");
   await db.insert(runs).values({
@@ -168,7 +191,7 @@ export async function sendAgentChatTurn(
     inputMeta?: Record<string, unknown>;
   },
 ): Promise<
-  | { runId: string; chatSessionId: string }
+  | { runId: string; chatSessionId: string; completed?: boolean }
   | { error: "not_found" | "not_published" | "empty_input" | "no_live_daemon" }
 > {
   const content = input.content.trim();
@@ -222,7 +245,7 @@ export async function sendAgentChatTurn(
     inputMeta: input.inputMeta,
   });
   if (!sent) return { error: "not_found" };
-  return { runId: sent.taskId, chatSessionId };
+  return { runId: sent.taskId, chatSessionId, completed: sent.completed };
 }
 
 export type OrchestrationStepRecord = {

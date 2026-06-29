@@ -40,7 +40,7 @@ export function DelegationSection({
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <SectionHeading
-        title="Delegation"
+        title="Subagents"
         hint="Orchestrators route work to a roster of subagents. Mark this agent as an orchestrator, then wire who it can delegate to."
       />
 

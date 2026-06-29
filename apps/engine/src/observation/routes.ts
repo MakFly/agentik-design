@@ -33,7 +33,6 @@ observationRoutes.get("/system", async (c) => {
     providers: {
       anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
       openai: Boolean(env.OPENAI_API_KEY),
-      openrouter: Boolean(process.env.OPENROUTER_API_KEY),
       google: Boolean(env.GOOGLE_CLIENT_ID),
     },
     ...info,

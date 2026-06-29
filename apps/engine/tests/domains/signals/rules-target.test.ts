@@ -59,7 +59,7 @@ d("deterministic rule routing + deliveries", () => {
   beforeAll(async () => {
     teamId = await resolveTeam(`itest-rules-${Date.now()}`);
     // Rule execution dispatches via runAgent, which now requires a live daemon for the
-    // echo runtime — seed one with a fresh heartbeat so deliveries reach "started".
+    // claude runtime — seed one with a fresh heartbeat so deliveries reach "started".
     const daemonId = genId("daemon");
     await db.insert(schema.daemons).values({
       id: daemonId,
@@ -70,10 +70,10 @@ d("deterministic rule routing + deliveries", () => {
     });
     await db
       .insert(schema.runtimes)
-      .values({ id: genId("runtime"), daemonId, teamId, kind: "echo" });
+      .values({ id: genId("runtime"), daemonId, teamId, kind: "claude" });
     const published = await createAgent(teamId, { name: "Pinned Worker" });
     publishedId = published.id;
-    await publishAgent(teamId, publishedId, { instructions: "do work", runtimeKind: "echo" });
+    await publishAgent(teamId, publishedId, { instructions: "do work", runtimeKind: "claude" });
     const unpublished = await createAgent(teamId, { name: "Draft Worker" });
     unpublishedId = unpublished.id;
   });

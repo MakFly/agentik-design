@@ -518,7 +518,7 @@ function RunRow({ team, run }: { team: string; run: Run }) {
       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           <Clock3 className="size-3.5" aria-hidden="true" />
-          {formatRelativeTime(run.startedAt)}
+          {run.startedAt ? formatRelativeTime(run.startedAt) : "En queue"}
         </span>
         <span>{formatMoney(run.cost.money)}</span>
       </div>

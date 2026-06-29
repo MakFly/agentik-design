@@ -53,8 +53,6 @@ func hermesProvider(env map[string]string) (provider, baseURL, model, key string
 	switch {
 	case env["OPENAI_API_KEY"] != "":
 		return "custom", "https://api.openai.com/v1", "gpt-5.4-mini", env["OPENAI_API_KEY"], true
-	case env["OPENROUTER_API_KEY"] != "":
-		return "openrouter", "https://openrouter.ai/api/v1", "openrouter/auto", env["OPENROUTER_API_KEY"], true
 	case env["ANTHROPIC_API_KEY"] != "":
 		return "anthropic", "", "claude-sonnet-4-6", env["ANTHROPIC_API_KEY"], true
 	case env["GOOGLE_API_KEY"] != "" || env["GEMINI_API_KEY"] != "":
@@ -109,7 +107,7 @@ func hermesEnv() []string {
 		}
 	}
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "HERMES_") || strings.HasPrefix(e, "OPENROUTER_") ||
+		if strings.HasPrefix(e, "HERMES_") ||
 			strings.HasPrefix(e, "OPENAI_") || strings.HasPrefix(e, "ANTHROPIC_") ||
 			strings.HasPrefix(e, "NOUS_") || strings.HasPrefix(e, "GEMINI_") ||
 			strings.HasPrefix(e, "GOOGLE_") {

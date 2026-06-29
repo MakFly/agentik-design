@@ -206,7 +206,7 @@ async function placementForRun(task: DaemonRunRowDb) {
         .limit(1)
     : [];
   return {
-    runtimeKind: runtime?.kind ?? agent?.runtimeKind ?? "echo",
+    runtimeKind: runtime?.kind ?? agent?.runtimeKind ?? "claude",
     runtimeId: task.runtimeId ?? null,
     daemonId,
     daemonName: daemonDisplayName(daemon),
@@ -272,18 +272,26 @@ export async function listRuns(
     .limit(200);
   const agentNames = await agentNameMap(teamId);
   const wfNames = await workflowNameMap(teamId);
-  let items = rows.map((r) =>
-    r.executor === "orchestrator"
-      ? orchestrationRunToWeb(r)
-      : r.executor === "daemon"
-      ? daemonRunToWeb(r, r.agentId ? agentNames.get(r.agentId) : undefined)
-      : workflowRunToRun(r, r.workflowId ? wfNames.get(r.workflowId) : undefined),
-  );
-  if (filters.status) items = items.filter((r) => r.status === filters.status);
-  items.sort((a, b) =>
-    b.startedAt > a.startedAt ? 1 : b.startedAt < a.startedAt ? -1 : 0,
-  );
-  return items;
+  const taskTitles = await taskTitleMap(teamId);
+  let items = rows
+    .map((row) => ({
+      sortAt: row.startedAt ?? row.createdAt,
+      item:
+        row.executor === "orchestrator"
+          ? orchestrationRunToWeb(row)
+          : row.executor === "daemon"
+            ? daemonRunToWeb(
+                row,
+                row.agentId ? agentNames.get(row.agentId) : undefined,
+                row.projectTaskId ? taskTitles.get(row.projectTaskId) : undefined,
+              )
+            : workflowRunToRun(row, row.workflowId ? wfNames.get(row.workflowId) : undefined),
+    }))
+    .sort((a, b) =>
+      b.sortAt > a.sortAt ? 1 : b.sortAt < a.sortAt ? -1 : 0,
+    );
+  if (filters.status) items = items.filter(({ item }) => item.status === filters.status);
+  return items.map(({ item }) => item);
 }
 
 export async function getRunDetail(teamId: string, id: string) {
@@ -367,7 +375,7 @@ async function childSummariesForRun(teamId: string, parentRunId: string) {
     agentName: row.agentId ? names.get(row.agentId) ?? row.agentId : null,
     status: row.status,
     kind: row.kind,
-    startedAt: row.startedAt ?? row.createdAt,
+    startedAt: row.status === "queued" ? null : row.startedAt,
     endedAt: row.endedAt,
     result: resultSummary(row.result),
     error: row.error,
@@ -400,4 +408,12 @@ async function workflowNameMap(teamId: string): Promise<Map<string, string>> {
     .from(workflows)
     .where(eq(workflows.teamId, teamId));
   return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+async function taskTitleMap(teamId: string): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: projectTasks.id, title: projectTasks.title })
+    .from(projectTasks)
+    .where(eq(projectTasks.teamId, teamId));
+  return new Map(rows.map((r) => [r.id, r.title]));
 }

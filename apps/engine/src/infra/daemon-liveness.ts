@@ -30,7 +30,7 @@ export async function hasLiveDaemonForAgent(
   teamId: string,
   agent: { runtimeKind?: string | null; preferredDaemonId?: string | null },
 ): Promise<boolean> {
-  const kind = agent.runtimeKind ?? "echo";
+  const kind = agent.runtimeKind ?? "claude";
   const rows = await db
     .select({ one: sql`1` })
     .from(runtimes)

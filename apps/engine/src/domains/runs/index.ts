@@ -9,6 +9,7 @@ export {
   deleteAgent,
   listAgentRows,
   getAgentRow,
+  getAgentCapabilities,
   getAgentTaskSnapshot,
   getAgentPlacementLabel,
   ensureDevAgents,

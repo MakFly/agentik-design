@@ -62,14 +62,14 @@ d("agent roster + identity + graph", () => {
     const conductor = await createAgent(teamId, {
       name: "Conductor",
       isOrchestrator: true,
-      config: { instructions: "delegate", runtimeKind: "echo" },
+      config: { instructions: "delegate", runtimeKind: "claude" },
     });
     expect(conductor.version).toBe(1);
     const conductorRow = await getAgentRow(teamId, conductor.id);
     expect(conductorRow?.isOrchestrator).toBe(true);
     expect(conductorRow?.liveVersionId).toBeTruthy();
     // Detail must expose the full published config so the edit flow doesn't reset to defaults.
-    expect((conductorRow?.config as { runtimeKind?: string } | null)?.runtimeKind).toBe("echo");
+    expect((conductorRow?.config as { runtimeKind?: string } | null)?.runtimeKind).toBe("claude");
     expect((conductorRow?.config as { instructions?: string } | null)?.instructions).toBe("delegate");
   });
 

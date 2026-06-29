@@ -10,7 +10,7 @@ export const DEFAULT_ENGINE_URL =
   process.env.NEXT_PUBLIC_ENGINE_URL ??
   process.env.API_URL ??
   "http://localhost:8787";
-export const DEFAULT_RUNTIMES = "echo,claude,hermes";
+export const DEFAULT_RUNTIMES = "claude,hermes,codex";
 
 const DEFAULT_HEALTH_PORT =
   process.env.AGENTIK_DAEMON_HEALTH_PORT ?? "19514";

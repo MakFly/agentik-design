@@ -68,6 +68,20 @@ type claudeEvent struct {
 	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
+func claudeArgs(in protocol.TaskInput, fallbackModel string) []string {
+	prompt := strings.TrimSpace(in.Prompt)
+	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
+	// The agent's persona/skill is its system prompt: append it so the CLI's built-in
+	// capabilities are preserved (an autonomous agent with its own skill).
+	if sp := strings.TrimSpace(in.SystemPrompt); sp != "" {
+		args = append(args, "--append-system-prompt", sp)
+	}
+	if model := pick(in.Model, fallbackModel); model != "" {
+		args = append(args, "--model", model)
+	}
+	return args
+}
+
 func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (any, error) {
 	var in protocol.TaskInput
 	_ = json.Unmarshal(task.Input, &in)
@@ -89,15 +103,7 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := []string{"-p", prompt, "--output-format", "stream-json", "--verbose"}
-	// The agent's persona/skill is its system prompt: append it so the CLI's built-in
-	// capabilities are preserved (an autonomous agent with its own skill).
-	if sp := strings.TrimSpace(in.SystemPrompt); sp != "" {
-		args = append(args, "--append-system-prompt", sp)
-	}
-	if model := pick(in.Model, c.Model); model != "" {
-		args = append(args, "--model", model)
-	}
+	args := claudeArgs(in, c.Model)
 	cmd := exec.CommandContext(runCtx, "claude", args...)
 	cmd.Dir = dir
 	cmd.Env = withTaskEnv(allowlistEnv(), task.Env)
@@ -152,7 +158,7 @@ func (c Claude) Run(ctx context.Context, task protocol.ClaimedTask, emit Emit) (
 			}
 		case "result":
 			// Surface real token usage + cost so the engine reports true cost
-			// (not a hardcoded zero). Echo and other runtimes omit these → cost 0.
+			// (not a hardcoded zero). Runtimes that omit these → cost 0.
 			result = map[string]any{
 				"result":   ev.Result,
 				"is_error": ev.IsError,

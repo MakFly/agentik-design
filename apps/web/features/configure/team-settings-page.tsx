@@ -9,7 +9,6 @@ import { ConnectionsTab } from "@/features/settings/tabs/connections-tab";
 import { ProvidersTab } from "@/features/settings/tabs/providers-tab";
 import { ProfileTab } from "@/features/settings/tabs/profile-tab";
 import { PreferencesTab } from "@/features/settings/tabs/preferences-tab";
-import { NotificationsTab } from "@/features/settings/tabs/notifications-tab";
 import { TokensTab } from "@/features/settings/tabs/tokens-tab";
 import { WorkspaceTab } from "@/features/settings/tabs/workspace-tab";
 import { MembersTab } from "@/features/settings/tabs/members-tab";
@@ -71,7 +70,6 @@ export function TeamSettingsPage({ team }: { team: string }) {
       <TabsContent value="account" className="flex flex-col gap-6">
         <ProfileTab team={team} />
         <PreferencesTab />
-        <NotificationsTab />
         <TokensTab team={team} />
       </TabsContent>
 

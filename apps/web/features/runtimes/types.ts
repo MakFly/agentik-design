@@ -31,7 +31,6 @@ export interface SystemInfo {
   providers: {
     anthropic: boolean;
     openai: boolean;
-    openrouter: boolean;
     google: boolean;
   };
   daemons: DaemonInfo[];

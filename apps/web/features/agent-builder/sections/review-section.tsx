@@ -23,7 +23,7 @@ export function ReviewSection({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex max-w-2xl flex-col gap-4">
-      <SectionHeading title="Review" hint="Resolve every error before publishing." />
+      <SectionHeading title="Review & Publish" hint="Resolve every error before publishing." />
 
       {errors.length === 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success-surface/40 p-3 text-sm">

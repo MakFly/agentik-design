@@ -25,27 +25,6 @@ export type UiPreferences = {
   theme?: "light" | "dark" | "system";
 };
 
-export type NotificationPreferences = {
-  emailRunComplete?: boolean;
-  emailRunFailed?: boolean;
-  emailApprovalNeeded?: boolean;
-  emailInvitations?: boolean;
-  inAppRuns?: boolean;
-  inAppApprovals?: boolean;
-  inAppMentions?: boolean;
-};
-
-export const DEFAULT_NOTIFICATION_PREFERENCES: Required<NotificationPreferences> =
-  {
-    emailRunComplete: false,
-    emailRunFailed: true,
-    emailApprovalNeeded: true,
-    emailInvitations: true,
-    inAppRuns: true,
-    inAppApprovals: true,
-    inAppMentions: true,
-  };
-
 type TeamProviderSettings = {
   fallbackOrder?: string[];
   costCeilingPerDayCents?: number;
@@ -92,7 +71,6 @@ const DEFAULT_ROUTER: Required<TeamRouterSettings> = {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  openrouter: "OpenRouter",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
@@ -101,7 +79,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 const PROVIDER_KINDS: Record<string, "anthropic" | "openai" | "self-hosted"> = {
   anthropic: "anthropic",
   openai: "openai",
-  openrouter: "openai",
   google: "self-hosted",
 };
 
@@ -111,14 +88,6 @@ function providerId(key: string) {
 
 function providerKeyFromId(id: string): string | null {
   return id.startsWith("prov_") ? id.slice(5) : null;
-}
-
-function mergeNotificationPrefs(
-  raw: unknown,
-): Required<NotificationPreferences> {
-  const base = { ...DEFAULT_NOTIFICATION_PREFERENCES };
-  if (!raw || typeof raw !== "object") return base;
-  return { ...base, ...(raw as NotificationPreferences) };
 }
 
 function mergeUiPrefs(raw: unknown): UiPreferences {
@@ -183,7 +152,6 @@ export async function getUserAccountSettings(userId: string) {
       name: appUsers.name,
       email: appUsers.email,
       uiPreferences: appUsers.uiPreferences,
-      notificationPreferences: appUsers.notificationPreferences,
     })
     .from(appUsers)
     .where(eq(appUsers.id, userId))
@@ -193,9 +161,6 @@ export async function getUserAccountSettings(userId: string) {
     name: row.name,
     email: row.email,
     uiPreferences: mergeUiPrefs(row.uiPreferences),
-    notificationPreferences: mergeNotificationPrefs(
-      row.notificationPreferences,
-    ),
   };
 }
 
@@ -246,20 +211,6 @@ export async function updateUserUiPreferences(
     .set({ uiPreferences: next })
     .where(eq(appUsers.id, userId));
   return { uiPreferences: next };
-}
-
-export async function updateUserNotificationPreferences(
-  userId: string,
-  patch: NotificationPreferences,
-) {
-  const current = await getUserAccountSettings(userId);
-  if (!current) return { error: "not_found" as const };
-  const next = { ...current.notificationPreferences, ...patch };
-  await db
-    .update(appUsers)
-    .set({ notificationPreferences: next })
-    .where(eq(appUsers.id, userId));
-  return { notificationPreferences: next };
 }
 
 /* ── Workspace ───────────────────────────────────────────────────────── */

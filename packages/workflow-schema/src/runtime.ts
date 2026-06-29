@@ -8,15 +8,13 @@ import { z } from "zod";
  */
 
 export const runtimeKindSchema = z.enum([
-  "echo",
   "claude",
   "hermes",
   "codex",
   "openai",
   "anthropic",
-  "openrouter",
   "custom",
-]); // enum stays extensible — "hermes" wraps the Nous Research CLI as a daemon runtime
+]); // every kind is a real LLM runtime — execution always requires an API key or OAuth (codex/claude code). "hermes" wraps the Nous Research CLI as a daemon runtime
 export type RuntimeKind = z.infer<typeof runtimeKindSchema>;
 
 /** Stream event emitted by a runtime — maps 1:1 to task_messages.type (+ done). */

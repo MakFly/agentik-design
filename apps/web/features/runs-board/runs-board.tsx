@@ -14,14 +14,14 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { Bot, Columns3, Filter, ListTodo, Radio, Workflow } from "lucide-react";
-import { useQueryState } from "nuqs";
+import { parseAsStringLiteral, useQueryState } from "nuqs";
 import type { Run, RunStatus } from "@/types/domain";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { BOARD_CARD_WIDTH, BOARD_STATUSES, RUN_COLUMNS } from "./config";
 import { buildColumns, findColumn, makeKanbanCollision } from "./drag-utils";
 import { BoardColumn } from "./run-column";
 import { RunCardContent } from "./run-card";
+import { RunsByAgent } from "./runs-by-agent";
 import { useRunsStream } from "./use-runs-stream";
 
 const COLUMN_IDS = new Set<string>(BOARD_STATUSES);
@@ -45,10 +45,16 @@ function scopeForRun(run: Run): RunScope[] {
   return scopes;
 }
 
+const GROUP_MODES = ["agent", "status"] as const;
+
 export function RunsBoard({ team }: { team: string }) {
   const { runs, status, applyLocalMove } = useRunsStream(team);
   const [scopeParam, setScopeParam] = useQueryState("scope");
   const scope = RUN_SCOPES.includes(scopeParam as RunScope) ? (scopeParam as RunScope) : "all";
+  const [grouping, setGroupParam] = useQueryState(
+    "group",
+    parseAsStringLiteral(GROUP_MODES).withDefault("status"),
+  );
 
   const runList = useMemo(() => Array.from(runs.values()), [runs]);
   const visibleRuns = useMemo(
@@ -198,10 +204,36 @@ export function RunsBoard({ team }: { team: string }) {
             <Radio className={cn("size-3.5", status === "live" && "animate-pulse")} aria-hidden="true" />
             {status === "live" ? "Live" : status === "error" ? "Offline" : "Connecting"}
           </span>
-          <Button variant="outline" size="sm" className="hidden h-8 gap-1.5 text-muted-foreground md:inline-flex">
-            <Columns3 className="size-3.5" />
-            Board
-          </Button>
+          <div className="inline-flex h-8 items-center rounded-md border border-border p-0.5">
+            <button
+              type="button"
+              onClick={() => setGroupParam("agent")}
+              aria-pressed={grouping === "agent"}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+                grouping === "agent"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Bot className="size-3.5" />
+              <span className="hidden sm:inline">By agent</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setGroupParam("status")}
+              aria-pressed={grouping === "status"}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+                grouping === "status"
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Columns3 className="size-3.5" />
+              <span className="hidden sm:inline">Board</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -246,33 +278,37 @@ export function RunsBoard({ team }: { team: string }) {
         </div>
       </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={collisionDetection}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto pt-4 pb-2">
-          {RUN_COLUMNS.map((column) => (
-            <BoardColumn
-              key={column.status}
-              column={column}
-              runIds={columns[column.status] ?? []}
-              runMap={visibleRunMap}
-              team={team}
-            />
-          ))}
-        </div>
+      {grouping === "agent" ? (
+        <RunsByAgent runs={visibleRuns} team={team} />
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collisionDetection}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto pt-4 pb-2">
+            {RUN_COLUMNS.map((column) => (
+              <BoardColumn
+                key={column.status}
+                column={column}
+                runIds={columns[column.status] ?? []}
+                runMap={visibleRunMap}
+                team={team}
+              />
+            ))}
+          </div>
 
-        <DragOverlay dropAnimation={null}>
-          {activeRun ? (
-            <div style={{ width: BOARD_CARD_WIDTH }} className="rotate-1 cursor-grabbing opacity-90 shadow-lg shadow-black/10">
-              <RunCardContent run={activeRun} />
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          <DragOverlay dropAnimation={null}>
+            {activeRun ? (
+              <div style={{ width: BOARD_CARD_WIDTH }} className="rotate-1 cursor-grabbing opacity-90 shadow-lg shadow-black/10">
+                <RunCardContent run={activeRun} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      )}
     </div>
   );
 }

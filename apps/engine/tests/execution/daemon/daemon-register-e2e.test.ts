@@ -56,7 +56,7 @@ d("e2e — POST /daemon/register reconciles the hostname → UUID transition", (
 
   test("rejects a register without the org token", async () => {
     const res = await register(
-      { name: "x", runtimes: [{ kind: "echo" }] },
+      { name: "x", runtimes: [{ kind: "claude" }] },
       false,
     );
     expect(res.status).toBe(401);
@@ -70,7 +70,7 @@ d("e2e — POST /daemon/register reconciles the hostname → UUID transition", (
     const r1 = await register({
       name: host,
       meta: { mode: "org" },
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     expect(r1.status).toBe(201);
     const reg1 = (await r1.json()) as { daemonId: string };
@@ -81,7 +81,7 @@ d("e2e — POST /daemon/register reconciles the hostname → UUID transition", (
       name: uuid,
       legacyIds: [host],
       meta: { deviceId: uuid, mode: "org" },
-      runtimes: [{ kind: "echo" }, { kind: "claude" }],
+      runtimes: [{ kind: "codex" }, { kind: "claude" }],
     });
     expect(r2.status).toBe(201);
     const reg2 = (await r2.json()) as { daemonId: string };

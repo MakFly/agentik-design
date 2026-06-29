@@ -71,7 +71,7 @@ d("Phase B — publishAgent writes immutable, monotonic versions", () => {
     const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)).limit(1);
     expect(agent?.liveVersionId).toBe(published(res).versionId);
     // publish must sync the agent's runtime_kind to the version, or claimTask routes runs to the
-    // wrong runtime (a claude agent would be claimed by an echo daemon).
+    // wrong runtime (a claude agent would be claimed by a codex daemon).
     expect(agent?.runtimeKind).toBe("claude");
     const versions = await listAgentVersions(teamId, agentId);
     expect(versions).toHaveLength(1);
@@ -105,7 +105,7 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
     const a = await createAgent(teamId, { name: "Learning Agent" });
     agentId = a.id;
     // Live version with default policies (inject agent+team-scoped memory, minConfidence 0.5).
-    await publishAgent(teamId, agentId, { instructions: "base", runtimeKind: "echo" });
+    await publishAgent(teamId, agentId, { instructions: "base", runtimeKind: "claude" });
     // A finished (failed) run N with some streamed output.
     runId = genId("run");
     await db.insert(schema.runs).values({
@@ -166,12 +166,12 @@ d("Phase D+E — GOLDEN PATH: review → approve → inject into the next run", 
   });
 
   test("step 9 (runtime side): a claimed next-run task carries the memory in its prompt", async () => {
-    // Register a daemon + echo runtime for this team so the queued task is claimable.
+    // Register a daemon + claude runtime for this team so the queued task is claimable.
     const daemonId = genId("daemon");
     const runtimeId = genId("runtime");
     await db.insert(schema.daemons).values({ id: daemonId, teamId, name: "itest-daemon" });
-    await db.insert(schema.runtimes).values({ id: runtimeId, daemonId, teamId, kind: "echo" });
-    // Queue run N+1 for the same (echo) agent.
+    await db.insert(schema.runtimes).values({ id: runtimeId, daemonId, teamId, kind: "claude" });
+    // Queue run N+1 for the same (claude) agent.
     const nextTaskId = genId("run");
     await db.insert(schema.runs).values({
       id: nextTaskId,
@@ -206,7 +206,7 @@ d("Security regressions — tenancy & review-state guards", () => {
     otherTeam = await resolveTeam(`${slug}-other`);
     const a = await createAgent(teamId, { name: "Sec Agent" });
     agentId = a.id;
-    await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "echo" });
+    await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "claude" });
     runId = genId("run");
     await db.insert(schema.runs).values({
       id: runId,
@@ -262,7 +262,7 @@ d("Memory cockpit — durable memory CRUD, audit, preview, and session recall", 
     teamId = await resolveTeam(slug);
     const agent = await createAgent(teamId, { name: "Memory Agent" });
     agentId = agent.id;
-    await publishAgent(teamId, agentId, { instructions: "remember safely", runtimeKind: "echo" });
+    await publishAgent(teamId, agentId, { instructions: "remember safely", runtimeKind: "claude" });
     projectId = genId("proj");
     await db.insert(schema.projects).values({
       id: projectId,

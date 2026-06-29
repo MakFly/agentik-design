@@ -6,7 +6,7 @@
  * with a hard turn cap so it can't loop forever.
  *
  * Usage (engine + daemon must be up):
- *   ENGINE_URL=http://localhost:8787 TEAM=demo RUNTIME=echo TURNS=4 \
+ *   ENGINE_URL=http://localhost:8787 TEAM=demo RUNTIME=claude TURNS=4 \
  *     bun run scripts/bot-relay.ts "Bonjour, on parle de quoi ?"
  *
  * Bridge to platforms: point a Hermes gateway at each agent (docs/hermes-gateway.env.example),
@@ -15,7 +15,7 @@
 
 const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:8787";
 const TEAM = process.env.TEAM ?? "demo";
-const RUNTIME = process.env.RUNTIME ?? "echo";
+const RUNTIME = process.env.RUNTIME ?? "claude";
 const TURNS = Number(process.env.TURNS ?? "4");
 const SEED = process.argv[2] ?? "Bonjour ! Présente-toi en une phrase.";
 

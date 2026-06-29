@@ -32,7 +32,7 @@ export function PersonaSection({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
-      <SectionHeading title="Persona" hint="Who the agent is and how it thinks." />
+      <SectionHeading title="Identity & Personality" hint="Who the agent is, how it sounds, and how it thinks." />
 
       <div className="flex flex-col gap-4">
         <div className={fieldRow}>

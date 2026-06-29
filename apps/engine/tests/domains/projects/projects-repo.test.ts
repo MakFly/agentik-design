@@ -31,7 +31,7 @@ d("project task runs", () => {
     teamId = await resolveTeam(`itest-projects-${Date.now()}`);
     const agent = await createAgent(teamId, { name: "Project Runner", role: "operator" });
     agentId = agent.id;
-    await publishAgent(teamId, agentId, { instructions: "work from project context", runtimeKind: "echo" });
+    await publishAgent(teamId, agentId, { instructions: "work from project context", runtimeKind: "claude" });
 
     const project = await createProject(teamId, "usr_test", {
       name: "Client Ops",
@@ -145,7 +145,7 @@ d("project task runs", () => {
     const registered = await registerDaemon({
       teamId,
       name: "workspace-test-daemon",
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     const claimed = await claimTask(registered.runtimes[0]!.id);
 

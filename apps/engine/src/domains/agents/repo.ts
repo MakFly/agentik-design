@@ -9,6 +9,7 @@ export { publishAgent, runAgent, createTestTask } from "../runs/service";
 const {
   agents,
   agentSubagents,
+  agentVersions,
   assistantRules,
   channelBindings,
   daemons,
@@ -23,6 +24,7 @@ const {
 } = schema;
 
 type AgentRowDb = typeof agents.$inferSelect;
+type AgentVersionRowDb = typeof agentVersions.$inferSelect;
 type AgentStatsRunRow = Pick<
   DaemonRunRowDb,
   "agentId" | "status" | "durationMs" | "createdAt" | "result" | "costCents"
@@ -33,19 +35,19 @@ const SEED_AGENTS = [
     name: "Triage Agent",
     role: "Classifier",
     goal: "Route incoming tickets",
-    runtimeKind: "echo",
+    runtimeKind: "claude",
   },
   {
     name: "Resolve Agent",
     role: "Resolver",
     goal: "Answer and close tickets",
-    runtimeKind: "echo",
+    runtimeKind: "claude",
   },
   {
     name: "Scraper",
     role: "Collector",
     goal: "Extract data from pages",
-    runtimeKind: "echo",
+    runtimeKind: "claude",
   },
 ];
 
@@ -80,7 +82,43 @@ function agentModel(a: AgentRowDb): string {
   return cfg?.model?.model ?? a.runtimeKind;
 }
 
-function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[]) {
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function configObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function modelFromConfig(config: Record<string, unknown>) {
+  const model = config.model;
+  if (typeof model === "string" && model.trim()) return model.trim();
+  if (model && typeof model === "object") {
+    const nested = (model as Record<string, unknown>).model;
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+  return null;
+}
+
+function toolsFromConfig(config: Record<string, unknown>) {
+  const tools = Array.isArray(config.tools) ? config.tools : [];
+  return tools.flatMap((tool) => {
+    if (typeof tool === "string" && tool.trim()) return [tool.trim()];
+    if (tool && typeof tool === "object") {
+      const toolId = (tool as Record<string, unknown>).toolId;
+      if (typeof toolId === "string" && toolId.trim()) return [toolId.trim()];
+    }
+    return [];
+  });
+}
+
+function stringListFromConfig(config: Record<string, unknown>, key: string) {
+  const values = Array.isArray(config[key]) ? config[key] : [];
+  return values.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[], version?: AgentVersionRowDb | null) {
+  const config = configObject(a.config);
   const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
   const mine = tasks.filter((t) => t.agentId === a.id);
   const completed = mine.filter((t) => t.status === "succeeded");
@@ -132,6 +170,16 @@ function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[]) {
     updatedAt: a.updatedAt,
     createdBy: a.creatorId ?? "usr_system",
     model: agentModel(a),
+    instructions:
+      stringValue(version?.instructions) ??
+      stringValue(config.systemPrompt) ??
+      stringValue(config.instructions) ??
+      "",
+    tools: version?.tools?.length ? version.tools : toolsFromConfig(config),
+    configSkills: stringListFromConfig(config, "skills"),
+    toolGrants: version?.toolGrants ?? [],
+    memoryPolicy: version?.memoryPolicy ?? null,
+    skillPolicy: version?.skillPolicy ?? null,
   };
 }
 
@@ -179,8 +227,18 @@ export async function listAgentRows(teamId: string, opts: ListAgentsOptions = {}
           ),
         )
     : [];
+  const liveVersionIds = rows
+    .map((row) => row.liveVersionId)
+    .filter((id): id is string => Boolean(id));
+  const versionRows = liveVersionIds.length
+    ? await db
+        .select()
+        .from(agentVersions)
+        .where(inArray(agentVersions.id, liveVersionIds))
+    : [];
+  const versionsById = new Map(versionRows.map((version) => [version.id, version]));
 
-  return rows.map((a) => toAgentRow(a, tasks));
+  return rows.map((a) => toAgentRow(a, tasks, a.liveVersionId ? versionsById.get(a.liveVersionId) : null));
 }
 
 export async function getAgentRow(teamId: string, agentId: string) {
@@ -206,7 +264,50 @@ export async function getAgentRow(teamId: string, agentId: string) {
   // real systemPrompt/tools/model/limits instead of falling back to defaults and overwriting
   // them on republish. agent_versions stores only normalized fields, so the full config lives
   // in agents.config (written atomically with the live version at publish; the draft otherwise).
-  return { ...toAgentRow(row, tasks), config: row.config ?? null };
+  const [version] = row.liveVersionId
+    ? await db.select().from(agentVersions).where(eq(agentVersions.id, row.liveVersionId)).limit(1)
+    : [];
+  return { ...toAgentRow(row, tasks, version), config: row.config ?? null };
+}
+
+export async function getAgentCapabilities(teamId: string, agentId: string) {
+  await ensureDevAgents(teamId);
+  const [agent] = await db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.teamId, teamId), eq(agents.id, agentId)))
+    .limit(1);
+  if (!agent) return null;
+  const [version] = agent.liveVersionId
+    ? await db
+        .select()
+        .from(agentVersions)
+        .where(eq(agentVersions.id, agent.liveVersionId))
+        .limit(1)
+    : [];
+  const config = configObject(agent.config);
+  const instructions =
+    stringValue(version?.instructions) ??
+    stringValue(config.systemPrompt) ??
+    stringValue(config.instructions);
+  const tools = version?.tools?.length ? version.tools : toolsFromConfig(config);
+  return {
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    goal: agent.goal,
+    description: agent.description,
+    health: agent.health,
+    runtimeKind: version?.runtimeKind ?? agent.runtimeKind,
+    model: version?.model ?? modelFromConfig(config) ?? agentModel(agent),
+    published: Boolean(agent.liveVersionId),
+    version: version?.version ?? null,
+    instructions: instructions ?? "",
+    tools,
+    toolGrants: version?.toolGrants ?? [],
+    memoryPolicy: version?.memoryPolicy ?? null,
+    skillPolicy: version?.skillPolicy ?? null,
+  };
 }
 
 export async function getAgentTaskSnapshot(teamId: string) {

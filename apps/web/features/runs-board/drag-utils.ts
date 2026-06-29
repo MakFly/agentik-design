@@ -18,6 +18,18 @@ export function makeKanbanCollision(columnIds: Set<string>): CollisionDetection 
   };
 }
 
+/**
+ * Identity used to MERGE runs into a single board card: runs of the same task
+ * (and, lacking a task, the same agent) collapse together so an agent never
+ * shows as N separate cards. Falls back to the run id (workflow/orchestration
+ * runs stay distinct).
+ */
+export function runMergeKey(run: Run): string {
+  if (run.taskId) return `task:${run.taskId}`;
+  if (run.subject.kind === "agent") return `agent:${run.subject.agentId}`;
+  return run.id;
+}
+
 /** Column id === RunStatus. Run ids ("run_…") never collide with these. */
 export function buildColumns(runs: Run[], statuses: RunStatus[]): Record<string, string[]> {
   const cols: Record<string, string[]> = {};

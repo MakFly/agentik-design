@@ -11,6 +11,7 @@ import { approveRun } from "../../src/domains/runs/controls";
 import { simulateQueuedRuns } from "../../src/jobs/run-simulator";
 import { seedSmbTenant } from "../../src/jobs/seed-smb";
 import { dispatchSignal } from "../../src/domains/signals/service";
+import { resolveMemoryInjectionPreview } from "../../src/domains/learning";
 
 const MAILPIT_API = process.env.MAILPIT_API ?? "http://localhost:8025";
 
@@ -43,16 +44,41 @@ d("SMB seeder + daily-execution loop", () => {
     expect(Object.keys(seed.agents)).toHaveLength(4);
     expect(seed.taskIds).toHaveLength(3);
     expect(seed.signalIds).toHaveLength(3);
-    expect(seed.runIds).toHaveLength(3);
+    // 2 historical Inbox Triage runs + 2 approval-gated queued runs (invoice, meeting).
+    expect(seed.runIds).toHaveLength(4);
     expect(seed.channel.connectionId).toBeTruthy();
     expect(seed.gmailWebhookToken).toStartWith("wht_");
+  });
+
+  test("seeds Hermes memory and injectable skills", async () => {
+    const memoryCount = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.memoryEntries)
+      .where(eq(schema.memoryEntries.teamId, teamId));
+    const skillCount = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.skills)
+      .where(eq(schema.skills.teamId, teamId));
+    expect(memoryCount[0]!.n).toBeGreaterThanOrEqual(4);
+    expect(skillCount[0]!.n).toBeGreaterThanOrEqual(2);
+
+    const preview = await resolveMemoryInjectionPreview(teamId, seed.agents["Billing Chaser"]!);
+    expect(preview?.memories.length).toBeGreaterThan(0);
+    expect(preview?.skills.some((skill) => skill.name === "Relance facture approuvee")).toBe(true);
   });
 
   test("simulate → approve → simulate completes every run and sends the invoice email", async () => {
     const pass1 = await simulateQueuedRuns(teamId);
     const waiting = pass1.processed.filter((p) => p.status === "waiting_approval");
     expect(waiting.length).toBe(2); // invoice + meeting need approval
-    expect(pass1.processed.some((p) => p.status === "succeeded")).toBe(true); // triage
+
+    // Inbox Triage is seeded as history (succeeded) — not claimed/driven by the simulator.
+    const triageRuns = await db
+      .select()
+      .from(schema.runs)
+      .where(and(eq(schema.runs.teamId, teamId), eq(schema.runs.projectTaskId, seed.taskIds[0]!)));
+    expect(triageRuns.length).toBe(2);
+    expect(triageRuns.every((r) => r.status === "succeeded")).toBe(true);
 
     for (const p of waiting) expect(await approveRun(teamId, p.runId)).toBe(true);
     const pass2 = await simulateQueuedRuns(teamId);
@@ -61,12 +87,13 @@ d("SMB seeder + daily-execution loop", () => {
     const runs = await db.select().from(schema.runs).where(eq(schema.runs.teamId, teamId));
     expect(runs.every((r) => r.status === "succeeded")).toBe(true);
 
-    // Telegram notifications recorded.
+    // Telegram notifications recorded (the invoice run notifies after approval;
+    // triage is historical and no longer notifies during the loop).
     const deliveries = await db
       .select()
       .from(schema.channelDeliveries)
       .where(eq(schema.channelDeliveries.teamId, teamId));
-    expect(deliveries.length).toBeGreaterThanOrEqual(2);
+    expect(deliveries.length).toBeGreaterThanOrEqual(1);
 
     // The invoice reminder reached Mailpit.
     const found = (await fetch(

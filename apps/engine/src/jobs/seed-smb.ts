@@ -8,7 +8,7 @@
  * Idempotent: structural rows are found-or-created by name; demo runs are (re)queued
  * on every call so the loop can be replayed. In dev, "Gmail" is infra-mailpit.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../infra/db/client";
 import { genId } from "../infra/db/ids";
 import { createAgent, setRoster } from "../domains/agents/repo";
@@ -25,6 +25,11 @@ const {
   channelBindings,
   channelIdentities,
   runs,
+  runMessages,
+  memoryEntries,
+  memoryEvents,
+  skills,
+  skillVersions,
 } = schema;
 
 const OPERATOR_EMAIL = process.env.SEED_OPERATOR_EMAIL ?? "kev.aubree@gmail.com";
@@ -38,6 +43,8 @@ interface AgentDef {
   isOrchestrator?: boolean;
   systemPrompt: string;
   sendTool?: boolean;
+  /** deterministic engine-side skills (see domains/chat/skills.ts) */
+  skills?: string[];
 }
 
 const AGENTS: AgentDef[] = [
@@ -58,6 +65,7 @@ const AGENTS: AgentDef[] = [
     color: "#0ea5e9",
     systemPrompt: "Triage incoming email. Draft replies but never send without approval.",
     sendTool: true,
+    skills: ["gmail.read"],
   },
   {
     name: "Billing Chaser",
@@ -82,7 +90,8 @@ const AGENTS: AgentDef[] = [
 function agentConfig(def: AgentDef) {
   return {
     systemPrompt: def.systemPrompt,
-    runtimeKind: "echo",
+    runtimeKind: "claude",
+    skills: def.skills ?? [],
     tools: def.sendTool
       ? [{ toolId: "gmail.send", scopes: ["send"], requireApproval: true, rateCapPerMin: 5 }]
       : [],
@@ -158,6 +167,172 @@ async function ensureTask(
   if ("error" in res) throw new Error(`seed task failed: ${res.error}`);
   if (!res.task) throw new Error("seed task failed: no row");
   return res.task.id;
+}
+
+async function ensureMemoryEntry(
+  teamId: string,
+  input: {
+    scope: "team" | "agent";
+    targetId?: string | null;
+    content: string;
+    confidence: number;
+    createdBy?: "system" | "review_agent";
+  },
+) {
+  const targetId = input.scope === "team" ? null : input.targetId ?? null;
+  const [existing] = await db
+    .select({ id: memoryEntries.id })
+    .from(memoryEntries)
+    .where(
+      and(
+        eq(memoryEntries.teamId, teamId),
+        eq(memoryEntries.scope, input.scope),
+        targetId ? eq(memoryEntries.targetId, targetId) : sql`${memoryEntries.targetId} is null`,
+        eq(memoryEntries.content, input.content),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing.id;
+
+  const id = genId("mem");
+  const createdBy = input.createdBy ?? "system";
+  await db.insert(memoryEntries).values({
+    id,
+    teamId,
+    scope: input.scope,
+    targetId,
+    content: input.content,
+    confidence: input.confidence,
+    createdBy,
+    lastEditedBy: createdBy,
+  });
+  await db.insert(memoryEvents).values({
+    id: genId("mevt"),
+    teamId,
+    memoryId: id,
+    action: "create",
+    actorId: createdBy,
+    before: null,
+    after: {
+      id,
+      scope: input.scope,
+      targetId,
+      content: input.content,
+      confidence: input.confidence,
+      createdBy,
+    },
+  });
+  return id;
+}
+
+async function ensureSkill(
+  teamId: string,
+  input: {
+    name: string;
+    description: string;
+    scope: "team" | "agent";
+    targetId?: string | null;
+    bodyMd: string;
+    triggerConditions: string[];
+    pitfalls?: string[];
+    verificationSteps?: string[];
+  },
+) {
+  const targetId = input.scope === "team" ? null : input.targetId ?? null;
+  const [existing] = await db
+    .select({ id: skills.id, currentVersionId: skills.currentVersionId })
+    .from(skills)
+    .where(
+      and(
+        eq(skills.teamId, teamId),
+        eq(skills.name, input.name),
+        eq(skills.scope, input.scope),
+        targetId ? eq(skills.targetId, targetId) : sql`${skills.targetId} is null`,
+      ),
+    )
+    .limit(1);
+  if (existing?.currentVersionId) return existing.id;
+
+  const skillId = existing?.id ?? genId("skill");
+  const versionId = genId("sver");
+  if (!existing) {
+    await db.insert(skills).values({
+      id: skillId,
+      teamId,
+      name: input.name,
+      description: input.description,
+      scope: input.scope,
+      targetId,
+      currentVersionId: versionId,
+      createdBy: "review_agent",
+    });
+  }
+  await db.insert(skillVersions).values({
+    id: versionId,
+    skillId,
+    version: 1,
+    bodyMd: input.bodyMd,
+    triggerConditions: input.triggerConditions,
+    pitfalls: input.pitfalls ?? [],
+    verificationSteps: input.verificationSteps ?? [],
+    createdBy: "review_agent",
+    changelog: "Seed Hermes memory system",
+  });
+  if (existing) {
+    await db
+      .update(skills)
+      .set({ currentVersionId: versionId, updatedAt: sql`now()` })
+      .where(eq(skills.id, skillId));
+  }
+  return skillId;
+}
+
+async function ensureHermesKnowledge(teamId: string, agentIds: Record<string, string>) {
+  await ensureMemoryEntry(teamId, {
+    scope: "team",
+    content: "Les emails sortants demandent une approbation operateur avant envoi.",
+    confidence: 0.95,
+  });
+  await ensureMemoryEntry(teamId, {
+    scope: "team",
+    content: "Le canal Telegram sert de passerelle operateur: resumer l'action, demander validation si necessaire, puis notifier le resultat.",
+    confidence: 0.9,
+  });
+  await ensureMemoryEntry(teamId, {
+    scope: "agent",
+    targetId: agentIds["Billing Chaser"]!,
+    content: "Pour les relances facture, rester poli, factuel, et mentionner la facture uniquement si elle est identifiee dans le contexte.",
+    confidence: 0.92,
+  });
+  await ensureMemoryEntry(teamId, {
+    scope: "agent",
+    targetId: agentIds["Scheduler"]!,
+    content: "Pour une proposition de meeting, donner trois creneaux lisibles et laisser l'humain approuver l'envoi.",
+    confidence: 0.9,
+  });
+
+  await ensureSkill(teamId, {
+    name: "Relance facture approuvee",
+    description: "Procedure de relance email avec approbation humaine.",
+    scope: "agent",
+    targetId: agentIds["Billing Chaser"]!,
+    triggerConditions: ["facture en retard", "demande de relance", "gmail.send"],
+    bodyMd:
+      "Verifier le contexte de la facture, rediger un message court et poli, puis demander l'approbation operateur avant tout envoi Gmail.",
+    pitfalls: ["Ne jamais inventer un montant ou une date d'echeance.", "Ne pas envoyer sans approbation."],
+    verificationSteps: ["Le destinataire, le sujet et le corps sont visibles avant approbation.", "Le run reste en attente tant que l'humain n'a pas valide."],
+  });
+  await ensureSkill(teamId, {
+    name: "Proposition de creneaux",
+    description: "Procedure de brouillon email pour organiser une reunion.",
+    scope: "agent",
+    targetId: agentIds["Scheduler"]!,
+    triggerConditions: ["meeting", "kickoff", "propose slots"],
+    bodyMd:
+      "Proposer trois creneaux, formater le sujet sans caracteres corrompus, et attendre validation avant d'envoyer le brouillon.",
+    pitfalls: ["Eviter les caracteres mal encodes dans le sujet.", "Ne pas confirmer un rendez-vous sans accord explicite."],
+    verificationSteps: ["Le sujet email est lisible en UTF-8.", "Le message Telegram resume clairement les creneaux proposes."],
+  });
 }
 
 async function ensureTelegram(teamId: string, createdBy: string, officeManagerId: string) {
@@ -285,6 +460,55 @@ async function queueDemoRun(
   return runId;
 }
 
+/**
+ * Seed an already-completed (historical) run for a task. Unlike `queueDemoRun`,
+ * this never sits in `queued`, so no live daemon claims it and nothing fires when
+ * an agent is (re)published — it only populates run history. Run messages are
+ * written so the run detail + agent timeline look real.
+ */
+async function seedHistoricalRun(
+  teamId: string,
+  agentId: string,
+  projectId: string,
+  taskId: string,
+  steps: string[],
+  prompt: string,
+): Promise<string> {
+  const runId = genId("run");
+  const lines = [...steps, "Task completed successfully."];
+  await db.insert(runs).values({
+    id: runId,
+    teamId,
+    executor: "daemon",
+    agentId,
+    projectId,
+    projectTaskId: taskId,
+    status: "succeeded",
+    kind: "chat",
+    input: { prompt },
+    result: { summary: "Completed (seeded history).", steps: lines.length },
+    costCents: 1,
+    stepCount: lines.length,
+    completedSteps: lines.length,
+    startedAt: sql`now()`,
+    endedAt: sql`now()`,
+  });
+  await db.insert(runMessages).values(
+    lines.map((content, i) => ({
+      id: genId("amsg"),
+      runId,
+      seq: i + 1,
+      type: "text" as const,
+      content,
+    })),
+  );
+  await db
+    .update(projectTasks)
+    .set({ status: "done", lastRunId: runId })
+    .where(eq(projectTasks.id, taskId));
+  return runId;
+}
+
 export interface SeedResult {
   teamId: string;
   agents: Record<string, string>;
@@ -321,6 +545,9 @@ export async function seedSmbTenant(teamId: string, createdBy: string): Promise<
   const triageTaskId = await ensureTask(teamId, projectId, createdBy, "Triage today's inbox", agentIds["Inbox Triage"]!, "P1");
   const invoiceTaskId = await ensureTask(teamId, projectId, createdBy, "Chase overdue invoice #42", agentIds["Billing Chaser"]!, "P1");
   const meetingTaskId = await ensureTask(teamId, projectId, createdBy, "Schedule the Acme kickoff", agentIds["Scheduler"]!, "P2");
+
+  // 2b) Hermes-style learned context: approved memories + procedural skills.
+  await ensureHermesKnowledge(teamId, agentIds);
 
   // 3) Telegram channel (binding + operator identity for approvals).
   const channel = await ensureTelegram(teamId, createdBy, agentIds["Office Manager"]!);
@@ -366,17 +593,27 @@ export async function seedSmbTenant(teamId: string, createdBy: string): Promise<
     }),
   ];
 
-  // 5) Queue the demo runs the simulator will drive.
+  // 5) Runs.
+  //   - Inbox Triage: seeded as HISTORY (succeeded), so publishing/editing the
+  //     agent never makes a live daemon claim a queued run. Two runs on the same
+  //     task show per-task run traceability in the agent-centric views.
+  //   - Billing/Scheduler: left queued + approval-gated so the simulator demo
+  //     (/dev/simulate → approve → /dev/simulate) still has runs to drive.
   const runIds = [
-    await queueDemoRun(
+    await seedHistoricalRun(
       teamId,
       agentIds["Inbox Triage"]!,
       projectId,
       triageTaskId,
-      {
-        steps: ["Scanned 24 new emails.", "12 archived, 9 to respond, 3 escalated."],
-        notify: { connectionId: channel.connectionId, identityId: channel.identityId, chatId: channel.chatId, text: "Inbox triaged: 9 need a reply, 3 escalated." },
-      },
+      ["Scanned 18 new emails.", "9 archived, 7 to respond, 2 escalated."],
+      "Triage today's inbox and summarise.",
+    ),
+    await seedHistoricalRun(
+      teamId,
+      agentIds["Inbox Triage"]!,
+      projectId,
+      triageTaskId,
+      ["Scanned 24 new emails.", "12 archived, 9 to respond, 3 escalated."],
       "Triage today's inbox and summarise.",
     ),
     await queueDemoRun(

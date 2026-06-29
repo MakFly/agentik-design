@@ -34,6 +34,8 @@ export type OrchestratorTurnResult =
       agent: AgentRow;
       reason: string;
       confidence: number;
+      /** true when a built-in skill already completed the run (result delivered inline) */
+      completed?: boolean;
     }
   | {
       kind: "orchestration";
@@ -106,6 +108,7 @@ export async function sendOrchestratedTurn(
     agent: decision.agent,
     reason: decision.reason,
     confidence: decision.confidence,
+    completed: turn.completed,
   };
 }
 

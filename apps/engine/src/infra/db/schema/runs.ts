@@ -55,7 +55,7 @@ export const runs = pgTable("runs", {
   workDir: text("work_dir"),
   result: jsonb("result"),
   /** Realized cost of this run in integer cents (USD). Extracted from the runtime's
-   *  reported `cost_usd` at completion; null when the runtime reports no cost (echo). */
+   *  reported `cost_usd` at completion; null when the runtime reports no cost. */
   costCents: integer("cost_cents"),
   /** Classified failure cause; null unless status = failed. Drives retry policy. */
   errorReason: text("error_reason").$type<TaskErrorReason>(),

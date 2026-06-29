@@ -34,14 +34,14 @@ d("publishAgent with identity patch (atomic)", () => {
   test("identity patch + new version commit together", async () => {
     const v1 = await publishAgent(teamId, agentId, {
       instructions: "first",
-      runtimeKind: "echo",
+      runtimeKind: "claude",
     });
     expect(v1 && "version" in v1 ? v1.version : null).toBe(1);
 
     const v2 = await publishAgent(
       teamId,
       agentId,
-      { instructions: "second", runtimeKind: "echo" },
+      { instructions: "second", runtimeKind: "claude" },
       "renamed + republished",
       { name: "After", emoji: "🤖", isOrchestrator: true },
     );
@@ -63,7 +63,7 @@ d("deleteAgent cascade (transactional)", () => {
     teamId = await resolveTeam(`itest-del-${Date.now()}`);
     const agent = await createAgent(teamId, { name: "Doomed" });
     agentId = agent.id;
-    await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "echo" });
+    await publishAgent(teamId, agentId, { instructions: "x", runtimeKind: "claude" });
 
     runId = genId("run");
     await db.insert(schema.runs).values({

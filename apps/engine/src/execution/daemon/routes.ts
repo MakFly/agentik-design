@@ -152,7 +152,7 @@ daemon.post("/agents/list", async (c) => {
       role: agent.role,
       goal: agent.goal,
       health: agent.health,
-      runtimeKind: agent.runtimeKind ?? "echo",
+      runtimeKind: agent.runtimeKind ?? "claude",
       model: agent.model,
       published: Boolean(agent.liveVersionId),
     })),

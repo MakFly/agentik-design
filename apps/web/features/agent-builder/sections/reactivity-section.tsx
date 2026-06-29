@@ -40,7 +40,7 @@ export function ReactivitySection({
     return (
       <div className="flex max-w-2xl flex-col gap-5">
         <SectionHeading
-          title="Reactivity"
+          title="Channels"
           hint="Decide where this agent listens and whether it acts on every message or only on mention."
         />
         <div className="flex items-start gap-2 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
@@ -60,7 +60,7 @@ function ReactivityEditor({ team, agentId }: { team: string; agentId: string }) 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       <SectionHeading
-        title="Reactivity"
+        title="Channels"
         hint="Bind this agent to channels and control its listen-vs-act behavior per channel."
       />
 

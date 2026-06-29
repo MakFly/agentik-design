@@ -86,7 +86,7 @@ function configToVersionInput(
           : "",
     tools: toolGrants.map((grant) => grant.toolId),
     toolGrants,
-    runtimeKind: rk.success ? rk.data : "echo",
+    runtimeKind: rk.success ? rk.data : "claude",
     memoryPolicy: DEFAULT_MEMORY_POLICY,
     skillPolicy: DEFAULT_SKILL_POLICY,
     createdBy: "user",
@@ -164,8 +164,8 @@ export async function publishAgentInTx(
   );
   if (!created) return null;
   // Point liveVersionId at the immutable version AND sync the agent's runtime_kind to the
-  // published version — claimTask matches tasks to runtimes on agents.runtime_kind, so a
-  // claude version must flip the agent off "echo" or the wrong runtime would claim its runs.
+  // published version — claimTask matches tasks to runtimes on agents.runtime_kind, so the
+  // published version must set the agent's runtime or the wrong runtime would claim its runs.
   await executor
     .update(agents)
     .set({
@@ -287,12 +287,12 @@ export async function runAgent(teamId: string, agentId: string, input: string) {
 }
 
 /** Create a queued sandbox task and return its id as a runId. The runtime
- * (echo|claude) selects which daemon runtime picks it up. */
+ * (claude|codex|…) selects which daemon runtime picks it up. */
 export async function createTestTask(
   teamId: string,
   config: unknown,
   input: string,
-  runtime = "echo",
+  runtime = "claude",
 ) {
   await ensureDevAgents(teamId);
   // Per-team, per-runtime sandbox agent so the task is claimable by that runtime.
@@ -350,6 +350,7 @@ export async function onRunCompleted(
   const { appendAssistantTurn } = await import("../chat/repo");
   const { ensureRunReview } = await import("../learning/index");
   const { notifyRunTelegram } = await import("../channels/service");
+  const { formatRunCompletionForTelegram } = await import("./telegram-presenter");
 
   hub.publish(teamId, { kind: "run", action: "succeeded", runId });
   if (ctx.projectTaskId) {
@@ -373,14 +374,10 @@ export async function onRunCompleted(
   }
   const { handleOrchestrationChildCompleted } = await import("../chat/repo");
   await handleOrchestrationChildCompleted(teamId, runId, resultText(result)).catch(() => undefined);
-  await notifyRunTelegram(
-    teamId,
-    runId,
-    `✅ Run completed\n\n${resultText(result)}`,
-    undefined,
-    undefined,
-    { includeLink: false },
-  ).catch(() => undefined);
+  const telegram = formatRunCompletionForTelegram(result);
+  await notifyRunTelegram(teamId, runId, telegram.text, undefined, undefined, {
+    includeLink: telegram.includeLink,
+  }).catch(() => undefined);
   await ensureRunReview(teamId, runId).catch(() => undefined);
 }
 
@@ -393,6 +390,7 @@ export async function onRunFailed(
 ): Promise<void> {
   const { ensureRunReview } = await import("../learning/index");
   const { notifyRunTelegram } = await import("../channels/service");
+  const { formatRunFailureForTelegram } = await import("./telegram-presenter");
 
   hub.publish(teamId, { kind: "run", action: "failed", runId });
   if (ctx.projectTaskId) {
@@ -408,14 +406,10 @@ export async function onRunFailed(
   }
   const { handleOrchestrationChildFailed } = await import("../chat/repo");
   await handleOrchestrationChildFailed(teamId, runId, error).catch(() => undefined);
-  await notifyRunTelegram(
-    teamId,
-    runId,
-    `❌ Run failed\n\n${error}`,
-    undefined,
-    undefined,
-    { includeLink: false },
-  ).catch(() => undefined);
+  const telegram = formatRunFailureForTelegram(error);
+  await notifyRunTelegram(teamId, runId, telegram.text, undefined, undefined, {
+    includeLink: telegram.includeLink,
+  }).catch(() => undefined);
   await ensureRunReview(teamId, runId).catch(() => undefined);
 }
 
@@ -451,11 +445,14 @@ async function notifyTelegramProgress(
   stepCount: number,
 ) {
   const { notifyRunProgressTelegram } = await import("../channels/service");
+  const { formatRunProgressForTelegram } = await import("./telegram-presenter");
   const latest = await latestRunMessageSummary(runId);
+  const text = formatRunProgressForTelegram({ completedSteps, stepCount, latest });
   await notifyRunProgressTelegram(teamId, runId, {
     completedSteps,
     stepCount,
     latest,
+    text,
   });
 }
 
@@ -514,10 +511,11 @@ export async function onRunWaitingApproval(
   message: string,
 ): Promise<void> {
   const { notifyRunTelegram } = await import("../channels/service");
+  const { formatRunApprovalForTelegram, runApprovalTelegramActions } = await import("./telegram-presenter");
   hub.publish(teamId, { kind: "run", action: "waiting_approval", runId });
-  await notifyRunTelegram(
-    teamId,
-    runId,
-    `Approval requested\n${message}`,
-  ).catch(() => undefined);
+  const telegram = formatRunApprovalForTelegram(runId, message);
+  await notifyRunTelegram(teamId, runId, telegram.text, undefined, undefined, {
+    includeLink: telegram.includeLink,
+    replyMarkup: runApprovalTelegramActions(runId),
+  }).catch(() => undefined);
 }

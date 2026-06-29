@@ -31,7 +31,7 @@ d("orchestration-native routing stays additive", () => {
 
   beforeAll(async () => {
     teamId = await resolveTeam(`itest-orch-${Date.now()}`);
-    // A routed turn enqueues a run, which now requires a live daemon for the echo
+    // A routed turn enqueues a run, which now requires a live daemon for the claude
     // runtime — seed one with a fresh heartbeat so routing reaches `kind: "run"`.
     const daemonId = genId("daemon");
     await db.insert(schema.daemons).values({
@@ -43,18 +43,18 @@ d("orchestration-native routing stays additive", () => {
     });
     await db
       .insert(schema.runtimes)
-      .values({ id: genId("runtime"), daemonId, teamId, kind: "echo" });
+      .values({ id: genId("runtime"), daemonId, teamId, kind: "claude" });
     const web = await createAgent(teamId, {
       name: "Web Weather Researcher",
       goal: "web search browser internet weather news sources",
     });
-    await publishAgent(teamId, web.id, { instructions: "research the web", runtimeKind: "echo" });
+    await publishAgent(teamId, web.id, { instructions: "research the web", runtimeKind: "claude" });
     const coder = await createAgent(teamId, {
       name: "Backend Coder",
       goal: "fix code tests typescript go backend bugs",
     });
     coderId = coder.id;
-    await publishAgent(teamId, coderId, { instructions: "write code", runtimeKind: "echo" });
+    await publishAgent(teamId, coderId, { instructions: "write code", runtimeKind: "claude" });
   });
 
   afterAll(async () => {
@@ -84,7 +84,7 @@ d("orchestration-native routing stays additive", () => {
       name: "Conductor",
       goal: "delegate to specialists",
       isOrchestrator: true,
-      config: { instructions: "delegate", runtimeKind: "echo" },
+      config: { instructions: "delegate", runtimeKind: "claude" },
     });
     expect(conductor.version).toBe(1);
     // Roster contains only the coder — so even a weather query must land on the coder.

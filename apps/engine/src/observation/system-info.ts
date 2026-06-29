@@ -23,8 +23,9 @@ export async function getSystemInfo(teamId: string) {
   const liveStatus = (hb: string | null): "online" | "offline" =>
     isHeartbeatFresh(hb, now) ? "online" : "offline";
   // A runtime is *available* (selectable for a new agent) when its daemon is online AND
-  // the backing CLI is actually present on that host. `echo` is self-contained; kinds we
-  // don't probe (custom/openai/…) are trusted from the daemon's own registration.
+  // the backing CLI is actually present on that host. There is no self-contained/mock
+  // runtime anymore — every kind needs a real API key or OAuth. Kinds we don't probe
+  // (custom/openai/…) are trusted from the daemon's own registration.
   const onlineDaemonIds = new Set(
     daemonRows
       .filter((d) => liveStatus(d.lastHeartbeatAt) === "online")
@@ -43,7 +44,7 @@ export async function getSystemInfo(teamId: string) {
         .filter((rt) => {
           if (!onlineDaemonIds.has(rt.daemonId)) return false;
           const probed = toolsByDaemon.get(rt.daemonId)?.get(rt.kind);
-          return rt.kind === "echo" || probed === undefined || probed.available === true;
+          return probed === undefined || probed.available === true;
         })
         .map((rt) => rt.kind),
     ),
@@ -54,8 +55,8 @@ export async function getSystemInfo(teamId: string) {
       const daemon = daemonById.get(rt.daemonId);
       const daemonStatus = daemon ? liveStatus(daemon.lastHeartbeatAt) : "offline";
       const probed = toolsByDaemon.get(rt.daemonId)?.get(rt.kind);
-      const cliAvailable = rt.kind === "echo" || probed === undefined || probed.available;
-      const authenticated = rt.kind === "echo" || probed === undefined || Boolean(probed.authenticated);
+      const cliAvailable = probed === undefined || probed.available;
+      const authenticated = probed === undefined || Boolean(probed.authenticated);
       const available = daemonStatus === "online" && Boolean(cliAvailable);
       const reason =
         daemonStatus !== "online"

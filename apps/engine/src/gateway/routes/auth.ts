@@ -22,10 +22,8 @@ import {
 import {
   changeUserPassword,
   getUserAccountSettings,
-  updateUserNotificationPreferences,
   updateUserProfile,
   updateUserUiPreferences,
-  type NotificationPreferences,
   type UiPreferences,
 } from "../../domains/settings/repo";
 import { ORG_COOKIE, SESSION_COOKIE } from "../../app/middleware/auth";
@@ -61,15 +59,6 @@ const uiPrefsBody = z.object({
   reduceMotion: z.boolean().optional(),
   submitMode: z.enum(["enter", "ctrlEnter"]).optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
-});
-const notificationPrefsBody = z.object({
-  emailRunComplete: z.boolean().optional(),
-  emailRunFailed: z.boolean().optional(),
-  emailApprovalNeeded: z.boolean().optional(),
-  emailInvitations: z.boolean().optional(),
-  inAppRuns: z.boolean().optional(),
-  inAppApprovals: z.boolean().optional(),
-  inAppMentions: z.boolean().optional(),
 });
 
 /** Resolve the logged-in user from the session cookie, or null. */
@@ -159,7 +148,6 @@ auth.get("/me", async (c) => {
       name: user.name,
       emailVerifiedAt: user.emailVerifiedAt,
       uiPreferences: account?.uiPreferences ?? {},
-      notificationPreferences: account?.notificationPreferences ?? {},
     },
     orgs,
     activeOrgId: getCookie(c, ORG_COOKIE) ?? orgs[0]?.teamId ?? null,
@@ -198,21 +186,6 @@ auth.patch("/me/preferences", async (c) => {
     return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
   }
   const res = await updateUserUiPreferences(user.userId, parsed.data as UiPreferences);
-  if ("error" in res) return c.json({ error: res.error }, 404);
-  return c.json(res);
-});
-
-auth.patch("/me/notifications", async (c) => {
-  const user = await currentUser(c);
-  if (!user) return c.json({ error: "unauthenticated" }, 401);
-  const parsed = notificationPrefsBody.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) {
-    return c.json({ error: "invalid_body", detail: parsed.error.issues }, 400);
-  }
-  const res = await updateUserNotificationPreferences(
-    user.userId,
-    parsed.data as NotificationPreferences,
-  );
   if ("error" in res) return c.json({ error: res.error }, 404);
   return c.json(res);
 });

@@ -14,14 +14,25 @@ export interface OutboundMail {
   text: string;
 }
 
-function buildMessage(mail: OutboundMail): string {
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function encodeMimeHeader(value: string): string {
+  const clean = sanitizeHeaderValue(value);
+  if (/^[\x20-\x7e]*$/.test(clean)) return clean;
+  return `=?UTF-8?B?${Buffer.from(clean, "utf8").toString("base64")}?=`;
+}
+
+export function buildMailMessage(mail: OutboundMail): string {
   return [
-    `From: ${mail.from}`,
-    `To: ${mail.to}`,
-    `Subject: ${mail.subject}`,
+    `From: ${encodeMimeHeader(mail.from)}`,
+    `To: ${encodeMimeHeader(mail.to)}`,
+    `Subject: ${encodeMimeHeader(mail.subject)}`,
     `Date: ${new Date().toUTCString()}`,
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
     "",
     mail.text,
   ].join("\r\n");
@@ -40,7 +51,7 @@ function nextReply(buffer: string): { code: string; rest: string } | null {
 
 /** Deliver a message over SMTP. Resolves on a 250 after QUIT; rejects on 4xx/5xx/timeout. */
 export function sendMail(mail: OutboundMail): Promise<void> {
-  const message = buildMessage(mail);
+  const message = buildMailMessage(mail);
   const commands = [
     "EHLO agentik.local",
     `MAIL FROM:<${mail.from}>`,

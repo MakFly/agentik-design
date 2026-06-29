@@ -22,7 +22,7 @@ export const handlers = [
           lastHeartbeatAt: null,
           meta: {
             host: { host: "mock", os: "linux", arch: "amd64", go: "mock" },
-            runtimes: ["echo"],
+            runtimes: ["claude"],
             tools: [
               { name: "claude", available: false },
               { name: "hermes", available: false },
@@ -70,7 +70,7 @@ export const handlers = [
   http.get(`${API}/agent-task-snapshot`, async () => {
     await delay(200);
     return HttpResponse.json({
-      agents: agents.map((a) => ({ id: a.id, name: a.name, runtimeKind: "echo", maxConcurrentTasks: 1, health: a.health })),
+      agents: agents.map((a) => ({ id: a.id, name: a.name, runtimeKind: "claude", maxConcurrentTasks: 1, health: a.health })),
       daemons: [],
       runtimes: [],
       activeTasks: [],

@@ -114,7 +114,6 @@ export const PROVIDERS = [...new Set(MODEL_CATALOG.map((m) => m.provider))];
 export const PROVIDER_MODELS: Record<string, string[]> = {
   anthropic: MODEL_CATALOG.filter((m) => m.provider === "anthropic").map((m) => m.model),
   openai: MODEL_CATALOG.filter((m) => m.provider === "openai").map((m) => m.model),
-  openrouter: ["openrouter/auto"],
   google: ["gemini-2.0-flash"],
 };
 

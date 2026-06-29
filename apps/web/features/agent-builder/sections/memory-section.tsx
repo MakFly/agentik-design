@@ -36,7 +36,7 @@ export function MemorySection() {
 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
-      <SectionHeading title="Memory & context" hint="Attach stores for retrieval-augmented answers with citations." />
+      <SectionHeading title="Memory & Context" hint="Attach stores for retrieval-augmented answers with citations." />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <div className={`${fieldRow} flex-1`}>

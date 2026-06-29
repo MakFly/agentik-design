@@ -51,7 +51,7 @@ export function PolicySection({ issues }: { issues: Issue[] }) {
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
-      <SectionHeading title="Policy & approval" hint="Limits, retries, and the guardrails that gate risky actions." />
+      <SectionHeading title="Policy & Access" hint="Limits, retries, and the guardrails that gate risky actions." />
 
       <section className="flex flex-col gap-3">
         <h3 className="text-sm font-medium">Limits</h3>

@@ -3,10 +3,10 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { encryptJson } from "../../infra/crypto";
 import { genId } from "../../infra/db/ids";
-import { connectionToken, telegramCall } from "./telegram/client";
+import { connectionToken, syncTelegramBotCommands, telegramCall } from "./telegram/client";
 import type { ChannelConnectionRow, ChannelIdentityRow, TelegramMessage } from "./telegram/types";
 
-const { agents, channelBindings, channelConnections, channelIdentities, channelMessages } =
+const { agents, channelBindings, channelConnections, channelIdentities, channelMessages, channelSessions } =
   schema;
 
 function randomToken(bytes = 18) {
@@ -64,7 +64,7 @@ export async function registerTelegramWebhook(
   teamId: string,
   id: string,
   baseUrl: string,
-): Promise<{ ok: boolean; url?: string; botUsername?: string; error?: string }> {
+): Promise<{ ok: boolean; url?: string; botUsername?: string; error?: string; commandSyncError?: string }> {
   const [connection] = await db
     .select()
     .from(channelConnections)
@@ -86,11 +86,12 @@ export async function registerTelegramWebhook(
     return { ok: false, error: me?.description ?? "Invalid bot token (getMe failed)." };
   }
 
-  const set = await telegramCall(token, "setWebhook", { url, allowed_updates: ["message"], drop_pending_updates: true });
+  const set = await telegramCall(token, "setWebhook", { url, allowed_updates: ["message", "callback_query"], drop_pending_updates: true });
   if (!set?.ok) {
     await db.update(channelConnections).set({ status: "error", updatedAt: sql`now()` }).where(eq(channelConnections.id, connection.id));
     return { ok: false, url, botUsername: me.result?.username, error: set?.description ?? "Telegram setWebhook failed." };
   }
+  const commands = await syncTelegramBotCommands(token);
 
   await db
     .update(channelConnections)
@@ -101,13 +102,18 @@ export async function registerTelegramWebhook(
       updatedAt: sql`now()`,
     })
     .where(eq(channelConnections.id, connection.id));
-  return { ok: true, url, botUsername: me.result?.username };
+  return {
+    ok: true,
+    url,
+    botUsername: me.result?.username,
+    commandSyncError: commands.ok ? undefined : commands.error,
+  };
 }
 
 export async function useTelegramPolling(
   teamId: string,
   id: string,
-): Promise<{ ok: boolean; botUsername?: string; error?: string }> {
+): Promise<{ ok: boolean; botUsername?: string; error?: string; commandSyncError?: string }> {
   const [connection] = await db
     .select()
     .from(channelConnections)
@@ -123,6 +129,7 @@ export async function useTelegramPolling(
     return { ok: false, error: me?.description ?? "Invalid bot token (getMe failed)." };
   }
   await telegramCall(token, "deleteWebhook", { drop_pending_updates: false });
+  const commands = await syncTelegramBotCommands(token);
   await db
     .update(channelConnections)
     .set({
@@ -132,7 +139,11 @@ export async function useTelegramPolling(
       updatedAt: sql`now()`,
     })
     .where(eq(channelConnections.id, connection.id));
-  return { ok: true, botUsername: me.result?.username };
+  return {
+    ok: true,
+    botUsername: me.result?.username,
+    commandSyncError: commands.ok ? undefined : commands.error,
+  };
 }
 
 export async function createTelegramConnection(
@@ -151,6 +162,7 @@ export async function createTelegramConnection(
     if (!me?.ok) return { error: me?.description ?? "Invalid bot token (getMe failed)." };
     botUsername = me.result?.username ?? null;
     await telegramCall(botToken, "deleteWebhook", { drop_pending_updates: false });
+    await syncTelegramBotCommands(botToken);
   }
 
   const [connection] = await db
@@ -256,6 +268,91 @@ export async function setActiveAgent(identityId: string, agentId: string | null)
     .update(channelIdentities)
     .set({ activeAgentId: agentId, updatedAt: sql`now()` })
     .where(eq(channelIdentities.id, identityId));
+}
+
+async function latestChannelSession(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+) {
+  const [session] = await db
+    .select()
+    .from(channelSessions)
+    .where(
+      and(
+        eq(channelSessions.teamId, connection.teamId),
+        eq(channelSessions.connectionId, connection.id),
+        eq(channelSessions.identityId, identity.id),
+        eq(channelSessions.externalChatId, identity.externalChatId),
+        eq(channelSessions.status, "active"),
+      ),
+    )
+    .orderBy(desc(channelSessions.updatedAt))
+    .limit(1);
+  return session ?? null;
+}
+
+export async function getActiveRunId(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+) {
+  const session = await latestChannelSession(connection, identity);
+  return session?.activeRunId ?? null;
+}
+
+export async function getActiveProjectId(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+) {
+  const session = await latestChannelSession(connection, identity);
+  return session?.activeProjectId ?? null;
+}
+
+export async function setActiveRun(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+  runId: string | null,
+) {
+  const existing = await latestChannelSession(connection, identity);
+  if (existing) {
+    await db
+      .update(channelSessions)
+      .set({ activeRunId: runId, updatedAt: sql`now()` })
+      .where(eq(channelSessions.id, existing.id));
+    return;
+  }
+  await db.insert(channelSessions).values({
+    id: genId("chsess"),
+    teamId: connection.teamId,
+    connectionId: connection.id,
+    identityId: identity.id,
+    externalChatId: identity.externalChatId,
+    activeAgentId: identity.activeAgentId,
+    activeRunId: runId,
+  });
+}
+
+export async function setActiveProject(
+  connection: ChannelConnectionRow,
+  identity: ChannelIdentityRow,
+  projectId: string | null,
+) {
+  const existing = await latestChannelSession(connection, identity);
+  if (existing) {
+    await db
+      .update(channelSessions)
+      .set({ activeProjectId: projectId, updatedAt: sql`now()` })
+      .where(eq(channelSessions.id, existing.id));
+    return;
+  }
+  await db.insert(channelSessions).values({
+    id: genId("chsess"),
+    teamId: connection.teamId,
+    connectionId: connection.id,
+    identityId: identity.id,
+    externalChatId: identity.externalChatId,
+    activeAgentId: identity.activeAgentId,
+    activeProjectId: projectId,
+  });
 }
 
 /* ── Channel bindings: per-connection agent + group-chat routing policy ──────── */

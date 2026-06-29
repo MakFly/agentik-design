@@ -1,94 +1,84 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
+  applyNodeChanges,
+  useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type EdgeTypes,
-  type Node,
+  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import "./fleet-canvas.css";
+import { Info } from "lucide-react";
 import { toast } from "sonner";
 import { AgentNode } from "./agent-node";
+import { layoutFleetGraph, type AgentFlowNode } from "./fleet-graph-layout";
+import {
+  loadFleetLayout,
+  positionsFromNodes,
+  saveFleetLayout,
+} from "./fleet-layout-storage";
 import { RosterEdge, type RosterEdgeData } from "./roster-edge";
-import { useReassignRoster, type FleetGraph, type FleetNode, type RosterInput } from "./api";
+import { useReassignRoster, type FleetGraph, type RosterInput } from "./api";
 
 const nodeTypes: NodeTypes = { agent: AgentNode };
 const edgeTypes: EdgeTypes = { roster: RosterEdge };
 
-const COL_GAP = 220;
-const ROW_GAP = 150;
-
-type AgentFlowNode = Node<FleetNode, "agent">;
-
-/**
- * Layered top-down auto-layout (no dagre/elkjs): depth 0 = orchestrators and any
- * node with no incoming roster edge; each subagent sits at parent depth + 1
- * (first-seen wins, so cycles and multi-parent nodes still terminate).
- */
-function layout(graph: FleetGraph): AgentFlowNode[] {
-  const childIds = new Set(graph.rosterEdges.map((e) => e.subagentId));
-  const childrenOf = new Map<string, string[]>();
-  for (const e of graph.rosterEdges) {
-    const list = childrenOf.get(e.parentAgentId) ?? [];
-    list.push(e.subagentId);
-    childrenOf.set(e.parentAgentId, list);
-  }
-
-  const depth = new Map<string, number>();
-  const queue: string[] = [];
-  for (const n of graph.nodes) {
-    if (n.isOrchestrator || !childIds.has(n.id)) {
-      depth.set(n.id, 0);
-      queue.push(n.id);
-    }
-  }
-  // Any node still unplaced (only reachable through a cycle) starts at depth 0 too.
-  for (const n of graph.nodes) if (!depth.has(n.id)) { depth.set(n.id, 0); queue.push(n.id); }
-
-  while (queue.length) {
-    const id = queue.shift()!;
-    const d = depth.get(id) ?? 0;
-    for (const child of childrenOf.get(id) ?? []) {
-      if (!depth.has(child) || depth.get(child)! <= d) {
-        if (depth.get(child) === d + 1) continue;
-        depth.set(child, d + 1);
-        queue.push(child);
-      }
-    }
-  }
-
-  const perLayer = new Map<number, number>();
-  return graph.nodes.map((n) => {
-    const d = depth.get(n.id) ?? 0;
-    const idx = perLayer.get(d) ?? 0;
-    perLayer.set(d, idx + 1);
-    return {
-      id: n.id,
-      type: "agent" as const,
-      position: { x: idx * COL_GAP, y: d * ROW_GAP },
-      data: n,
-    };
+function graphFingerprint(graph: FleetGraph) {
+  return JSON.stringify({
+    nodes: graph.nodes.map((n) => n.id).sort(),
+    edges: graph.rosterEdges
+      .map((e) => `${e.parentAgentId}->${e.subagentId}:${e.instruction ?? ""}`)
+      .sort(),
   });
+}
+
+function mergeNodes(
+  graph: FleetGraph,
+  hideUnassigned: boolean,
+  team: string,
+  prev: AgentFlowNode[],
+): AgentFlowNode[] {
+  const laidOut = layoutFleetGraph(graph);
+  const filtered = hideUnassigned ? laidOut.filter((n) => !n.data.isUnassigned) : laidOut;
+  const saved = loadFleetLayout(team);
+  const prevPos = new Map(prev.map((n) => [n.id, n.position]));
+
+  return filtered.map((n) => ({
+    ...n,
+    position: prevPos.get(n.id) ?? saved[n.id] ?? n.position,
+  }));
 }
 
 function FleetGraphInner({
   graph,
   team,
   onSelect,
+  hideUnassigned,
 }: {
   graph: FleetGraph;
   team: string;
   onSelect: (id: string) => void;
+  hideUnassigned: boolean;
 }) {
   const reassign = useReassignRoster(team);
+  const { fitView } = useReactFlow();
+  const [nodes, setNodes, onNodesChange] = useNodesState<AgentFlowNode>([]);
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const fittedRef = useRef(false);
+  const fingerprint = useMemo(() => graphFingerprint(graph), [graph]);
 
   const rosterOf = useCallback(
     (parentId: string): RosterInput[] =>
@@ -113,28 +103,68 @@ function FleetGraphInner({
     [reassign, rosterOf],
   );
 
-  const nodes = useMemo(() => layout(graph), [graph]);
+  // Sync node data when the graph changes; keep user-dragged positions.
+  useEffect(() => {
+    setNodes((prev) => mergeNodes(graph, hideUnassigned, team, prev));
+  }, [fingerprint, graph, hideUnassigned, team, setNodes]);
+
+  // Fit once on first paint when there is no saved layout.
+  useEffect(() => {
+    if (fittedRef.current || nodes.length === 0) return;
+    const saved = loadFleetLayout(team);
+    if (Object.keys(saved).length > 0) {
+      fittedRef.current = true;
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      fitView({ padding: 0.35, maxZoom: 1.1 });
+      fittedRef.current = true;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [nodes.length, team, fitView]);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<AgentFlowNode>[]) => {
+      onNodesChange(changes);
+      const dragEnded = changes.some(
+        (c) => c.type === "position" && "dragging" in c && c.dragging === false,
+      );
+      if (!dragEnded) return;
+      const next = applyNodeChanges(changes, nodesRef.current);
+      saveFleetLayout(team, positionsFromNodes(next));
+    },
+    [onNodesChange, team],
+  );
+
+  const visibleIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
 
   const edges = useMemo<Edge<RosterEdgeData, "roster">[]>(
     () =>
-      graph.rosterEdges.map((e) => ({
-        id: `${e.parentAgentId}->${e.subagentId}`,
-        source: e.parentAgentId,
-        target: e.subagentId,
-        type: "roster",
-        animated: true,
-        data: {
-          instruction: e.instruction,
-          onRemove: () => removeLink(e.parentAgentId, e.subagentId),
-        },
-      })),
-    [graph.rosterEdges, removeLink],
+      graph.rosterEdges
+        .filter((e) => visibleIds.has(e.parentAgentId) && visibleIds.has(e.subagentId))
+        .map((e) => ({
+          id: `${e.parentAgentId}->${e.subagentId}`,
+          source: e.parentAgentId,
+          target: e.subagentId,
+          type: "roster",
+          animated: true,
+          data: {
+            instruction: e.instruction,
+            onRemove: () => removeLink(e.parentAgentId, e.subagentId),
+          },
+        })),
+    [graph.rosterEdges, removeLink, visibleIds],
   );
 
   const onConnect = useCallback(
     (c: Connection) => {
       if (!c.source || !c.target || c.source === c.target) return;
       const parentId = c.source;
+      const parent = graph.nodes.find((n) => n.id === parentId);
+      if (!parent?.isOrchestrator) {
+        toast.error("Only orchestrators can delegate — mark the source agent as an orchestrator first.");
+        return;
+      }
       const current = rosterOf(parentId);
       if (current.some((s) => s.agentId === c.target)) return;
       const next = [...current, { agentId: c.target, position: current.length }];
@@ -146,7 +176,7 @@ function FleetGraphInner({
         },
       );
     },
-    [reassign, rosterOf],
+    [graph.nodes, reassign, rosterOf],
   );
 
   const onNodeClick = useCallback(
@@ -154,22 +184,42 @@ function FleetGraphInner({
     [onSelect],
   );
 
+  const poolCount = graph.nodes.filter((n) => {
+    const childIds = new Set(graph.rosterEdges.map((e) => e.subagentId));
+    const parentIds = new Set(graph.rosterEdges.map((e) => e.parentAgentId));
+    return !childIds.has(n.id) && !parentIds.has(n.id);
+  }).length;
+
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
+      onNodesChange={handleNodesChange}
       onConnect={onConnect}
       onNodeClick={onNodeClick}
-      fitView
-      fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
       proOptions={{ hideAttribution: true }}
       deleteKeyCode={null}
       nodesDraggable
-      className="!bg-surface-2"
+      snapToGrid
+      snapGrid={[20, 20]}
+      className="fleet-canvas !bg-[var(--fleet-canvas)]"
     >
-      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--fleet-dot)" />
+      <Panel position="top-left" className="!m-3 max-w-sm">
+        <p className="flex items-start gap-2 rounded-lg border border-border/80 bg-surface/95 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
+          Drag cards to arrange the canvas. Wire delegation from an orchestrator&apos;s bottom handle to an operator.
+        </p>
+      </Panel>
+      {poolCount > 0 && hideUnassigned ? (
+        <Panel position="top-right" className="!m-3">
+          <p className="rounded-full border border-border bg-surface/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+            {poolCount} unassigned hidden
+          </p>
+        </Panel>
+      ) : null}
       <Controls showInteractive={false} position="bottom-left" className="!hidden md:!flex" />
       <MiniMap
         position="bottom-right"
@@ -177,7 +227,8 @@ function FleetGraphInner({
         zoomable
         className="!hidden md:!block"
         maskColor="var(--overlay)"
-        nodeColor="var(--surface-3)"
+        nodeColor={(n) => (n.data?.isUnassigned ? "var(--muted)" : "var(--primary)")}
+        nodeStrokeWidth={2}
       />
     </ReactFlow>
   );
@@ -187,15 +238,17 @@ export function FleetGraph({
   graph,
   team,
   onSelect,
+  hideUnassigned,
 }: {
   graph: FleetGraph;
   team: string;
   onSelect: (id: string) => void;
+  hideUnassigned?: boolean;
 }) {
   return (
-    <div className="h-[70dvh] min-h-[28rem] w-full overflow-hidden rounded-lg border border-border">
+    <div className="relative h-[min(72dvh,40rem)] min-h-[24rem] w-full overflow-hidden rounded-xl border border-border bg-surface shadow-xs">
       <ReactFlowProvider>
-        <FleetGraphInner graph={graph} team={team} onSelect={onSelect} />
+        <FleetGraphInner graph={graph} team={team} onSelect={onSelect} hideUnassigned={hideUnassigned ?? false} />
       </ReactFlowProvider>
     </div>
   );

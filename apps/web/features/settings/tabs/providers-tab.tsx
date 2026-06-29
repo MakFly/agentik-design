@@ -23,7 +23,7 @@ import {
 } from "../api";
 import type { Provider } from "../types";
 
-/** Provider cards use ids like `prov_openrouter`; the key family is the suffix. */
+/** Provider cards use ids like `prov_openai`; the key family is the suffix. */
 function providerFamily(id: string): string | null {
   return id.startsWith("prov_") ? id.slice(5) : null;
 }

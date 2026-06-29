@@ -140,7 +140,7 @@ d("agent run controls", () => {
     const registered = await registerDaemon({
       teamId,
       name: "approval-test-daemon",
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
 
     const firstClaim = await claimTask(registered.runtimes[0]!.id);
@@ -166,6 +166,34 @@ d("agent run controls", () => {
     expect(detail?.run.status).toBe("queued");
   });
 
+  test("daemon claim ignores dev simulator runs", async () => {
+    await db
+      .update(schema.runs)
+      .set({ status: "cancelled" })
+      .where(and(eq(schema.runs.teamId, teamId), eq(schema.runs.status, "queued")));
+    const runId = await queuedTask("simulate-only email flow", {
+      prompt: "simulate-only email flow",
+      simulate: {
+        requireApproval: true,
+        email: {
+          to: "operator@example.test",
+          subject: "Acme kickoff — proposed slots",
+          text: "Proposed slots.",
+        },
+      },
+    });
+    const registered = await registerDaemon({
+      teamId,
+      name: "simulate-skip-daemon",
+      runtimes: [{ kind: "claude" }],
+    });
+
+    expect(await claimTask(registered.runtimes[0]!.id)).toBeNull();
+    const detail = await getRunDetail(teamId, runId);
+    expect(detail?.run.status).toBe("queued");
+    expect(detail?.placement?.daemonId).toBeNull();
+  });
+
   test("agent daemon pin only lets the selected daemon claim its queued runs", async () => {
     await db
       .update(schema.runs)
@@ -175,21 +203,21 @@ d("agent run controls", () => {
     const first = await registerDaemon({
       teamId,
       name: "pinned-daemon-a",
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     const second = await registerDaemon({
       teamId,
       name: "pinned-daemon-b",
-      runtimes: [{ kind: "echo" }],
+      runtimes: [{ kind: "claude" }],
     });
     await db
       .update(schema.agents)
-      .set({ preferredDaemonId: first.daemonId, runtimeKind: "echo" })
+      .set({ preferredDaemonId: first.daemonId, runtimeKind: "claude" })
       .where(and(eq(schema.agents.teamId, teamId), eq(schema.agents.id, agentId)));
 
     const runId = await queuedTask("must run on daemon a");
-    const secondEcho = second.runtimes.find((runtime) => runtime.kind === "echo");
-    const firstEcho = first.runtimes.find((runtime) => runtime.kind === "echo");
+    const secondEcho = second.runtimes.find((runtime) => runtime.kind === "claude");
+    const firstEcho = first.runtimes.find((runtime) => runtime.kind === "claude");
     expect(secondEcho).toBeDefined();
     expect(firstEcho).toBeDefined();
 
@@ -199,7 +227,7 @@ d("agent run controls", () => {
 
     const detail = await getRunDetail(teamId, runId);
     expect(detail?.placement).toMatchObject({
-      runtimeKind: "echo",
+      runtimeKind: "claude",
       daemonId: first.daemonId,
       daemonName: "pinned-daemon-a",
       pinned: true,

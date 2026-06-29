@@ -59,6 +59,11 @@ export const qk = {
       ["team", team, "tools", "detail", id] as const,
     catalog: (team: string) => ["team", team, "tools", "catalog"] as const,
   },
+  skills: {
+    all: (team: string) => ["team", team, "skills"] as const,
+    list: (team: string, filters?: Filters) =>
+      ["team", team, "skills", "list", filters ?? {}] as const,
+  },
   reviews: {
     all: (team: string) => ["team", team, "reviews"] as const,
     list: (team: string, status?: string) =>

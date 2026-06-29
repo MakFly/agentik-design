@@ -4,6 +4,7 @@ import { env } from "../../../infra/env";
 import { listAgentRows } from "../../runs";
 import { listProjects } from "../../projects";
 import type { ChannelConnectionRow, ChannelIdentityRow } from "./types";
+import { formatHelpReply, formatRunHelpReply } from "./presenter";
 
 export function normalizeAgentHandle(value: string) {
   return value
@@ -19,27 +20,7 @@ export function agentHandle(agent: { id: string; name: string }) {
 }
 
 export function helpText(connection: ChannelConnectionRow) {
-  return [
-    "Agentik Telegram control",
-    `Pair: /start ${connection.pairingCode}`,
-    "/projects",
-    "/agents",
-    "/tasks project:<projectId>",
-    '/run task:<taskId> ["extra instruction"]',
-    '/run @agent_handle "Prompt"',
-    '/orchestrate "Prompt puis second step"',
-    "/agent @agent_handle",
-    "/agent off",
-    '/run agent:<agentId> "Prompt"',
-    '/run project:<projectId> [agent:<agentId>] "Task title"',
-    "/status <runId>",
-    "/pause <runId>",
-    "/resume <runId>",
-    "/approve <runId> [reason]",
-    "/reject <runId> [reason]",
-    "/kill <runId>",
-    '/learn project:<projectId> "confirmed project memory"',
-  ].join("\n");
+  return formatHelpReply(connection.pairingCode);
 }
 
 export async function runHelpText(teamId: string, intro?: string) {
@@ -47,38 +28,22 @@ export async function runHelpText(teamId: string, intro?: string) {
     listAgentRows(teamId),
     listProjects(teamId),
   ]);
-  const lines = [
-    intro ?? "I can start an existing project task, route a free-form message, or run a published agent.",
-    "",
-    "Fast paths:",
-    '/run task:<taskId> "optional extra instruction"',
-    '/run @agent_handle "what should the agent do?"',
-    '/orchestrate "ask one agent to research puis another to act"',
-    "/agent @agent_handle",
-    "/agent off",
-    '/run agent:<agentId> "what should the agent do?"',
-    '/run project:<projectId> "new task title"',
-  ];
-  if (agents.length) {
-    lines.push(
-      "",
-      "Agents:",
-      ...agents
-        .slice(0, 6)
-        .map((agent) => `${agent.name} · @${agentHandle(agent)} · ${agent.id} · ${agent.health}`),
-    );
-  }
-  if (projects.length) {
-    lines.push(
-      "",
-      "Projects:",
-      ...projects
-        .slice(0, 6)
-        .map((project) => `${project.name} · ${project.id} · ${project.openTaskCount} open`),
-    );
-  }
-  lines.push("", "Use /tasks to list open task ids.");
-  return lines.join("\n");
+  return formatRunHelpReply({
+    intro,
+    agents: agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      handle: agentHandle(agent),
+      health: agent.health,
+      model: agent.model,
+    })),
+    projects: projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      openTaskCount: project.openTaskCount,
+      type: project.type,
+    })),
+  });
 }
 
 type AgentListRow = Awaited<ReturnType<typeof listAgentRows>>[number];
@@ -118,25 +83,14 @@ export async function webRunUrl(teamId: string, runId: string) {
   return `${env.WEB_PUBLIC_URL.replace(/\/$/, "")}/${teamSegment}/runs/${encodeURIComponent(runId)}`;
 }
 
-export function startRunReply(agentName: string, placement: string | null, url: string) {
-  return [
-    `🧠 ${agentName} is on it.`,
-    "I will send the result here.",
-    placement ? `Using ${placement}` : null,
-    `Track: ${url}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 export function clarifyAgentReply(
   question: string,
   choices: Array<{ handle: string; label: string }>,
 ) {
   return [
     question,
-    ...choices.map((choice) => `/run @${choice.handle} "your request" · ${choice.label}`),
+    ...choices.map((choice) => `/run @${choice.handle} "ta demande" · ${choice.label}`),
     "",
-    "Tip: send /agent @agent_handle to keep one as the default hint.",
+    "Astuce : envoie /agent @agent_handle pour garder un agent par défaut dans ce chat.",
   ].join("\n");
 }

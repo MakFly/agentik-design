@@ -13,16 +13,6 @@ export type UiPreferences = {
   theme?: "light" | "dark" | "system";
 };
 
-export type NotificationPreferences = {
-  emailRunComplete?: boolean;
-  emailRunFailed?: boolean;
-  emailApprovalNeeded?: boolean;
-  emailInvitations?: boolean;
-  inAppRuns?: boolean;
-  inAppApprovals?: boolean;
-  inAppMentions?: boolean;
-};
-
 export interface WorkspaceSettings {
   id: string;
   slug: string;
@@ -83,16 +73,6 @@ export function useUpdateUiPreferences() {
   return useMutation({
     mutationFn: (body: UiPreferences) =>
       patchAuth<{ uiPreferences: UiPreferences }>("me/preferences", body),
-  });
-}
-
-export function useUpdateNotificationPreferences() {
-  return useMutation({
-    mutationFn: (body: NotificationPreferences) =>
-      patchAuth<{ notificationPreferences: NotificationPreferences }>(
-        "me/notifications",
-        body,
-      ),
   });
 }
 

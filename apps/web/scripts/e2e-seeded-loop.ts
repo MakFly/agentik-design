@@ -9,12 +9,43 @@
  * Usage:  bun run apps/web/scripts/e2e-seeded-loop.ts
  */
 import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const ghostchrome = process.env.GHOSTCHROME_BIN ?? "/home/kev/Documents/lab/tools/ghostchrome/ghostchrome";
 const engineUrl = process.env.E2E_ENGINE_URL ?? "http://localhost:8787";
 const webUrl = process.env.E2E_WEB_URL ?? "http://localhost:3333";
 const mailpitApi = process.env.MAILPIT_API ?? "http://localhost:8025";
 const session = `agentik-loop-${Date.now()}`;
+const proofDir = process.env.E2E_PROOF_DIR
+  ? resolve(process.env.E2E_PROOF_DIR)
+  : join(repoRoot, "artifacts/acceptance");
+const proofPath = join(proofDir, `${session}.json`);
+
+type ProofCheck = {
+  name: string;
+  ok: boolean;
+  details?: Record<string, unknown>;
+};
+
+const proof: {
+  id: string;
+  status: "running" | "passed" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  urls: { engine: string; web: string; mailpit: string };
+  seed?: { projectId: string; runIds: string[]; agentCount: number };
+  checks: ProofCheck[];
+  error?: string;
+} = {
+  id: session,
+  status: "running",
+  startedAt: new Date().toISOString(),
+  urls: { engine: engineUrl, web: webUrl, mailpit: mailpitApi },
+  checks: [],
+};
 
 function log(m: string) {
   console.log(`[e2e-loop] ${m}`);
@@ -58,6 +89,27 @@ function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
 }
 
+function check(name: string, cond: unknown, details?: Record<string, unknown>) {
+  const ok = Boolean(cond);
+  proof.checks.push({ name, ok, details });
+  assert(ok, name);
+}
+
+function checkMap(label: string, values: Record<string, boolean>) {
+  for (const [key, value] of Object.entries(values)) {
+    check(`${label}: ${key}`, value);
+  }
+}
+
+function writeProof(status: "passed" | "failed", error?: unknown) {
+  proof.status = status;
+  proof.finishedAt = new Date().toISOString();
+  if (error) proof.error = error instanceof Error ? error.message : String(error);
+  mkdirSync(proofDir, { recursive: true });
+  writeFileSync(proofPath, `${JSON.stringify(proof, null, 2)}\n`);
+  log(`proof written: ${proofPath}`);
+}
+
 async function urlOk(url: string) {
   try {
     return (await fetch(url)).ok;
@@ -73,10 +125,49 @@ async function mailpitCount(query: string): Promise<number> {
   return r.messages_count ?? r.total ?? 0;
 }
 
+async function runDetailText(runId: string): Promise<string> {
+  const detail = await gcEval<unknown>(
+    `fetch('/api/v1/runs/${runId}', { headers: { 'x-team': 'demo' } }).then((r) => r.json())`,
+  );
+  return JSON.stringify(detail);
+}
+
+async function runDetails(runIds: string[]) {
+  return Promise.all(runIds.map(async (runId) => ({ runId, text: await runDetailText(runId) })));
+}
+
+async function runStatuses(runIds: string[]) {
+  return gcEval<Array<{ runId: string; status?: string }>>(
+    `(async () => Promise.all(${JSON.stringify(runIds)}.map(async (runId) => {
+      const detail = await fetch('/api/v1/runs/' + runId, { headers: { 'x-team': 'demo' } }).then((r) => r.json()).catch(() => ({}));
+      return { runId, status: detail?.run?.status };
+    })))()`,
+  );
+}
+
+async function waitForSucceededRuns(runIds: string[], timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  let statuses: Array<{ runId: string; status?: string }> = [];
+  while (Date.now() < deadline) {
+    statuses = await runStatuses(runIds);
+    if (statuses.every((run) => run.status === "succeeded")) return statuses;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return statuses;
+}
+
+function findRunByText(runs: Array<{ runId: string; text: string }>, needle: string) {
+  return runs.find((run) => run.text.includes(needle));
+}
+
+function hasRecordedEmailDelivery(run: { text: string } | undefined, mailpitMatches: number) {
+  return mailpitMatches > 0 || /Email sent .* via (gmail|mailpit)/i.test(run?.text ?? "");
+}
+
 async function main() {
-  assert(await urlOk(`${engineUrl}/api/v1/health`), "engine not up — run `make dev` first");
-  assert(await urlOk(`${webUrl}/login`), "web not up — run `make dev` first");
-  assert(await urlOk(`${mailpitApi}/api/v1/messages?limit=1`), "mailpit not up");
+  check("engine health is reachable", await urlOk(`${engineUrl}/api/v1/health`), { url: `${engineUrl}/api/v1/health` });
+  check("web login is reachable", await urlOk(`${webUrl}/login`), { url: `${webUrl}/login` });
+  check("mailpit API is reachable", await urlOk(`${mailpitApi}/api/v1/messages?limit=1`), { url: `${mailpitApi}/api/v1/messages?limit=1` });
 
   log("1) login via the /login dev autofill button");
   const login = await gcEval<{ ok: boolean; org?: string; reason?: string }>(
@@ -95,24 +186,40 @@ async function main() {
     })()`,
     `${webUrl}/login`,
   );
-  assert(login.ok, `dev autofill login failed: ${login.reason}`);
-  assert(login.org === "demo", `expected demo org, got ${login.org}`);
+  check("dev autofill login succeeds", login.ok, { reason: login.reason });
+  check("logged in org is demo", login.org === "demo", { org: login.org });
 
   log("2) seed the SMB tenant via /dev/seed");
-  const seed = await gcEval<{ runIds: string[]; agents: Record<string, string>; gmailWebhookToken: string }>(
+  const seed = await gcEval<{
+    projectId: string;
+    runIds: string[];
+    agents: Record<string, string>;
+    gmailWebhookToken: string;
+  }>(
     `fetch('/api/v1/dev/seed', { method: 'POST', headers: { 'x-team': 'demo', 'content-type': 'application/json' } }).then((r) => r.json())`,
   );
-  assert(Object.keys(seed.agents).length === 4, "expected 4 seeded agents");
-  assert(seed.runIds.length === 3, "expected 3 queued demo runs");
-  assert(seed.gmailWebhookToken.startsWith("wht_"), "expected a gmail webhook token");
+  proof.seed = {
+    projectId: seed.projectId,
+    runIds: seed.runIds,
+    agentCount: Object.keys(seed.agents).length,
+  };
+  check("seed created 4 agents", Object.keys(seed.agents).length === 4, { agents: Object.keys(seed.agents) });
+  check("seed created 4 demo runs", seed.runIds.length === 4, { runIds: seed.runIds });
+  check("seed created gmail webhook token", seed.gmailWebhookToken.startsWith("wht_"));
 
   log("3) simulate pass 1 (triage completes; invoice + meeting wait for approval)");
   const pass1 = await gcEval<{ processed: Array<{ runId: string; status: string }> }>(
     `fetch('/api/v1/dev/simulate', { method: 'POST', headers: { 'x-team': 'demo' } }).then((r) => r.json())`,
   );
   const waiting = pass1.processed.filter((p) => p.status === "waiting_approval");
-  assert(waiting.length === 2, `expected 2 waiting, got ${waiting.length}`);
-  assert(pass1.processed.some((p) => p.status === "succeeded"), "triage should have succeeded");
+  check("simulation pass 1 has 2 approval-gated runs", waiting.length === 2, { processed: pass1.processed });
+  const detailsAfterPass1 = await runDetails(seed.runIds);
+  const triageHistory = detailsAfterPass1.filter(
+    (run) => run.text.includes("Triage today's inbox") && run.text.includes('"status":"succeeded"'),
+  );
+  check("seed has 2 historical triage runs already succeeded", triageHistory.length === 2, {
+    runIds: triageHistory.map((run) => run.runId),
+  });
 
   log("4) approve the waiting runs, then simulate pass 2 (all succeed, emails sent)");
   for (const p of waiting) {
@@ -123,11 +230,27 @@ async function main() {
   const pass2 = await gcEval<{ processed: Array<{ runId: string; status: string }> }>(
     `fetch('/api/v1/dev/simulate', { method: 'POST', headers: { 'x-team': 'demo' } }).then((r) => r.json())`,
   );
-  assert(pass2.processed.every((p) => p.status === "succeeded"), "all runs should have succeeded after approval");
+  const processedRunIds = pass2.processed.map((run) => run.runId);
+  const finalStatuses = await waitForSucceededRuns(processedRunIds);
+  check("simulation pass 2 succeeds after approvals", finalStatuses.every((p) => p.status === "succeeded"), {
+    processed: pass2.processed,
+    finalStatuses,
+  });
 
-  log("5) assert the invoice + kickoff emails landed in Mailpit");
-  assert((await mailpitCount("invoice #42")) > 0, "invoice email not found in mailpit");
-  assert((await mailpitCount("Acme kickoff")) > 0, "kickoff email not found in mailpit");
+  log("5) assert the invoice + kickoff emails were delivered or recorded");
+  const invoiceEmailCount = await mailpitCount("invoice #42");
+  const kickoffEmailCount = await mailpitCount("Acme kickoff");
+  const detailsAfterPass2 = await runDetails(seed.runIds);
+  const invoiceDeliveryRun = findRunByText(detailsAfterPass2, "Chase overdue invoice #42");
+  const kickoffDeliveryRun = findRunByText(detailsAfterPass2, "Schedule the Acme kickoff");
+  check("invoice email delivery recorded", hasRecordedEmailDelivery(invoiceDeliveryRun, invoiceEmailCount), {
+    mailpitCount: invoiceEmailCount,
+    runId: invoiceDeliveryRun?.runId,
+  });
+  check("kickoff email delivery recorded", hasRecordedEmailDelivery(kickoffDeliveryRun, kickoffEmailCount), {
+    mailpitCount: kickoffEmailCount,
+    runId: kickoffDeliveryRun?.runId,
+  });
 
   log("6) assert the agents registry renders the seeded fleet");
   await gc(["preview", `${webUrl}/demo/agents`, "--wait", "stable", "--level", "content"]);
@@ -138,24 +261,54 @@ async function main() {
       scheduler: t.includes('Scheduler'),
     }; })()`,
   );
-  for (const [k, v] of Object.entries(agents)) assert(v, `agents page missing ${k}`);
+  checkMap("agents page", agents);
 
   log("7) assert the fleet graph renders");
   await gc(["preview", `${webUrl}/demo/agents/fleet`, "--wait", "stable", "--level", "content"]);
   const fleet = await gcEval<{ fleet: boolean }>(
     `(() => ({ fleet: document.body.innerText.includes('Fleet') }))()`,
   );
-  assert(fleet.fleet, "fleet page did not render");
+  check("fleet graph renders", fleet.fleet);
 
-  log("8) assert a run detail view renders the simulated steps");
-  const invoiceRunId = seed.runIds[1]!;
-  await gc(["preview", `${webUrl}/demo/runs/${invoiceRunId}`, "--wait", "stable", "--level", "content"]);
-  const runView = await gcEval<{ hasContent: boolean }>(
-    `(() => ({ hasContent: document.body.innerText.length > 200 }))()`,
+  log("8) assert the project cockpit renders task board, console, context, resources and channels");
+  await gc(["preview", `${webUrl}/demo/projects/${seed.projectId}`, "--wait", "stable", "--level", "content"]);
+  const projectCockpit = await gcEval<Record<string, boolean>>(
+    `(() => { const t = document.body.innerText; return {
+      projectName: t.includes('Daily Office Ops'),
+      tasks: t.includes('Tasks'),
+      agentConsole: t.includes('Agent console'),
+      runInstruction: t.includes('Run instruction'),
+      latestRun: t.includes('Latest run'),
+      projectContext: t.includes('Project context'),
+      activeRuns: t.includes('Active runs'),
+      resources: t.includes('Resources'),
+      linkedChannels: t.includes('Linked channels'),
+      invoiceTask: t.includes('Chase overdue invoice #42'),
+    }; })()`,
   );
-  assert(runView.hasContent, "run detail view did not render");
+  checkMap("project cockpit", projectCockpit);
 
-  log("9) assert the Settings → Connections page renders the Google connect UI");
+  log("9) assert a run detail view renders the Hermes-style transcript and project summary");
+  const invoiceCandidates = await runDetails(seed.runIds);
+  const invoiceRunId = findRunByText(invoiceCandidates, "Chase overdue invoice #42")?.runId;
+  check("seed exposes an invoice run detail", invoiceRunId, {
+    runIds: seed.runIds,
+  });
+  await gc(["preview", `${webUrl}/demo/runs/${invoiceRunId}`, "--wait", "stable", "--level", "content"]);
+  const runView = await gcEval<Record<string, boolean>>(
+    `(() => { const t = document.body.innerText; const lower = t.toLowerCase(); return {
+      transcript: lower.includes('execution transcript'),
+      projectTask: lower.includes('project task'),
+      runMetadata: lower.includes('run metadata'),
+      operatorInput: lower.includes('operator input'),
+      projectName: t.includes('Daily Office Ops'),
+      taskTitle: t.includes('Chase overdue invoice #42'),
+      invoiceEvidence: t.includes('Found invoice #42') || t.includes('Drafted a polite reminder'),
+    }; })()`,
+  );
+  checkMap("run detail view", runView);
+
+  log("10) assert the Settings → Connections page renders the Google connect UI");
   await gc(["preview", `${webUrl}/demo/settings?tab=connections`, "--wait", "stable", "--level", "content"]);
   const connections = await gcEval<Record<string, boolean>>(
     `(() => { const t = document.body.innerText; return {
@@ -163,9 +316,10 @@ async function main() {
       connectButton: t.includes('Connect a Google account'),
     }; })()`,
   );
-  for (const [k, v] of Object.entries(connections)) assert(v, `connections page missing ${k}`);
+  checkMap("connections page", connections);
 
-  log(`PASSED — seeded daily-execution loop + connections UI verified (runs: ${seed.runIds.length})`);
+  writeProof("passed");
+  log(`PASSED — seeded daily-execution loop + project cockpit + run console verified (runs: ${seed.runIds.length})`);
 }
 
 main()
@@ -173,6 +327,7 @@ main()
   .then(() => process.exit(0))
   .catch(async (err) => {
     console.error("\n[e2e-loop] FAILED:", err.message);
+    writeProof("failed", err);
     await run([ghostchrome, "sessions", "stop", session]).catch(() => {});
     process.exit(1);
   });

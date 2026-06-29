@@ -1,5 +1,5 @@
 export const PERSONAL_RUNTIMES =
-  "echo,claude,hermes,codex,openai,anthropic,openrouter,custom";
+  "claude,hermes,codex,openai,anthropic,custom";
 
 export const DEFAULT_ENGINE_URL =
   process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:8787";

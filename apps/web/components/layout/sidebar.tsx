@@ -46,6 +46,21 @@ export function AppSidebar({ team }: { team: string }) {
 
   const visible = NAV_ITEMS.filter((i) => !i.permission || can(i.permission));
 
+  // Active item = the one whose href is the longest prefix of the current
+  // pathname. This keeps nested routes (e.g. /agents/123) highlighting their
+  // parent while preventing a shorter parent (/agents) from also lighting up
+  // when a more specific sibling (/agents/fleet) is the real match.
+  const activeKey = visible.reduce<{ key: string | null; len: number }>(
+    (best, item) => {
+      const href = hrefFor(team, item.segment);
+      if (pathname === href || pathname.startsWith(`${href}/`)) {
+        if (href.length > best.len) return { key: item.key, len: href.length };
+      }
+      return best;
+    },
+    { key: null, len: -1 },
+  ).key;
+
   function badgeFor(item: NavItem): number {
     if (item.badge === "activeRuns") return indicators.activeRuns;
     if (item.badge === "approvals") return indicators.approvals;
@@ -69,8 +84,7 @@ export function AppSidebar({ team }: { team: string }) {
               <SidebarMenu className="gap-0.5">
                 {items.map((item) => {
                   const href = hrefFor(team, item.segment);
-                  const active =
-                    pathname === href || pathname.startsWith(`${href}/`);
+                  const active = item.key === activeKey;
                   const Icon = item.icon;
                   const count = badgeFor(item);
 

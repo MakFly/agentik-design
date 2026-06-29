@@ -4,7 +4,12 @@ import { editTelegramMessage, sendTelegramChatAction, sendTelegramMessage } from
 import { formatTelegramHtmlMessages, formatTelegramText } from "./formatting";
 import { webRunUrl } from "./helpers";
 import { activeTelegramRecipients, recordMessage } from "../repo";
-import type { TelegramActionSender, TelegramEditSender, TelegramSender } from "./types";
+import type {
+  TelegramActionSender,
+  TelegramEditSender,
+  TelegramInlineKeyboardMarkup,
+  TelegramSender,
+} from "./types";
 
 const TELEGRAM_TYPING_TERMINAL_STATUSES = new Set([
   "completed",
@@ -86,13 +91,13 @@ export async function notifyRunTelegram(
   text: string,
   sender: TelegramSender = sendTelegramMessage,
   actionSender: TelegramActionSender = sendTelegramChatAction,
-  options: { includeLink?: boolean } = {},
+  options: { includeLink?: boolean; replyMarkup?: TelegramInlineKeyboardMarkup } = {},
 ) {
   const recipients = await activeTelegramRecipients(teamId);
   if (!recipients.length) return 0;
   const includeLink = options.includeLink ?? true;
   const body = includeLink
-    ? `${text}\n\nOpen run: ${await webRunUrl(teamId, runId)}`
+    ? `${text}\n\nVoir le run : ${await webRunUrl(teamId, runId)}`
     : text;
   const parts = formatTelegramHtmlMessages(body);
   let sent = 0;
@@ -111,19 +116,22 @@ export async function notifyRunTelegram(
       chatId: identity.externalChatId,
       action: "typing",
     }).catch(() => undefined);
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
+      const replyMarkup = index === parts.length - 1 ? options.replyMarkup : undefined;
       try {
         await sender({
           connection,
           chatId: identity.externalChatId,
           text: part,
           parseMode: "HTML",
+          replyMarkup,
         });
       } catch {
         await sender({
           connection,
           chatId: identity.externalChatId,
           text: formatTelegramText(htmlToPlainText(part), 3900),
+          replyMarkup,
         });
       }
     }
@@ -136,7 +144,7 @@ export async function notifyRunTelegram(
 export async function notifyRunProgressTelegram(
   teamId: string,
   runId: string,
-  progress: { completedSteps: number; stepCount: number; latest?: string | null },
+  progress: { completedSteps: number; stepCount: number; latest?: string | null; text?: string },
   sender: TelegramSender = sendTelegramMessage,
   actionSender: TelegramActionSender = sendTelegramChatAction,
   editSender: TelegramEditSender = editTelegramMessage,
@@ -148,13 +156,11 @@ export async function notifyRunProgressTelegram(
   const now = Date.now();
   const latest = progress.latest?.trim();
   if (!latest) return 0;
-  const text = [
-    "⏳ Run progress",
-    `${progress.completedSteps}/${progress.stepCount} steps completed`,
-    latest,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const text =
+    progress.text?.trim() ||
+    ["Je suis dessus.", `${progress.completedSteps}/${progress.stepCount} étapes terminées.`, latest]
+      .filter(Boolean)
+      .join("\n");
   const prev = telegramProgressNotifications.get(key);
   if (prev) {
     const stepDelta = progress.completedSteps - prev.completedSteps;

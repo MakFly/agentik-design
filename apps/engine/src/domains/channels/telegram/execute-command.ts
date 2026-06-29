@@ -1,5 +1,6 @@
 import {
   getAgentPlacementLabel,
+  getAgentCapabilities,
   listAgentRows,
 } from "../../runs";
 import { sendAgentChatTurn } from "../../chat/repo";
@@ -19,10 +20,28 @@ import {
   helpText,
   resolveAgentHandle,
   runHelpText,
-  startRunReply,
   webRunUrl,
 } from "./helpers";
-import { setActiveAgent } from "../repo";
+import {
+  formatActiveAgentDisabledReply,
+  formatActiveAgentReply,
+  formatActiveProjectDisabledReply,
+  formatActiveProjectReply,
+  formatAgentUnavailableReply,
+  formatAgentsReply,
+  formatAgentSkillsReply,
+  formatAgentNotFoundReply,
+  formatAmbiguousAgentsReply,
+  formatCommandError,
+  formatCurrentAgentHelpReply,
+  formatCurrentProjectHelpReply,
+  formatOrchestrationStartedReply,
+  formatProjectContextReply,
+  formatProjectsReply,
+  formatRunStartedReply,
+  formatTasksReply,
+} from "./presenter";
+import { getActiveProjectId, setActiveAgent, setActiveProject } from "../repo";
 import type { ChannelConnectionRow, ChannelIdentityRow, TelegramDispatchResult } from "./types";
 
 type AgentListRow = Awaited<ReturnType<typeof listAgentRows>>[number];
@@ -50,43 +69,205 @@ export async function executeCommand(
     case "help":
       return { ok: true, reply: helpText(connection) };
     case "pair":
-      return { ok: true, reply: "This chat is already paired." };
+      return { ok: true, reply: "Ce chat est déjà connecté. Envoie /projects ou /agents pour commencer." };
     case "agents": {
       const agents = await listAgentRows(connection.teamId);
-      if (!agents.length) return { ok: true, reply: "No agents yet." };
       return {
         ok: true,
-        reply: agents
-          .slice(0, 10)
-          .map(
-            (agent) =>
-              `${agent.name}\n@${agentHandle(agent)} · ${agent.id} · ${agent.health} · ${agent.model}`,
-          )
-          .join("\n\n"),
+        reply: formatAgentsReply(
+          agents.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            handle: agentHandle(agent),
+            health: agent.health,
+            model: agent.model,
+          })),
+        ),
+      };
+    }
+    case "skills": {
+      let agentId = command.agentId;
+      let resolvedAgent: AgentListRow | null = null;
+      if (command.handle) {
+        const resolved = await resolveAgentHandle(connection.teamId, command.handle);
+        if ("error" in resolved) {
+          return {
+            ok: false,
+            reply:
+              resolved.error === "ambiguous"
+                ? formatAmbiguousAgentsReply(
+                    resolved.agents.map((agent) => ({
+                      id: agent.id,
+                      name: agent.name,
+                      handle: agentHandle(agent),
+                      health: agent.health,
+                      model: agent.model,
+                    })),
+                  )
+                : formatAgentNotFoundReply(command.handle),
+          };
+        }
+        resolvedAgent = resolved.agent;
+        agentId = resolved.agent.id;
+      }
+      if (!agentId) {
+        resolvedAgent = await activeAgentRow(connection.teamId, identity);
+        agentId = resolvedAgent?.id;
+      }
+      if (!agentId) {
+        return {
+          ok: false,
+          reply: formatCommandError("Choisis un agent avec /agent @agent_handle ou utilise /skills @agent_handle."),
+        };
+      }
+      const capabilities = await getAgentCapabilities(connection.teamId, agentId);
+      if (!capabilities) return { ok: false, reply: formatAgentNotFoundReply(command.handle ?? agentId) };
+      resolvedAgent ??= (await listAgentRows(connection.teamId)).find((agent) => agent.id === agentId) ?? null;
+      return {
+        ok: true,
+        reply: formatAgentSkillsReply({
+          id: capabilities.id,
+          name: capabilities.name,
+          handle: resolvedAgent ? agentHandle(resolvedAgent) : capabilities.id,
+          role: capabilities.role,
+          goal: capabilities.goal,
+          health: capabilities.health,
+          runtimeKind: capabilities.runtimeKind,
+          model: capabilities.model,
+          published: capabilities.published,
+          version: capabilities.version,
+          instructions: capabilities.instructions,
+          tools: capabilities.tools,
+          toolGrants: capabilities.toolGrants,
+        }),
       };
     }
     case "projects": {
       const projects = await listProjects(connection.teamId);
-      if (!projects.length) return { ok: true, reply: "No projects yet." };
       return {
         ok: true,
-        reply: projects
-          .slice(0, 8)
-          .map(
-            (project) =>
-              `${project.name}\n${project.id} · ${project.openTaskCount} open · ${project.type}`,
-          )
-          .join("\n\n"),
+        reply: formatProjectsReply(
+          projects.map((project) => ({
+            id: project.id,
+            name: project.name,
+            openTaskCount: project.openTaskCount,
+            type: project.type,
+          })),
+        ),
+      };
+    }
+    case "projectMode": {
+      if (command.off) {
+        await setActiveProject(connection, identity, null);
+        return {
+          ok: true,
+          reply: formatActiveProjectDisabledReply(),
+        };
+      }
+      if (!command.projectId) {
+        const activeProjectId = await getActiveProjectId(connection, identity);
+        const project = activeProjectId
+          ? await getProject(connection.teamId, activeProjectId)
+          : null;
+        if (activeProjectId && !project) {
+          await setActiveProject(connection, identity, null);
+        }
+        return {
+          ok: true,
+          reply: formatCurrentProjectHelpReply(
+            project
+              ? { current: { id: project.project.id, name: project.project.name } }
+              : { current: null },
+          ),
+          projectId: project?.project.id,
+        };
+      }
+      const project = await getProject(connection.teamId, command.projectId);
+      if (!project)
+        return {
+          ok: false,
+          reply: formatCommandError("Projet introuvable. Utilise /projects pour voir les projets disponibles."),
+          projectId: command.projectId,
+        };
+      await setActiveProject(connection, identity, project.project.id);
+      return {
+        ok: true,
+        reply: formatActiveProjectReply({
+          id: project.project.id,
+          name: project.project.name,
+        }),
+        projectId: project.project.id,
+      };
+    }
+    case "context": {
+      const projectId = command.projectId ?? (await getActiveProjectId(connection, identity));
+      if (!projectId)
+        return {
+          ok: false,
+          reply: formatCommandError(
+            "Choisis un projet actif avec /project <projectId>, ou utilise /context project:<projectId>.",
+          ),
+        };
+      const project = await getProject(connection.teamId, projectId);
+      if (!project) {
+        if (!command.projectId) await setActiveProject(connection, identity, null);
+        return {
+          ok: false,
+          reply: formatCommandError("Projet introuvable. Utilise /projects pour voir les projets disponibles."),
+          projectId,
+        };
+      }
+      await setActiveProject(connection, identity, project.project.id);
+      return {
+        ok: true,
+        reply: formatProjectContextReply({
+          project: {
+            id: project.project.id,
+            name: project.project.name,
+            type: project.project.type,
+            description: project.project.description,
+          },
+          tasks: project.tasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            priority: task.priority,
+            status: task.status,
+          })),
+          resources: project.resources.map((resource) => ({
+            type: resource.type,
+            label: resource.label,
+            ref: resource.ref,
+          })),
+          memories: project.memories.map((memory) => ({
+            content: memory.content,
+            confidence: memory.confidence,
+          })),
+        }),
+        projectId: project.project.id,
       };
     }
     case "tasks": {
-      const projects = command.projectId
-        ? [await getProject(connection.teamId, command.projectId)]
+      const activeProjectId = command.projectId ?? (await getActiveProjectId(connection, identity));
+      const projects = activeProjectId
+        ? [await getProject(connection.teamId, activeProjectId)]
         : await Promise.all(
             (await listProjects(connection.teamId))
               .slice(0, 5)
               .map((project) => getProject(connection.teamId, project.id)),
           );
+      if (activeProjectId && !projects[0]) {
+        if (!command.projectId) await setActiveProject(connection, identity, null);
+        return {
+          ok: false,
+          reply: formatCommandError(
+            command.projectId
+              ? "Projet introuvable. Utilise /projects pour voir les projets disponibles."
+              : "Le projet actif est introuvable. Je l'ai retiré de ce chat.",
+          ),
+          projectId: activeProjectId,
+        };
+      }
+      if (activeProjectId) await setActiveProject(connection, identity, activeProjectId);
       const tasks = projects
         .filter(Boolean)
         .flatMap((project) =>
@@ -94,15 +275,18 @@ export async function executeCommand(
         )
         .filter(({ task }) => !["done", "cancelled"].includes(task.status))
         .slice(0, 10);
-      if (!tasks.length) return { ok: true, reply: "No open tasks." };
       return {
         ok: true,
-        reply: tasks
-          .map(
-            ({ project, task }) =>
-              `${task.priority} ${task.title}\n${project.name} · ${task.status} · ${task.id}`,
-          )
-          .join("\n\n"),
+        reply: formatTasksReply(
+          tasks.map(({ project, task }) => ({
+            id: task.id,
+            title: task.title,
+            priority: task.priority,
+            status: task.status,
+            projectName: project.name,
+          })),
+        ),
+        projectId: activeProjectId ?? undefined,
       };
     }
     case "agentMode": {
@@ -110,7 +294,7 @@ export async function executeCommand(
         await setActiveAgent(identity.id, null);
         return {
           ok: true,
-          reply: "Agent mode disabled. Use /agent @agent_handle to pick one again.",
+          reply: formatActiveAgentDisabledReply(),
         };
       }
       if (!command.handle && !command.agentId) {
@@ -119,9 +303,11 @@ export async function executeCommand(
           ok: true,
           reply: await runHelpText(
             connection.teamId,
-            current
-              ? `Current agent: @${agentHandle(current)} (${current.name}).`
-              : "No active agent for this chat yet.",
+            formatCurrentAgentHelpReply(
+              current
+                ? { current: { handle: agentHandle(current), name: current.name } }
+                : { current: null },
+            ),
           ),
         };
       }
@@ -138,53 +324,71 @@ export async function executeCommand(
           ok: false,
           reply:
             resolved.error === "ambiguous"
-              ? [
-                  "Several agents match. Use one id explicitly:",
-                  ...resolved.agents.map((agent) => `${agent.name} · ${agent.id}`),
-                ].join("\n")
-              : "Agent not found. Use /agents to list available handles.",
+              ? formatAmbiguousAgentsReply(
+                  resolved.agents.map((agent) => ({
+                    id: agent.id,
+                    name: agent.name,
+                    handle: agentHandle(agent),
+                    health: agent.health,
+                    model: agent.model,
+                  })),
+                )
+              : formatAgentNotFoundReply(command.handle),
         };
       }
       if (!resolved.agent.liveVersionId) {
         return {
           ok: false,
-          reply: `${resolved.agent.name} is not published yet. Publish it before using it from Telegram.`,
+          reply: formatAgentUnavailableReply(
+            `${resolved.agent.name} n'est pas encore publié.`,
+          ),
         };
       }
       await setActiveAgent(identity.id, resolved.agent.id);
       return {
         ok: true,
-        reply: `Agent mode enabled: @${agentHandle(resolved.agent)} (${resolved.agent.name}).\nNow send messages directly, without /run.`,
+        reply: formatActiveAgentReply({
+          handle: agentHandle(resolved.agent),
+          name: resolved.agent.name,
+        }),
       };
     }
     case "run": {
       if (!command.title)
         return {
           ok: false,
-          reply: 'Usage: /run project:<projectId> "Task title"',
+          reply: formatCommandError('Format attendu : /run "titre de tâche" après /project <projectId>.'),
+        };
+      const projectId = command.projectId ?? (await getActiveProjectId(connection, identity));
+      if (!projectId)
+        return {
+          ok: false,
+          reply: formatCommandError(
+            'Choisis un projet actif avec /project <projectId>, ou utilise /run project:<projectId> "titre de tâche".',
+          ),
         };
       const task = await createProjectTask(
         connection.teamId,
-        command.projectId,
+        projectId,
         `telegram:${identity.externalUserId}`,
         {
           title: command.title,
-          assignedAgentId: command.agentId ?? null,
+          assignedAgentId: command.agentId ?? identity.activeAgentId ?? null,
           status: "ready",
         },
       );
       if ("error" in task)
         return {
           ok: false,
-          reply: `Could not create task: ${task.error}`,
-          projectId: command.projectId,
+          reply: formatCommandError(`Création de tâche impossible : ${task.error}`),
+          projectId,
         };
       const projectTask = task.task;
       if (!projectTask)
         return {
           ok: false,
-          reply: "Could not create task.",
-          projectId: command.projectId,
+          reply: formatCommandError("Création de tâche impossible."),
+          projectId,
         };
       const run = await runProjectTask(
         connection.teamId,
@@ -194,16 +398,22 @@ export async function executeCommand(
       if ("error" in run) {
         return {
           ok: false,
-          reply: `Task created, but run did not start: ${projectTask.id}\nReason: ${run.error}`,
-          projectId: command.projectId,
+          reply: formatCommandError(
+            `La tâche est créée (${projectTask.id}), mais le run n'a pas démarré : ${run.error}`,
+          ),
+          projectId,
           projectTaskId: projectTask.id,
         };
       }
+      await setActiveProject(connection, identity, projectId);
       return {
         ok: true,
-        reply: `Run started\nTask: ${projectTask.title}\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        reply: formatRunStartedReply({
+          title: projectTask.title,
+          url: await webRunUrl(connection.teamId, run.runId),
+        }),
         runId: run.runId,
-        projectId: command.projectId,
+        projectId,
         projectTaskId: projectTask.id,
       };
     }
@@ -211,29 +421,26 @@ export async function executeCommand(
       if (!command.input)
         return {
           ok: false,
-          reply: 'Usage: /run agent:<agentId> "what should the agent do?"',
+          reply: formatCommandError('Format attendu : /run agent:<agentId> "demande"'),
         };
       const agents = await listAgentRows(connection.teamId);
       const agent = agents.find((item) => item.id === command.agentId);
-      if (!agent) return { ok: false, reply: "Agent not found." };
+      if (!agent) return { ok: false, reply: formatAgentNotFoundReply(command.agentId) };
       const run = await sendTelegramAgentTurn(connection, identity, agent, command.input);
       if ("error" in run)
         return {
           ok: false,
-          reply:
-            run.error === "not_published"
-              ? "This agent is not published yet."
-              : run.error === "no_live_daemon"
-                ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
-              : run.error === "empty_input"
-                ? 'Usage: /run agent:<agentId> "what should the agent do?"'
-              : `Could not start agent: ${run.error}`,
+          reply: formatAgentUnavailableReply(run.error),
         };
       await setActiveAgent(identity.id, command.agentId);
       const placement = await getAgentPlacementLabel(connection.teamId, command.agentId);
       return {
         ok: true,
-        reply: startRunReply(agent?.name ?? command.agentId, placement, await webRunUrl(connection.teamId, run.runId)),
+        reply: formatRunStartedReply({
+          agentName: agent?.name ?? command.agentId,
+          placement,
+          url: await webRunUrl(connection.teamId, run.runId),
+        }),
         runId: run.runId,
       };
     }
@@ -241,42 +448,44 @@ export async function executeCommand(
       if (!command.input)
         return {
           ok: false,
-          reply: 'Usage: /run @agent_handle "what should the agent do?"',
+          reply: formatCommandError('Format attendu : /run @agent_handle "demande"'),
         };
       const resolved = await resolveAgentHandle(connection.teamId, command.handle);
       if ("error" in resolved) {
         if (resolved.error === "ambiguous") {
           return {
             ok: false,
-            reply: [
-              `Several agents match @${command.handle}. Use one id explicitly:`,
-              ...resolved.agents.map((agent) => `${agent.name} · ${agent.id}`),
-            ].join("\n"),
+            reply: formatAmbiguousAgentsReply(
+              resolved.agents.map((agent) => ({
+                id: agent.id,
+                name: agent.name,
+                handle: agentHandle(agent),
+                health: agent.health,
+                model: agent.model,
+              })),
+            ),
           };
         }
         return {
           ok: false,
-          reply: `No agent found for @${command.handle}.\nUse /agents to list available handles.`,
+          reply: formatAgentNotFoundReply(command.handle),
         };
       }
       const run = await sendTelegramAgentTurn(connection, identity, resolved.agent, command.input);
       if ("error" in run)
         return {
           ok: false,
-          reply:
-            run.error === "not_published"
-              ? "This agent is not published yet."
-              : run.error === "no_live_daemon"
-                ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
-              : run.error === "empty_input"
-                ? 'Usage: /run @agent_handle "what should the agent do?"'
-              : `Could not start agent: ${run.error}`,
+          reply: formatAgentUnavailableReply(run.error),
         };
       await setActiveAgent(identity.id, resolved.agent.id);
       const placement = await getAgentPlacementLabel(connection.teamId, resolved.agent.id);
       return {
         ok: true,
-        reply: startRunReply(resolved.agent.name, placement, await webRunUrl(connection.teamId, run.runId)),
+        reply: formatRunStartedReply({
+          agentName: resolved.agent.name,
+          placement,
+          url: await webRunUrl(connection.teamId, run.runId),
+        }),
         runId: run.runId,
       };
     }
@@ -284,7 +493,7 @@ export async function executeCommand(
       if (!command.input)
         return {
           ok: false,
-          reply: 'Usage: /orchestrate "first step puis second step"',
+          reply: formatCommandError('Format attendu : /orchestrate "première étape puis deuxième étape"'),
         };
       const routed = await sendOrchestratedTurn({
         teamId: connection.teamId,
@@ -298,13 +507,11 @@ export async function executeCommand(
       if (routed.kind === "orchestration") {
         return {
           ok: true,
-          reply: [
-            `Orchestration started (${routed.plan.steps.length} steps)`,
-            routed.childRunId ? `Active child: ${routed.childRunId}` : null,
-            `Open: ${await webRunUrl(connection.teamId, routed.runId)}`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          reply: formatOrchestrationStartedReply({
+            steps: routed.plan.steps.length,
+            childRunId: routed.childRunId,
+            url: await webRunUrl(connection.teamId, routed.runId),
+          }),
           runId: routed.runId,
         };
       }
@@ -312,14 +519,18 @@ export async function executeCommand(
         const placement = await getAgentPlacementLabel(connection.teamId, routed.agent.id);
         return {
           ok: true,
-          reply: startRunReply(routed.agent.name, placement, await webRunUrl(connection.teamId, routed.runId)),
+          reply: formatRunStartedReply({
+            agentName: routed.agent.name,
+            placement,
+            url: await webRunUrl(connection.teamId, routed.runId),
+          }),
           runId: routed.runId,
         };
       }
       if (routed.kind === "clarify") {
         return { ok: true, reply: clarifyAgentReply(routed.question, routed.choices) };
       }
-      return { ok: false, reply: "Could not start an orchestration." };
+      return { ok: false, reply: formatCommandError("Orchestration impossible.") };
     }
     case "freeChat": {
       const routed = await sendOrchestratedTurn({
@@ -333,22 +544,30 @@ export async function executeCommand(
       if (routed.kind === "orchestration") {
         return {
           ok: true,
-          reply: [
-            `Orchestration started (${routed.plan.steps.length} steps)`,
-            routed.childRunId ? `Active child: ${routed.childRunId}` : null,
-            `Open: ${await webRunUrl(connection.teamId, routed.runId)}`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          reply: formatOrchestrationStartedReply({
+            steps: routed.plan.steps.length,
+            childRunId: routed.childRunId,
+            url: await webRunUrl(connection.teamId, routed.runId),
+          }),
           runId: routed.runId,
         };
       }
       if (routed.kind === "run") {
         await setActiveAgent(identity.id, routed.agent.id);
+        // A built-in skill already ran the work and delivered the result via
+        // onRunCompleted (Telegram notify). A second "work started" ack here
+        // would be a misleading, out-of-order duplicate — stay silent.
+        if (routed.completed) {
+          return { ok: true, runId: routed.runId, reply: "" };
+        }
         const placement = await getAgentPlacementLabel(connection.teamId, routed.agent.id);
         return {
           ok: true,
-          reply: startRunReply(routed.agent.name, placement, await webRunUrl(connection.teamId, routed.runId)),
+          reply: formatRunStartedReply({
+            agentName: routed.agent.name,
+            placement,
+            url: await webRunUrl(connection.teamId, routed.runId),
+          }),
           runId: routed.runId,
         };
       }
@@ -357,12 +576,13 @@ export async function executeCommand(
       }
       return {
         ok: false,
-        reply:
+        reply: formatAgentUnavailableReply(
           routed.error === "no_published_agents"
-            ? "No published agent is available yet."
+            ? "aucun agent publié n'est disponible"
             : routed.error === "no_live_daemon"
-              ? "❌ No daemon is online for this agent's runtime. Start your daemon, then try again."
-              : "Could not start an agent for this message.",
+              ? "aucun daemon n'est en ligne pour le runtime de cet agent"
+              : "routage impossible pour ce message",
+        ),
       };
     }
     case "runTask": {
@@ -374,13 +594,18 @@ export async function executeCommand(
       if ("error" in run) {
         return {
           ok: false,
-          reply: `Could not start task: ${run.error}\nUse /tasks to list open task ids.`,
+          reply: formatCommandError(
+            `Je n'ai pas pu lancer cette tâche : ${run.error}. Utilise /tasks pour voir les tâches ouvertes.`,
+          ),
           projectTaskId: command.taskId,
         };
       }
       return {
         ok: true,
-        reply: `Task run started\nTask: ${command.taskId}\nRun: ${run.runId}\nOpen: ${await webRunUrl(connection.teamId, run.runId)}`,
+        reply: formatRunStartedReply({
+          title: command.taskId,
+          url: await webRunUrl(connection.teamId, run.runId),
+        }),
         runId: run.runId,
         projectTaskId: command.taskId,
       };
@@ -391,7 +616,7 @@ export async function executeCommand(
         reply: await runHelpText(
           connection.teamId,
           command.text
-            ? "I do not run free-form chat yet. Use one of these explicit commands."
+            ? "Je n'ai pas reconnu cette commande de run. Utilise un des chemins rapides ci-dessous."
             : undefined,
         ),
       };
@@ -400,7 +625,7 @@ export async function executeCommand(
       if (control) return control;
       return {
         ok: false,
-        reply: `Unknown command\n\n${helpText(connection)}`,
+        reply: formatCommandError(`Commande inconnue.\n\n${helpText(connection)}`),
       };
     }
   }

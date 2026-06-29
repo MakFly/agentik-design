@@ -1,6 +1,7 @@
 // Command daemon is the agentik agent-execution daemon: it registers with the
 // engine, claims queued agent tasks, runs them via a runtime adapter, and streams
-// their output back. Phase 3 ships only the safe "echo" runtime.
+// their output back. Every runtime is a real LLM adapter — execution always
+// requires an API key or OAuth (codex/claude code); there is no mock runtime.
 package main
 
 import (
@@ -31,7 +32,7 @@ import (
 )
 
 const discoverEvery = 30 * time.Second
-const defaultRuntimes = "echo,claude,hermes,codex,openai,anthropic,openrouter,custom"
+const defaultRuntimes = "claude,hermes,codex,openai,anthropic,custom"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -66,6 +67,8 @@ func runCLI(args []string) error {
 		return runLogin(args[2:])
 	case "doctor":
 		return runDoctor(args[2:])
+	case "runtime-smoke":
+		return runRuntimeSmoke(args[2:])
 	case "tui":
 		return runTUI(args[2:])
 	case "daemon":
@@ -116,6 +119,7 @@ Usage:
   agentik disconnect
   agentik login codex          Connect a ChatGPT subscription for Codex runs
   agentik doctor [--json]
+  agentik runtime-smoke --runtime claude
   agentik tui
   agentik daemon start [--background]
   agentik daemon stop
@@ -579,14 +583,12 @@ func runDaemon(opts config.Options) error {
 	}
 
 	available := runtime.Registry{
-		"echo":       runtime.Echo{},
-		"claude":     runtime.Claude{WorkRoot: cfg.WorkRoot, Model: cfg.ClaudeModel, TimeoutMs: cfg.TaskTimeoutMs},
-		"hermes":     runtime.Hermes{WorkRoot: cfg.WorkRoot, Model: os.Getenv("HERMES_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
-		"codex":      runtime.Codex{WorkRoot: cfg.WorkRoot, Model: os.Getenv("CODEX_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
-		"openai":     runtime.Provider{KindName: "openai", WorkRoot: cfg.WorkRoot, Model: os.Getenv("OPENAI_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
-		"anthropic":  runtime.Provider{KindName: "anthropic", WorkRoot: cfg.WorkRoot, Model: firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), cfg.ClaudeModel), TimeoutMs: cfg.TaskTimeoutMs},
-		"openrouter": runtime.Provider{KindName: "openrouter", WorkRoot: cfg.WorkRoot, Model: os.Getenv("OPENROUTER_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
-		"custom":     runtime.Provider{KindName: "custom", WorkRoot: cfg.WorkRoot, Model: os.Getenv("CUSTOM_MODEL"), BaseURL: os.Getenv("CUSTOM_BASE_URL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"claude":    runtime.Claude{WorkRoot: cfg.WorkRoot, Model: cfg.ClaudeModel, TimeoutMs: cfg.TaskTimeoutMs},
+		"hermes":    runtime.Hermes{WorkRoot: cfg.WorkRoot, Model: os.Getenv("HERMES_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"codex":     runtime.Codex{WorkRoot: cfg.WorkRoot, Model: os.Getenv("CODEX_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"openai":    runtime.Provider{KindName: "openai", WorkRoot: cfg.WorkRoot, Model: os.Getenv("OPENAI_MODEL"), TimeoutMs: cfg.TaskTimeoutMs},
+		"anthropic": runtime.Provider{KindName: "anthropic", WorkRoot: cfg.WorkRoot, Model: firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), cfg.ClaudeModel), TimeoutMs: cfg.TaskTimeoutMs},
+		"custom":    runtime.Provider{KindName: "custom", WorkRoot: cfg.WorkRoot, Model: os.Getenv("CUSTOM_MODEL"), BaseURL: os.Getenv("CUSTOM_BASE_URL"), TimeoutMs: cfg.TaskTimeoutMs},
 	}
 	selected := runtime.Registry{}
 	for _, kind := range cfg.RuntimeKinds {

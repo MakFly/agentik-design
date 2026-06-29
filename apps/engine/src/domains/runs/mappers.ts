@@ -12,10 +12,20 @@ export const ZERO_COST = {
   money: { amountCents: 0, currency: "USD" as const },
 };
 
+function numericField(obj: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+  }
+  return 0;
+}
+
 /**
  * Real run cost from the runtime's completion result (claude reports usage +
- * total_cost_usd in its stream-json `result`). Runtimes that report nothing
- * (echo) yield a genuine zero — not a fabricated constant.
+ * cost in its stream-json `result`). Runtimes that report nothing yield
+ * a genuine zero, not a fabricated constant.
  */
 function costFromTaskResult(result: unknown): typeof ZERO_COST {
   if (!result || typeof result !== "object") return ZERO_COST;
@@ -23,13 +33,30 @@ function costFromTaskResult(result: unknown): typeof ZERO_COST {
   const usage = (
     r.usage && typeof r.usage === "object" ? r.usage : {}
   ) as Record<string, unknown>;
-  const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
-  const output =
-    typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
-  const costUsd = typeof r.cost_usd === "number" ? r.cost_usd : 0;
-  if (input === 0 && output === 0 && costUsd === 0) return ZERO_COST;
+  const input = numericField(usage, [
+    "input_tokens",
+    "inputTokens",
+    "prompt_tokens",
+    "promptTokens",
+  ]);
+  const output = numericField(usage, [
+    "output_tokens",
+    "outputTokens",
+    "completion_tokens",
+    "completionTokens",
+  ]);
+  const total =
+    input + output ||
+    numericField(usage, ["total_tokens", "totalTokens", "total"]);
+  const costUsd = numericField(r, [
+    "cost_usd",
+    "costUsd",
+    "total_cost_usd",
+    "totalCostUsd",
+  ]);
+  if (total === 0 && costUsd === 0) return ZERO_COST;
   return {
-    tokens: { input, output, total: input + output },
+    tokens: { input, output, total },
     money: { amountCents: Math.round(costUsd * 100), currency: "USD" as const },
   };
 }
@@ -60,7 +87,11 @@ export type WebRunStatus =
 
 /* ── Mappers ─────────────────────────────────────────────────────────── */
 
-export function daemonRunToWeb(task: DaemonRunRowDb, agentName?: string) {
+function exposedStartedAt(task: Pick<DaemonRunRowDb, "status" | "startedAt">): string | null {
+  return task.status === "queued" ? null : task.startedAt;
+}
+
+export function daemonRunToWeb(task: DaemonRunRowDb, agentName?: string, taskTitle?: string) {
   return {
     id: task.id,
     teamId: task.teamId,
@@ -70,12 +101,15 @@ export function daemonRunToWeb(task: DaemonRunRowDb, agentName?: string) {
       agentId: task.agentId,
       versionId: "ver_live",
     },
+    input: inputRecord(task.input),
     subjectName: agentName ?? task.agentId,
+    taskId: task.projectTaskId ?? undefined,
+    taskTitle: taskTitle ?? undefined,
     status: task.status as WebRunStatus,
     trigger: {
       kind: task.kind === "direct" ? ("api" as const) : ("manual" as const),
     },
-    startedAt: task.startedAt ?? task.createdAt,
+    startedAt: exposedStartedAt(task),
     endedAt: task.endedAt,
     durationMs: task.durationMs,
     cost: runCostFromRow(task),
@@ -97,10 +131,11 @@ export function orchestrationRunToWeb(task: RunRowDb) {
       kind: "orchestration" as const,
       runId: task.id,
     },
+    input: inputRecord(task.input),
     subjectName: orchestrationGoal(task.input) ?? "Orchestration",
     status: task.status as WebRunStatus,
     trigger: { kind: "manual" as const },
-    startedAt: task.startedAt ?? task.createdAt,
+    startedAt: exposedStartedAt(task),
     endedAt: task.endedAt,
     durationMs: task.durationMs,
     cost: ZERO_COST,
@@ -273,10 +308,11 @@ export function workflowRunToRun(r: RunRowDb, wfName?: string) {
       workflowId: r.workflowId,
       versionId: r.versionId,
     },
+    input: inputRecord(r.input),
     subjectName: wfName ?? r.workflowId,
     status: r.status as WebRunStatus,
     trigger: { kind: r.trigger as "manual" | "webhook" | "schedule" | "api" },
-    startedAt: r.startedAt,
+    startedAt: exposedStartedAt(r),
     endedAt: r.endedAt,
     durationMs: r.durationMs,
     cost: ZERO_COST,
@@ -307,6 +343,12 @@ function resultSummary(result: unknown): string {
     }
   }
   return "";
+}
+
+function inputRecord(input: unknown): Record<string, unknown> | null {
+  return input && typeof input === "object" && !Array.isArray(input)
+    ? (input as Record<string, unknown>)
+    : null;
 }
 
 function orchestrationGoal(input: unknown): string | null {
