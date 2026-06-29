@@ -54,7 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
       className={`${inter.variable} ${instrumentSerif.variable} ${sourceSerif.variable} ${geistMono.variable}`}
     >
-      <body className="min-h-dvh bg-white font-sans text-[#0a0d12] antialiased" data-density="comfortable">
+      <body className="min-h-dvh bg-background font-sans text-foreground antialiased" data-density="comfortable">
         <Providers>{children}</Providers>
       </body>
     </html>
