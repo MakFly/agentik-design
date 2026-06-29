@@ -20,8 +20,6 @@ export function SessionGuard({ team, children }: { team: string; children: React
     if (!hydrated) return;
     if (!session) {
       router.replace("/login");
-    } else if (!session.onboardingCompleted) {
-      router.replace("/onboarding");
     } else if (session.team.slug !== team) {
       router.replace(`/${session.team.slug}/projects`);
     }

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/auth/api";
+import { postAuthDestination } from "@/lib/auth/post-auth";
 
 const PENDING_EMAIL_KEY = "pendingEmail";
 const PENDING_CODE_KEY = "pendingVerifyCode";
@@ -40,7 +41,8 @@ function VerifyInner() {
         if (r.ok) {
           sessionStorage.removeItem(PENDING_EMAIL_KEY);
           sessionStorage.removeItem(PENDING_CODE_KEY);
-          router.replace("/onboarding");
+          const me = await authApi.me();
+          router.replace(me ? postAuthDestination(me) : "/login");
         } else {
           setState("error");
         }
@@ -60,7 +62,8 @@ function VerifyInner() {
       if (r.ok) {
         sessionStorage.removeItem(PENDING_EMAIL_KEY);
         sessionStorage.removeItem(PENDING_CODE_KEY);
-        router.push("/onboarding");
+        const me = await authApi.me();
+        router.push(me ? postAuthDestination(me) : "/login");
       } else {
         setError("Invalid code. Try again.");
       }

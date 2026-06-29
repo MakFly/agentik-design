@@ -32,9 +32,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: "Multica — Project Management for Human + Agent Teams", template: "%s · Multica" },
+  title: { default: "Agentik — your personal agent console", template: "%s · Agentik" },
   description:
-    "Multica is an open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills — manage your human + agent workforce in one place.",
+    "Agentik is a personal operator console: send a message, an agent executes on your machine and reports back — live, observable, under your control.",
 };
 
 export const viewport: Viewport = {
