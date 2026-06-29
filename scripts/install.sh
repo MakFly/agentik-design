@@ -35,18 +35,49 @@ else
   release_url="https://github.com/${GITHUB_REPO}/releases/download/${AGENTIK_VERSION}/agentik-${os}-${arch}"
 fi
 
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+# Build agentik from a source checkout (repo root or apps/daemon). Needs Go.
+build_from_source() {
+  command -v go >/dev/null 2>&1 || return 1
+  local dir="$1"
+  [ -f "${dir}/apps/daemon/main.go" ] && dir="${dir}/apps/daemon"
+  [ -f "${dir}/main.go" ] || return 1
+  echo "Building Agentik CLI from source (${dir})..." >&2
+  ( cd "$dir" && go build -o "${INSTALL_DIR}/agentik" . )
+}
 
-echo "Downloading Agentik CLI for ${os}/${arch}..."
-if ! curl -fsSL "$release_url" -o "$tmp"; then
-  echo "Release download failed. Build from source or set AGENTIK_CLI_PATH." >&2
-  exit 1
+# Resolution order: AGENTIK_CLI_PATH (prebuilt) -> GitHub release -> source build.
+# Self-hosted/local installs have no published GitHub release, so the source
+# build keeps the in-app "Add a computer" flow working on dev/CI machines.
+if [ -n "${AGENTIK_CLI_PATH:-}" ]; then
+  echo "Installing agentik from AGENTIK_CLI_PATH=${AGENTIK_CLI_PATH}..." >&2
+  install -m 0755 "$AGENTIK_CLI_PATH" "${INSTALL_DIR}/agentik"
+else
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  echo "Downloading Agentik CLI for ${os}/${arch}..." >&2
+  if curl -fsSL "$release_url" -o "$tmp"; then
+    chmod +x "$tmp"
+    mv "$tmp" "${INSTALL_DIR}/agentik"
+  else
+    rm -f "$tmp"
+    echo "No prebuilt release at ${release_url}." >&2
+    src="${AGENTIK_SOURCE_DIR:-}"
+    if [ -z "$src" ]; then
+      d="$PWD"
+      while [ "$d" != "/" ]; do
+        if [ -f "${d}/apps/daemon/main.go" ]; then src="$d"; break; fi
+        d="$(dirname "$d")"
+      done
+    fi
+    if ! { [ -n "$src" ] && build_from_source "$src"; }; then
+      echo "Could not install agentik. Options:" >&2
+      echo "  - set AGENTIK_CLI_PATH=/path/to/agentik (prebuilt binary), or" >&2
+      echo "  - set AGENTIK_SOURCE_DIR=/path/to/agentik-repo and install Go to build from source." >&2
+      exit 1
+    fi
+  fi
+  trap - EXIT
 fi
-
-chmod +x "$tmp"
-mv "$tmp" "${INSTALL_DIR}/agentik"
-trap - EXIT
 
 if ! echo ":$PATH:" | grep -q ":${INSTALL_DIR}:"; then
   echo ""
