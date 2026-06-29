@@ -24,13 +24,19 @@ export type OrchestratorTurnInput = {
   text: string;
   agentHintId?: string | null;
   forceOrchestration?: boolean;
+  /** When set, the turn is scoped to a project: the run attaches to a project task
+   *  (created from the turn) so it is observable in the project view — never orphaned. */
+  projectId?: string | null;
 };
 
 export type OrchestratorTurnResult =
   | {
       kind: "run";
       runId: string;
-      chatSessionId: string;
+      /** present for chat-session-backed runs; absent for project-task runs */
+      chatSessionId?: string;
+      /** present when the run is attached to a project task */
+      projectTaskId?: string;
       agent: AgentRow;
       reason: string;
       confidence: number;
@@ -89,6 +95,30 @@ export async function sendOrchestratedTurn(
 
   const decision = await chooseAgent(candidateAgents, text, input.agentHintId, input.teamId);
   if (decision.kind === "clarify") return decision;
+
+  // Project-scoped turn → create a linked task and run it through the projects domain,
+  // so the work shows up in the project view attached to a task (North Star: runs are
+  // never orphaned). Reuses the same create/run path as the project console.
+  if (input.projectId) {
+    const { createProjectTask, runProjectTask } = await import("../projects/index");
+    const created = await createProjectTask(
+      input.teamId,
+      input.projectId,
+      `system:${input.surface}:${input.threadKey}`,
+      { title: text.slice(0, 120), description: text, assignedAgentId: decision.agent.id },
+    );
+    if ("error" in created || !created.task) return { kind: "error", error: "agent_unavailable" };
+    const run = await runProjectTask(input.teamId, created.task.id, text);
+    if ("error" in run) return { kind: "error", error: "agent_unavailable" };
+    return {
+      kind: "run",
+      runId: run.runId,
+      projectTaskId: created.task.id,
+      agent: decision.agent,
+      reason: `${decision.reason} → project task`,
+      confidence: decision.confidence,
+    };
+  }
 
   const turn = await sendAgentChatTurn(input.teamId, {
     agentId: decision.agent.id,
