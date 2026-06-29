@@ -142,23 +142,39 @@ function maskTokenArg(args: string[]): string[] {
   );
 }
 
+// Mirrors the Go daemon's identity.BaseDir()/agentik.json: the OpenClaw-style
+// state dir branded agentik (~/.agentik), override with $AGENTIK_HOME.
 function defaultConfigPath(): string {
+  if (process.env.AGENTIK_HOME) {
+    return path.join(process.env.AGENTIK_HOME, "agentik.json");
+  }
+  const home = os.homedir();
+  return home
+    ? path.join(home, ".agentik", "agentik.json")
+    : path.join(process.cwd(), ".agentik", "agentik.json");
+}
+
+// Pre-mirror config location (~/.config/agentik/config.json), still honored so an
+// install that hasn't re-run setup yet reads as connected.
+function legacyConfigPath(): string {
   if (process.env.XDG_CONFIG_HOME) {
     return path.join(process.env.XDG_CONFIG_HOME, "agentik", "config.json");
   }
   const home = os.homedir();
-  return home
-    ? path.join(home, ".config", "agentik", "config.json")
-    : path.join(process.cwd(), ".agentik", "config.json");
+  return home ? path.join(home, ".config", "agentik", "config.json") : "";
 }
 
 async function configExists(): Promise<boolean> {
-  try {
-    await access(defaultConfigPath());
-    return true;
-  } catch {
-    return false;
+  for (const candidate of [defaultConfigPath(), legacyConfigPath()]) {
+    if (!candidate) continue;
+    try {
+      await access(candidate);
+      return true;
+    } catch {
+      // try next candidate
+    }
   }
+  return false;
 }
 
 async function runAgentik(args: string[]): Promise<CommandResult> {

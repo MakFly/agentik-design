@@ -441,6 +441,17 @@ func runSetup(args []string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	fmt.Printf("Saved Agentik daemon config to %s\n", *configPath)
+	baseDir := filepath.Dir(*configPath)
+	created, err := config.EnsureLayout(baseDir)
+	if err != nil {
+		return fmt.Errorf("scaffold workspace: %w", err)
+	}
+	if len(created) > 0 {
+		fmt.Printf("Initialized agentik workspace under %s:\n", baseDir)
+		for _, rel := range created {
+			fmt.Printf("  + %s\n", rel)
+		}
+	}
 	if *start {
 		return startBackgroundDaemon(*configPath, "", "", "")
 	}

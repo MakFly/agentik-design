@@ -53,14 +53,19 @@ type File struct {
 	MaxConcurrency int      `json:"maxConcurrency,omitempty"`
 }
 
+// DefaultConfigPath is the daemon config file inside the agentik state dir:
+// ~/.agentik/agentik.json (the Hermes "operator wiring" alongside the OpenClaw
+// workspace). Mirrors OpenClaw's ~/.openclaw/openclaw.json, branded agentik.
 func DefaultConfigPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "agentik", "config.json")
+	return filepath.Join(identity.BaseDir(), "agentik.json")
+}
+
+// legacyConfigPath is the pre-mirror config file (~/.config/agentik/config.json).
+func legacyConfigPath() string {
+	if base := identity.LegacyBaseDir(); base != "" {
+		return filepath.Join(base, "config.json")
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".config", "agentik", "config.json")
-	}
-	return filepath.Join(".", ".agentik", "config.json")
+	return ""
 }
 
 func LoadFile(path string) (*File, error) {
@@ -138,6 +143,15 @@ func LoadWithOptions(opts Options) (*Config, error) {
 	path := opts.ConfigPath
 	if path == "" {
 		path = DefaultConfigPath()
+		// Pre-mirror installs that never re-ran setup keep their config at the
+		// legacy path; read it there until the next setup migrates it in place.
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if legacy := legacyConfigPath(); legacy != "" {
+				if _, err := os.Stat(legacy); err == nil {
+					path = legacy
+				}
+			}
+		}
 	}
 	file := &File{}
 	if !opts.SkipConfigFile {
