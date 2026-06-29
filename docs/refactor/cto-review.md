@@ -33,7 +33,19 @@ Toutes les corrections du critique sont confirmées sur le code réel (multica =
 
 **Retest complet (tout vert) :** web `tsc` ✅ · engine `tsc` ✅ · engine `bun test` ✅ **208/0** · daemon `go build`+`go vet` ✅ · daemon `go test` ✅ (les 2 tests pré-existants couplés à l'environnement rendus auto-skip, commit `887b70c`, alignés sur la discipline "auto-skip si dépendance absente").
 
-**Reste à faire** : Phases 2→4 du plan §6 — /chat→console projet (le bridge RESERVED est prêt), conformité archi (écritures cross-domaine) + ledger `run_events` (backfill→bascule), vraie boucle orchestrateur. ADR Multica. Décision #3 (hermes par défaut) désormais **débloquée** côté gate (Pause forte + RBAC livrés ; reste la Policy d'approbation déclarative en Phase 4).
+**Phase 2 — recentrer sur Projects : ✅ FAIT** (`634840e`) : Projects en 1er dans la nav (desktop + mobile). /chat isolé déjà supprimé (P0) ; la `ProjectConsole` existante (thread + instruction de run) EST la surface conversationnelle scopée à la tâche → north-star respecté sans page chat séparée.
+
+**Phase 3 — conformité archi + ledger : ✅ FAIT**
+- ✅ Conformité (`b909ff8`) : écritures cross-domaine `projectTasks` sorties de `runs/service.ts` → helpers `markProjectTaskReview/Blocked` via le barrel projects (invariant #2) ; deep import `learning/memory/repo` → barrel (invariant #3). *(Reste : relocaliser `publishAgent` hors de runs/service — suivi.)*
+- ✅ Ledger step (a) (`0920ff3`) : `backfillRunEvents(runId)` idempotent qui reconstruit `run_events` depuis `run_messages` (mapping dual-write partagé) + script one-off. **Step (b) — bascule SSE — NON faite délibérément** : `runMessageToEvents` émet plusieurs events/message vs un dans le ledger → changement de rendu live console qui exige une vérif end-to-end avec un vrai run (documenté).
+
+**Phase 4 — boucle orchestrateur : tranche FAITE** (`4db5083`) : `OrchestratorTurnInput.projectId` ajouté ; un tour scopé projet crée une **task liée + run rattaché** via le domaine projects (plus de run orphelin — critère de sortie du §6). *(Reste : câbler les callers telegram/web pour passer projectId, piloter le workspace côté engine, émettre les events contrat manquants.)*
+
+**Tests Playwright : ✅** (`955f7fb`) — `@playwright/test` contre le stack live (dev-login storageState) : nav Projects-first, page Runtimes, /chat → 404. `bun run test:e2e:pw`. 5/5.
+
+**Retest final (tout vert) :** web `tsc` ✅ · engine `tsc` + `bun test` ✅ **211/0** · daemon `go build`+`vet`+`test` ✅ · Playwright ✅ **5/5**.
+
+**Reste (suivi, non bloquant)** : ledger step (b) (bascule SSE, vérif live run) · câblage callers orchestrateur + workspace + events contrat · relocalisation `publishAgent` → domaine agents · Policy d'approbation déclarative · ADR Multica. Décision #3 (hermes défaut) débloquée côté gate (RBAC + Pause forte livrés ; reste la Policy en suivi).
 
 ---
 
