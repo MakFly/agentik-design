@@ -155,7 +155,17 @@ async function main() {
   );
   assert(runView.hasContent, "run detail view did not render");
 
-  log(`PASSED — seeded daily-execution loop verified end-to-end (runs: ${seed.runIds.length})`);
+  log("9) assert the Settings → Connections page renders the Google connect UI");
+  await gc(["preview", `${webUrl}/demo/settings?tab=connections`, "--wait", "stable", "--level", "content"]);
+  const connections = await gcEval<Record<string, boolean>>(
+    `(() => { const t = document.body.innerText; return {
+      heading: t.includes('Google / Gmail') || t.includes('Connections'),
+      connectButton: t.includes('Connect a Google account'),
+    }; })()`,
+  );
+  for (const [k, v] of Object.entries(connections)) assert(v, `connections page missing ${k}`);
+
+  log(`PASSED — seeded daily-execution loop + connections UI verified (runs: ${seed.runIds.length})`);
 }
 
 main()

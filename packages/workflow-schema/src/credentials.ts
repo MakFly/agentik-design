@@ -30,9 +30,13 @@ export const CREDENTIAL_FIELDS: Record<CredentialType, ReadonlyArray<{ key: stri
     { key: "value", label: "Header value" },
   ],
   slackApi: [{ key: "token", label: "Bot token" }],
-  // OAuth2: app client id/secret come from the engine env (GOOGLE_CLIENT_*),
-  // so the user only picks scopes. Tokens are filled in after consent.
-  googleOAuth2: [{ key: "scope", label: "Scopes (space-separated)" }],
+  // OAuth2: the user supplies their own Google OAuth app client id/secret (no engine
+  // env needed) plus the scopes. Tokens are filled in after consent.
+  googleOAuth2: [
+    { key: "clientId", label: "Google client ID" },
+    { key: "clientSecret", label: "Google client secret" },
+    { key: "scope", label: "Scopes (space-separated)" },
+  ],
 };
 
 /** Raw secret payload (validated loosely; the UI enforces per-type fields). */

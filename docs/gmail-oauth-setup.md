@@ -11,11 +11,15 @@
 ║  agent run (email.send)                                       ║
 ║        │ deliverEmail(teamId, mail)   (src/infra/gmail.ts)    ║
 ║        ▼                                                      ║
-║  GMAIL_LIVE=true & connected googleOAuth2 credential?         ║
+║  team has a CONNECTED googleOAuth2 credential? (no env flag)  ║
 ║     ├─ yes ─▶ resolve+refresh access_token ─▶ Gmail API send  ║
 ║     └─ no  ─▶ SMTP ─▶ infra-mailpit (dev fallback)            ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
+
+> **No env vars needed.** You supply your Google OAuth client id/secret + scopes in the
+> app (Settings → Connections) and connect via an in-app popup. Once a team has a
+> connected Google account, its agent email sends through real Gmail; otherwise Mailpit.
 
 - Credential type `googleOAuth2`, secrets encrypted at rest (AES-256-GCM).
 - `GET /api/v1/credentials/:id/authorize` → Google consent.
@@ -43,50 +47,33 @@
      engine use its public URL).
    - Copy the **Client ID** and **Client secret**.
 
-## Step 2 — Engine env (`apps/engine/.env`)
+The only engine env that matters is `CREDENTIALS_ENCRYPTION_KEY` (a real ≥16-char
+secret, so stored tokens are encrypted safely) and `ENGINE_PUBLIC_URL` (must match the
+redirect URI host). There is **no** `GOOGLE_CLIENT_*` or `GMAIL_LIVE` to set — those
+come from the UI.
 
-```
-GOOGLE_CLIENT_ID=<client id from step 1>
-GOOGLE_CLIENT_SECRET=<client secret from step 1>
-ENGINE_PUBLIC_URL=http://localhost:8787      # must match the redirect URI host
-CREDENTIALS_ENCRYPTION_KEY=<a real >=16-char secret>   # required to store tokens safely
-GMAIL_LIVE=true                              # flip on once connected
-```
+## Step 2 — Connect the account in the app (Settings → Connections)
 
-Restart the engine after editing `.env`.
+1. Open the app (e.g. <http://localhost:3333>) and sign in.
+2. Go to **Settings → Connections** (`/<team>/settings?tab=connections`).
+3. Click **Connect a Google account**, paste the **client ID** and **client secret**
+   from step 1, keep the prefilled `gmail.send gmail.readonly` scopes, and **Save & connect**.
+4. A Google consent popup opens → pick `kev.aubree@gmail.com` → it redirects to the
+   callback, stores the tokens (encrypted), and the row flips to **connected**.
 
-## Step 3 — Connect the account (one-time consent)
+## Step 3 — Verify
 
-Create a `googleOAuth2` credential, then run the consent flow. Logged in to the web app
-(so the session cookie is sent), in the browser console or via curl with your session:
-
-```bash
-# 1) create the credential (scopes = what the agent may do)
-curl -s -X POST http://localhost:8787/api/v1/credentials \
-  -H 'content-type: application/json' -H 'x-team: demo' -H 'x-role: owner' \
-  -d '{"type":"googleOAuth2","name":"Gmail (kev.aubree)","data":{"scope":"https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly"}}'
-# → returns { id: "cred_…" }
-
-# 2) open the authorize URL in your browser (must be logged in to the app):
-#    http://localhost:8787/api/v1/credentials/cred_…/authorize
-#    → Google consent → pick kev.aubree@gmail.com → redirected back to the callback,
-#      which stores the tokens and shows a success page.
-```
-
-After consent, `GET /api/v1/credentials` shows the credential with `connected: true`.
-
-## Step 4 — Verify
-
-With `GMAIL_LIVE=true` and the credential connected, re-run the loop:
+The team now has a connected Google account, so its agent email goes through **real
+Gmail** automatically (no flag). Re-run the loop:
 
 ```bash
 bun --cwd apps/web test:e2e:loop
 ```
 
-The invoice/meeting runs will now send through **real Gmail** (check the inbox /
-Sent of `kev.aubree@gmail.com`) instead of Mailpit. The `email.send` event records
-`via: "gmail"`. If anything is missing (no credential, GMAIL_LIVE off, refresh
-failure) it transparently falls back to Mailpit, so dev never breaks.
+The invoice/meeting runs send through Gmail (check the Sent folder of
+`kev.aubree@gmail.com`); the `email.send` event records `via: "gmail"`. If the account
+isn't connected (or token refresh fails) it transparently falls back to Mailpit, so dev
+never breaks.
 
 ## Guardrails / notes
 

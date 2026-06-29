@@ -1,9 +1,8 @@
 /**
- * Real Gmail delivery via the Gmail API, gated behind GMAIL_LIVE. When off (default,
- * dev) or when no connected Google credential exists, email falls back to the local
- * SMTP relay (infra-mailpit). This is the "Gmail behind" path: connect a googleOAuth2
- * credential with gmail.send scope, set GMAIL_LIVE=true, and the same agent run that
- * sends to Mailpit in dev sends through the real inbox in production.
+ * Real Gmail delivery via the Gmail API — NO env flag. When the team has a connected
+ * googleOAuth2 credential (connected in Settings → Connections) email goes through
+ * Gmail; otherwise it falls back to the local SMTP relay (infra-mailpit). Same agent
+ * run, real inbox once connected.
  */
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "./db/client";
@@ -76,19 +75,19 @@ async function sendViaGmailApi(accessToken: string, mail: OutboundMail): Promise
 }
 
 /**
- * Deliver an email through the configured transport: real Gmail when GMAIL_LIVE is on
- * and a connected Google credential is available, otherwise the local Mailpit relay.
+ * Deliver an email through the best available transport, with NO env flag: if the team
+ * has a CONNECTED Google credential (gmail.send, connected in Settings → Connections),
+ * send through the real Gmail API; otherwise fall back to the local Mailpit relay. So
+ * connecting Gmail in the UI is all it takes to go live; dev stays on Mailpit.
  */
 export async function deliverEmail(
   teamId: string,
   mail: OutboundMail,
 ): Promise<{ transport: "gmail" | "mailpit" }> {
-  if (env.GMAIL_LIVE) {
-    const token = await resolveGmailAccessToken(teamId);
-    if (token) {
-      await sendViaGmailApi(token, mail);
-      return { transport: "gmail" };
-    }
+  const token = await resolveGmailAccessToken(teamId);
+  if (token) {
+    await sendViaGmailApi(token, mail);
+    return { transport: "gmail" };
   }
   await sendMail(mail);
   return { transport: "mailpit" };

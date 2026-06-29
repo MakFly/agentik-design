@@ -2,9 +2,10 @@
 
 import { useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { User, Settings, Plug, type LucideIcon } from "lucide-react";
+import { User, Settings, Plug, Link2, type LucideIcon } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ConnectedAccountsSection } from "@/features/settings/tabs/connected-accounts-section";
+import { ConnectionsTab } from "@/features/settings/tabs/connections-tab";
 import { ProvidersTab } from "@/features/settings/tabs/providers-tab";
 import { ProfileTab } from "@/features/settings/tabs/profile-tab";
 import { PreferencesTab } from "@/features/settings/tabs/preferences-tab";
@@ -19,6 +20,7 @@ const TABS: TabDef[] = [
   { value: "account", label: "Account", icon: User },
   { value: "workspace", label: "Workspace", icon: Settings },
   { value: "providers", label: "Providers", icon: Plug },
+  { value: "connections", label: "Connections", icon: Link2 },
 ];
 
 const VALID_TABS = new Set(TABS.map((t) => t.value));
@@ -81,6 +83,10 @@ export function TeamSettingsPage({ team }: { team: string }) {
       <TabsContent value="providers" className="flex flex-col gap-6">
         <ProvidersTab team={team} />
         <ConnectedAccountsSection team={team} />
+      </TabsContent>
+
+      <TabsContent value="connections" className="flex flex-col gap-6">
+        <ConnectionsTab team={team} />
       </TabsContent>
     </Tabs>
   );

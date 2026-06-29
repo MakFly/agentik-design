@@ -121,7 +121,7 @@ workflowsRoutes.get("/credentials/:id/authorize", async (c) => {
   const clientId = cred.data.clientId || env.GOOGLE_CLIENT_ID || "";
   if (!clientId)
     return c.html(
-      oauthResultHtml(false, "No Google client id (set GOOGLE_CLIENT_ID)."),
+      oauthResultHtml(false, "No Google client id — add it to the connection in Settings → Connections."),
     );
   const state = encryptJson({ id: cred.row.id });
   return c.redirect(
