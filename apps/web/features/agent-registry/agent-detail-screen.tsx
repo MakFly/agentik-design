@@ -13,7 +13,6 @@ import {
   Database,
   History,
   ListTodo,
-  Network,
   Pencil,
   ShieldCheck,
   Tag,
@@ -443,12 +442,6 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               <Link href={`/${team}/agents/${agent.id}/edit`}>
                 <Pencil className="size-4" />
                 Modifier
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/agents/fleet`}>
-                <Network className="size-4" />
-                Fleet
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">

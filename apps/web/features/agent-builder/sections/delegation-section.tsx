@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { Check, ChevronsUpDown, Info, Network, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronsUpDown, Info, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +19,7 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { useAgents } from "@/features/agent-registry/api";
-import { useRoster, useSetRoster, type RosterInput, type Subagent } from "@/features/agent-fleet/api";
+import { useRoster, useSetRoster, type RosterInput, type Subagent } from "../roster-api";
 import { useBuilderStore } from "../store-context";
 import { SectionHeading } from "./section-kit";
 
@@ -70,12 +69,6 @@ export function DelegationSection({
       ) : (
         <RosterEditor team={team} agentId={agentId!} />
       )}
-
-      <Button asChild variant="outline" className="w-fit">
-        <Link href={`/${team}/agents/fleet`}>
-          <Network className="size-4" /> Open in Fleet
-        </Link>
-      </Button>
     </div>
   );
 }
