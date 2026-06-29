@@ -39,7 +39,7 @@ install: ## One-shot dev setup: deps + env files + database + migrations
 	@$(MAKE) env
 	@$(MAKE) db/create
 	@$(MAKE) db/migrate
-	@printf "\n$(B)$(G)✓ Ready!$(N) Run $(C)make dev$(N) to start web + engine + worker.\n\n"
+	@printf "\n$(B)$(G)✓ Ready!$(N) Run $(C)make dev$(N) to start web + engine.\n\n"
 
 env: ## Seed local env files from examples (never overwrites an existing one)
 	@if [ ! -f $(ENGINE)/.env ]; then \
@@ -53,11 +53,11 @@ env: ## Seed local env files from examples (never overwrites an existing one)
 
 # ── Development ──────────────────────────────────────────────────────────────
 
-.PHONY: dev dev/web dev/engine dev/worker dev/check-engine-port dev/down
-dev: ## Start web + engine API + worker in parallel (auto-picks a free web port). Daemon: make daemon/start | make daemon/down.
+.PHONY: dev dev/web dev/engine dev/check-engine-port dev/down
+dev: ## Start web + engine API in parallel (auto-picks a free web port). Daemon: make daemon/start | make daemon/down.
 	@printf "$(B)$(G)Starting dev servers...$(N)\n"
 	@$(MAKE) dev/check-engine-port
-	@$(MAKE) -j3 dev/web dev/engine dev/worker
+	@$(MAKE) -j2 dev/web dev/engine
 
 dev/check-engine-port:
 	@if lsof -nP -iTCP:$(ENGINE_PORT) -sTCP:LISTEN >/tmp/agentik-engine-port.$$$$ 2>/dev/null; then \
@@ -84,17 +84,11 @@ dev/engine: dev/check-engine-port ## Start workflow engine API (:8787)
 	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
 	@cd $(ENGINE) && bun run dev
 
-dev/worker: ## Start the BullMQ run worker
-	@printf "$(C)→ Run worker$(N)\n"
-	@cd $(ENGINE) && bun run worker:dev
-
-dev/down: ## Stop local web/engine/worker dev processes for this checkout
+dev/down: ## Stop local web/engine dev processes for this checkout
 	@pids="$$(lsof -tiTCP:$(ENGINE_PORT) -sTCP:LISTEN 2>/dev/null || true)"; \
 	if [ -n "$$pids" ]; then kill $$pids 2>/dev/null || true; fi
 	@pkill -f "cd apps/engine && [b]un run dev" 2>/dev/null || true
-	@pkill -f "cd apps/engine && [b]un run worker:dev" 2>/dev/null || true
 	@pkill -f "[b]un run --watch src/main.ts" 2>/dev/null || true
-	@pkill -f "[b]un run --watch src/worker.ts" 2>/dev/null || true
 	@pkill -f "$(abspath $(WEB))/node_modules/.bin/[n]ext dev" 2>/dev/null || true
 	@printf "$(G)✓ stopped local dev processes for this checkout$(N)\n"
 
