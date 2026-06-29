@@ -24,9 +24,16 @@ Toutes les corrections du critique sont confirmées sur le code réel (multica =
 
 **Dead code supprimé (Phase 0, zéro-risque, prouvé inutilisé) :** `demo-runtime-provider.tsx`, `tools-registrar.tsx`, `app/api/chat/route.ts`, `features/runs-list/runs-table.tsx`, `runtimes-tab.tsx`(+test), `components/landing/multica-onboarding.tsx`.
 
-**Retest :** web `tsc` ✅ · engine `tsc` ✅ · engine `bun test` ✅ 199/0 · daemon `go build` ✅ · daemon `go test` = 2 échecs **pré-existants** couplés à l'environnement (`/home/kev/.local`, hermes absent), daemon non modifié.
+**Daemon installer (hors plan, débloqué) :** `scripts/install.sh` ne téléchargeait qu'un binaire d'une release GitHub inexistante (`agentik-ai/agentik` → 404) → l'installeur in-app échouait en silence. Corrigé : fallback `AGENTIK_CLI_PATH → release → build source` (commit `4dae08c`). Binaire `agentik` rebuildé depuis les sources et installé dans `~/.local/bin`.
 
-**Reste à faire** (non démarré) : Phases 1→4 du plan §6 (bloc sécurité RBAC WS, /chat→console projet, conformité archi + ledger `run_events`, vraie boucle orchestrateur). ADR Multica.
+**Phase 1 — bloc sécurité P0 : ✅ FAIT** (3/3 sous-tâches, testées, commitées)
+- ✅ **RBAC sur le canal WS** (`9a29c3f`) : `WsData` porte désormais `userId`+`role` (résolus server-side à l'upgrade) ; `handleControl` gate chaque action sur la même matrice que les routes HTTP via `roleCan` (cancel/pause/resume → `run:control`, approve/reject → `run:approve`). Refus → `{accepted:false, reason:"forbidden"}`, l'action ne tourne pas. Test deny-path 6 cas (DB-free).
+- ✅ **Pause forte** (`79beaef`) : `appendMessages` renvoie `cancel:true` aussi sur `paused` → le daemon SIGTERM le CLI en vol (même chemin que cancel) ; le `Fail` qui suit est absorbé (failTask ne transitionne que queued/running) → le run reste `paused` et resumable. `resumeRun` ré-arme le dispatch (clear runtime/daemon/dispatchedAt). Test DB-backed 3 cas. **Aucun changement Go nécessaire.**
+- ✅ **Bouton Resume** (`baf4f46`) : affiché sur les runs `paused` (l'engine le supportait déjà).
+
+**Retest complet (tout vert) :** web `tsc` ✅ · engine `tsc` ✅ · engine `bun test` ✅ **208/0** · daemon `go build`+`go vet` ✅ · daemon `go test` ✅ (les 2 tests pré-existants couplés à l'environnement rendus auto-skip, commit `887b70c`, alignés sur la discipline "auto-skip si dépendance absente").
+
+**Reste à faire** : Phases 2→4 du plan §6 — /chat→console projet (le bridge RESERVED est prêt), conformité archi (écritures cross-domaine) + ledger `run_events` (backfill→bascule), vraie boucle orchestrateur. ADR Multica. Décision #3 (hermes par défaut) désormais **débloquée** côté gate (Pause forte + RBAC livrés ; reste la Policy d'approbation déclarative en Phase 4).
 
 ---
 
