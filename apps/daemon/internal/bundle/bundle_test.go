@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,15 +44,24 @@ func TestNpmPrefixFromPath(t *testing.T) {
 }
 
 func TestUpgradeResolved_codexNpmLocal(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not on PATH; the npm-prefix install method requires it")
+	}
 	sp := clis["codex"]
-	real := "/home/kev/.local/lib/node_modules/@openai/codex/bin/codex.js"
+	// Use a real, writable prefix so assertPrefixWritable passes on any machine —
+	// we assert the derived npm prefix, not a specific (author-local) home dir.
+	prefix := filepath.Join(t.TempDir(), ".local")
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(prefix, "lib/node_modules/@openai/codex/bin/codex.js")
 	steps, err := upgradeResolved("codex", sp, real)
 	if err != nil {
 		t.Fatalf("upgradeResolved: %v", err)
 	}
 	// Codex is version-pinned (see codexPinnedVersion): an upgrade reinstalls the
 	// pinned ref, not a moving @latest, so a breaking CLI release can't land silently.
-	want := [][]string{{"npm", "install", "-g", "--prefix", "/home/kev/.local", "@openai/codex@" + codexPinnedVersion}}
+	want := [][]string{{"npm", "install", "-g", "--prefix", prefix, "@openai/codex@" + codexPinnedVersion}}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("steps = %v, want %v", steps, want)
 	}
@@ -118,6 +128,11 @@ func TestBuildSteps_unknownKind(t *testing.T) {
 }
 
 func TestBuildSteps_hermesUninstall(t *testing.T) {
+	if _, found := resolveBin("hermes"); !found {
+		// uninstall is an idempotent no-op when the CLI is absent (buildSteps
+		// returns nil steps); this test asserts the present-binary path.
+		t.Skip("hermes not installed on PATH")
+	}
 	steps, probe, err := buildSteps("hermes", "uninstall")
 	if err != nil {
 		t.Fatalf("buildSteps: %v", err)
