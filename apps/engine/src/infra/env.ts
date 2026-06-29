@@ -38,6 +38,12 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true"),
+  /** Send email via the real Gmail API (needs a connected Google credential).
+   *  Off → dev fallback to infra-mailpit. */
+  GMAIL_LIVE: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
 });
 
 const parsed = schema.safeParse(process.env);

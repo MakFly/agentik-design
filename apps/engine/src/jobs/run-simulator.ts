@@ -19,7 +19,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../infra/db/client";
 import { genId } from "../infra/db/ids";
 import { hub } from "../infra/hub";
-import { sendMail } from "../infra/mailer";
+import { deliverEmail } from "../infra/gmail";
 import { appendRunEvents } from "../domains/runs/repo";
 import { requestRunApproval } from "../domains/runs/controls";
 
@@ -125,7 +125,7 @@ async function finishRun(run: RunRow): Promise<void> {
   }
 
   if (spec.email) {
-    await sendMail({
+    const { transport } = await deliverEmail(teamId, {
       from: spec.email.from ?? "assistant@agentik.dev",
       to: spec.email.to,
       subject: spec.email.subject,
@@ -137,8 +137,8 @@ async function finishRun(run: RunRow): Promise<void> {
         type: "tool_call",
         tool: "email.send",
         input: { to: spec.email.to, subject: spec.email.subject },
-        output: { delivered: true, via: "mailpit" },
-        content: `Email sent to ${spec.email.to}: ${spec.email.subject}`,
+        output: { delivered: true, via: transport },
+        content: `Email sent to ${spec.email.to} via ${transport}: ${spec.email.subject}`,
       },
       seq++,
     );
