@@ -175,9 +175,11 @@ d("retryRun — manual rerun forks a fresh task", () => {
 
     const res = await retryRun(teamId, orig);
     expect(res).not.toBeNull();
-    expect(res!.runId).not.toBe(orig);
+    expect(res && "runId" in res).toBe(true);
+    const retried = res as { runId: string };
+    expect(retried.runId).not.toBe(orig);
 
-    const created = await getTask(res!.runId);
+    const created = await getTask(retried.runId);
     expect(created?.status).toBe("queued");
     expect(created?.attempt).toBe(1);
 

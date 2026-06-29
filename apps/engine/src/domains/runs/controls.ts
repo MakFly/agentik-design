@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
+import { assertWithinSpendLimit } from "./service";
 
 const { runs, runMessages, projectTasks } = schema;
 const ACTIVE_CHILD_STATUSES = ["queued", "running", "paused", "waiting_approval"] as const;
@@ -56,13 +57,7 @@ export async function cancelRun(
       and(
         eq(runs.id, id),
         eq(runs.teamId, teamId),
-        inArray(runs.status, [
-          "queued",
-          "queued",
-          "running",
-          "paused",
-          "waiting_approval",
-        ]),
+        inArray(runs.status, [...ACTIVE_CHILD_STATUSES]),
       ),
     )
     .returning({
@@ -339,7 +334,11 @@ async function activeChildRunId(
 export async function retryRun(
   teamId: string,
   id: string,
-): Promise<{ runId: string } | null> {
+): Promise<{ runId: string } | { error: "spend_limit_exceeded" } | null> {
+  // Retry must respect the monthly spend cap — otherwise the budget is bypassable by
+  // repeatedly retrying a run after the limit is hit.
+  const guard = await assertWithinSpendLimit(teamId);
+  if (!guard.ok) return { error: "spend_limit_exceeded" as const };
   const [orig] = await db
     .select({
       agentId: runs.agentId,

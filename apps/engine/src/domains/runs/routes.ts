@@ -98,6 +98,7 @@ runsRoutes.post("/runs/:id/reject", requirePermission("run:approve"), async (c) 
 runsRoutes.post("/runs/:id/retry", requirePermission("run:run"), async (c) => {
   const res = await retryRun(c.get("teamId"), c.req.param("id"));
   if (!res) return c.json({ error: "not_found" }, 404);
+  if ("error" in res) return c.json(res, 402);
   return c.json(res, 202);
 });
 

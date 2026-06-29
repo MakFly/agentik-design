@@ -11,6 +11,7 @@ import {
   assertWithinSpendLimit,
   createAgent,
   monthlyCostCents,
+  retryRun,
   runAgent,
 } from "../../../src/domains/runs";
 
@@ -103,6 +104,21 @@ d("per-team monthly spend limit", () => {
       spentCents: 1500,
       limitCents: 1000,
     });
+  });
+
+  test("retry is rejected once monthly spend reaches the cap", async () => {
+    await setLimit(1000); // 1500 spent >= 1000 cap
+    const failed = genId("run");
+    await db.insert(schema.runs).values({
+      id: failed,
+      teamId,
+      executor: "daemon",
+      agentId,
+      status: "failed",
+      kind: "direct",
+      input: {},
+    });
+    expect(await retryRun(teamId, failed)).toEqual({ error: "spend_limit_exceeded" });
   });
 
   test("dispatch is accepted when under the cap", async () => {
