@@ -14,7 +14,6 @@ import { useAgents } from "@/features/agent-registry/api";
  * result back (the selected agent travels in a header). The standalone /chat route
  * was removed (it violated the "no isolated lite chat" rule); this provider + the
  * /api/agent-chat bridge are kept to be embedded into the Project/Agent console.
- * See docs/refactor/cto-review.md §3.
  */
 
 interface AgentOption {

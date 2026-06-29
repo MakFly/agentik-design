@@ -2,9 +2,6 @@
   "name": "agentik",
   "private": true,
   "scripts": {
-    "audit:acceptance": "bun run scripts/acceptance-audit.ts",
-    "audit:acceptance:proof": "bun run scripts/acceptance-proof-audit.ts",
-    "audit:completion": "bun run scripts/completion-audit.ts",
     "audit:dead-code": "bun run scripts/dead-code-audit.ts",
     "audit:runner:proof": "bun run scripts/runner-proof-audit.ts",
     "audit:runner:proof:live": "bun run scripts/runner-proof-audit.ts --runtime claude --runtime codex --runtime hermes",
