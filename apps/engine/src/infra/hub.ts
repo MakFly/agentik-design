@@ -1,8 +1,12 @@
 import type { ServerWebSocket } from "bun";
+import type { Role } from "@agentik/workflow-schema";
 
-/** Per-connection data attached at upgrade time. */
+/** Per-connection data attached at upgrade time (resolved server-side). */
 export interface WsData {
   teamId: string;
+  userId: string;
+  /** Role in this team — gates control actions over the realtime channel. */
+  role: Role;
 }
 export type AppWebSocket = ServerWebSocket<WsData>;
 

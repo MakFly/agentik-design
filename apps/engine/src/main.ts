@@ -18,7 +18,12 @@ const server = Bun.serve<WsData>({
     if (url.pathname === "/realtime") {
       const auth = await resolveAuthFromRequest(req);
       if (!auth || !auth.orgId) return new Response("unauthorized", { status: 401 });
-      if (srv.upgrade(req, { data: { teamId: auth.orgId } })) return undefined;
+      if (
+        srv.upgrade(req, {
+          data: { teamId: auth.orgId, userId: auth.userId, role: auth.role },
+        })
+      )
+        return undefined;
       return new Response("upgrade failed", { status: 426 });
     }
     return app.fetch(req, srv);
