@@ -13,7 +13,8 @@
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "sim:telegram": "bun run scripts/telegram-sim.ts"
+    "sim:telegram": "bun run scripts/telegram-sim.ts",
+    "connect:gmail": "bun run scripts/connect-gmail.ts"
   },
   "dependencies": {
     "@agentik/workflow-engine": "workspace:*",
