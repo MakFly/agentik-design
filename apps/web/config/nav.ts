@@ -10,7 +10,6 @@ import {
   Settings,
   LayoutDashboard,
   Monitor,
-  BookOpenText,
   Network,
   Zap,
   type LucideIcon,
@@ -148,7 +147,7 @@ export const NAV_ITEMS: NavItem[] = [
     group: "system",
     hotkey: "o",
   },
-  // CONFIGURE (Multica-style: runtimes, skills, settings)
+  // CONFIGURE
   {
     key: "runtimes",
     label: "Runtimes",
@@ -156,15 +155,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Monitor,
     group: "configure",
     hotkey: "u",
-    permission: "settings:read",
-  },
-  {
-    key: "skills",
-    label: "Skills",
-    segment: "skills",
-    icon: BookOpenText,
-    group: "configure",
-    hotkey: "k",
     permission: "settings:read",
   },
   {

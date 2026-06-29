@@ -19,13 +19,10 @@ export function AppShell({
   const pathname = usePathname();
   // The runs kanban is full-bleed (no centered max-width container).
   const fullBleed = pathname?.endsWith("/runs") ?? false;
-  // The chat surface (/{team}/chat*) is immersive: no topbar, full height.
   const segment = pathname?.split("/")[2];
-  const isChat = segment === "chat";
-  const isConfigure = ["runtimes", "skills", "settings"].includes(
-    segment ?? "",
-  );
   const isSettings = segment === "settings";
+  // Runtimes manages its own full-width layout.
+  const isConfigure = segment === "runtimes";
 
   // One realtime socket per team; events invalidate React Query caches.
   useRealtimeSync(team);
@@ -37,34 +34,23 @@ export function AppShell({
   }, [reduceMotion]);
 
   return (
-    <SidebarProvider
-      key={isChat ? "chat-shell" : "app-shell"}
-      defaultOpen={!isChat}
-    >
+    <SidebarProvider>
       <AppSidebar team={team} />
       <SidebarInset className="min-w-0">
-        {isChat ? (
-          <div className="h-svh overflow-hidden">{children}</div>
-        ) : (
-          <>
-            <Topbar team={team} />
-            <main className="min-w-0 flex-1 overflow-x-hidden">
-              <div
-                className={
-                  isSettings
-                    ? "w-full"
-                    : isConfigure
-                      ? "w-full p-4 md:p-6"
-                      : fullBleed
-                        ? "w-full p-4 md:p-6"
-                        : "mx-auto w-full max-w-[1600px] p-4 md:p-6"
-                }
-              >
-                {children}
-              </div>
-            </main>
-          </>
-        )}
+        <Topbar team={team} />
+        <main className="min-w-0 flex-1 overflow-x-hidden">
+          <div
+            className={
+              isSettings
+                ? "w-full"
+                : isConfigure || fullBleed
+                  ? "w-full p-4 md:p-6"
+                  : "mx-auto w-full max-w-[1600px] p-4 md:p-6"
+            }
+          >
+            {children}
+          </div>
+        </main>
         <CommandPalette team={team} />
       </SidebarInset>
     </SidebarProvider>

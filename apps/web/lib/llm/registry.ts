@@ -13,7 +13,7 @@ export type ProviderId = "openai" | "anthropic" | "google" | "xai" | "groq";
 export type EffortLevel = { id: string; name: string };
 
 export type LlmModel = {
-  /** Selector value, and what `/api/chat` receives as `config.modelName`. */
+  /** Selector value, and what `/api/agent-chat` receives as `config.modelName`. */
   id: string;
   /** Human-facing label. */
   label: string;

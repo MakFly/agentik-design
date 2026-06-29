@@ -9,10 +9,12 @@ import {
 import { useAgents } from "@/features/agent-registry/api";
 
 /**
- * Real assistant-ui runtime for /chat. Uses the same AI-SDK transport shape as the
- * demo runtime (so LocalThreadHistory and the immersive UI behave identically), but
- * points at /api/agent-chat — a bridge that runs the message as a real agent task on
- * the daemon and streams the result back. The selected agent travels in a header.
+ * RESERVED (Phase 4): real assistant-ui runtime that points at /api/agent-chat — a
+ * bridge that runs a message as a real agent task on the daemon and streams the
+ * result back (the selected agent travels in a header). The standalone /chat route
+ * was removed (it violated the "no isolated lite chat" rule); this provider + the
+ * /api/agent-chat bridge are kept to be embedded into the Project/Agent console.
+ * See docs/refactor/cto-review.md §3.
  */
 
 interface AgentOption {

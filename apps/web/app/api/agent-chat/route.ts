@@ -1,7 +1,9 @@
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 
 /**
- * Bridge between the assistant-ui chat UI (/chat) and the async agent-task backend.
+ * RESERVED (Phase 4): bridge between an assistant-ui chat UI and the async agent-task
+ * backend. The standalone /chat route was removed; kept to be embedded into the
+ * Project/Agent console (consumer: components/runtime/agent-task-runtime-provider).
  * Each turn: ensure a chat session for the selected agent, enqueue the message as a
  * real task, wait for the daemon to produce the assistant turn, then stream it back
  * in the UIMessage protocol. Single-shot: only the latest user message is sent to the
