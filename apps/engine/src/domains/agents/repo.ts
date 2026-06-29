@@ -387,7 +387,7 @@ export async function setRoster(
   parentAgentId: string,
   items: RosterItemInput[],
 ): Promise<
-  | { error: "parent_not_found" | "agent_not_found" | "self_reference" }
+  | { error: "parent_not_found" | "agent_not_found" | "self_reference" | "cycle" }
   | { roster: Awaited<ReturnType<typeof getRoster>> }
 > {
   const teamAgentIds = new Set(
@@ -405,6 +405,38 @@ export async function setRoster(
   for (const it of deduped) {
     if (it.agentId === parentAgentId) return { error: "self_reference" };
     if (!teamAgentIds.has(it.agentId)) return { error: "agent_not_found" };
+  }
+
+  // Cycle guard: with the parent's edges replaced by `deduped`, no proposed subagent
+  // may already reach the parent — otherwise parent→sub→…→parent loops forever.
+  const edges = await db
+    .select({ parent: agentSubagents.parentAgentId, sub: agentSubagents.subagentId })
+    .from(agentSubagents)
+    .where(eq(agentSubagents.teamId, teamId));
+  const adjacency = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.parent === parentAgentId) continue; // these get replaced
+    const list = adjacency.get(e.parent) ?? [];
+    list.push(e.sub);
+    adjacency.set(e.parent, list);
+  }
+  const reachesParent = (start: string): boolean => {
+    const queue = [start];
+    const visited = new Set([start]);
+    while (queue.length) {
+      const node = queue.shift()!;
+      if (node === parentAgentId) return true;
+      for (const next of adjacency.get(node) ?? []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    return false;
+  };
+  for (const it of deduped) {
+    if (reachesParent(it.agentId)) return { error: "cycle" };
   }
 
   await db.transaction(async (tx) => {

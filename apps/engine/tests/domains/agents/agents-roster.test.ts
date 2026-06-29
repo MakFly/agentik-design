@@ -117,6 +117,15 @@ d("agent roster + identity + graph", () => {
     });
   });
 
+  test("setRoster rejects a delegation cycle (A→B→A)", async () => {
+    const a = await createAgent(teamId, { name: "CycleA", isOrchestrator: true });
+    const b = await createAgent(teamId, { name: "CycleB", isOrchestrator: true });
+    // A → B is fine.
+    expect("roster" in (await setRoster(teamId, a.id, [{ agentId: b.id }]))).toBe(true);
+    // B → A would close the loop A→B→A → rejected.
+    expect(await setRoster(teamId, b.id, [{ agentId: a.id }])).toEqual({ error: "cycle" });
+  });
+
   test("getAgentGraph returns nodes + roster edges", async () => {
     const graph = await getAgentGraph(teamId);
     const names = graph.nodes.map((n) => n.name);
