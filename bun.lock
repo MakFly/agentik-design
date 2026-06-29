@@ -9,7 +9,6 @@
       "name": "@agentik/engine",
       "version": "0.1.0",
       "dependencies": {
-        "@agentik/workflow-engine": "workspace:*",
         "@agentik/workflow-schema": "workspace:*",
         "@ai-sdk/anthropic": "^3",
         "@ai-sdk/google": "^3",
@@ -109,20 +108,6 @@
         "vitest": "3.2.4",
       },
     },
-    "packages/workflow-engine": {
-      "name": "@agentik/workflow-engine",
-      "version": "0.1.0",
-      "dependencies": {
-        "@agentik/workflow-schema": "workspace:*",
-        "luxon": "^3.7.2",
-      },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "@types/luxon": "^3.7.2",
-        "@types/node": "^20",
-        "typescript": "^5",
-      },
-    },
     "packages/workflow-schema": {
       "name": "@agentik/workflow-schema",
       "version": "0.0.0",
@@ -142,8 +127,6 @@
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
 
     "@agentik/engine": ["@agentik/engine@workspace:apps/engine"],
-
-    "@agentik/workflow-engine": ["@agentik/workflow-engine@workspace:packages/workflow-engine"],
 
     "@agentik/workflow-schema": ["@agentik/workflow-schema@workspace:packages/workflow-schema"],
 
@@ -826,8 +809,6 @@
     "@types/json-schema": ["@types/json-schema@7.0.15", "", {}, "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA=="],
 
     "@types/json5": ["@types/json5@0.0.29", "", {}, "sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ=="],
-
-    "@types/luxon": ["@types/luxon@3.7.2", "", {}, "sha512-gW+Oib+vUtGJBtNC8V9Reww0oIpusw+4m81uncg9REGZAJfqOQHfo/nkabnc7w0QReXyPqjrbWMJk6NuAkiX3Q=="],
 
     "@types/mdast": ["@types/mdast@4.0.4", "", { "dependencies": { "@types/unist": "*" } }, "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA=="],
 
