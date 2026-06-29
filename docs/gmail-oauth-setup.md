@@ -75,6 +75,26 @@ The invoice/meeting runs send through Gmail (check the Sent folder of
 isn't connected (or token refresh fails) it transparently falls back to Mailpit, so dev
 never breaks.
 
+## Troubleshooting
+
+### `Erreur 403: access_denied` — "L'appli est en cours de test / seuls les testeurs approuvés y ont accès"
+
+Your OAuth consent screen is in **Testing** publishing status, and the Google account
+you're signing in with is **not in the test-users list** (the project owner is NOT added
+automatically). Fix:
+
+1. Google Cloud Console → **APIs & Services → OAuth consent screen** (new UI: **Audience**).
+2. **Test users → + ADD USERS** → add the exact address you authorize with
+   (`kev.aubree@gmail.com`, plus any other). **Save**.
+3. Retry the connect, and **pick that exact account** on the Google screen (a different
+   logged-in Google account → same 403).
+
+Notes:
+- In Testing mode, refresh tokens expire after ~7 days → you'll re-consent weekly.
+- For long-lived/external use, publish the app — but `gmail.readonly` is a *restricted*
+  scope (needs Google verification). If you only send, drop `gmail.readonly` and keep
+  just `gmail.send` (sensitive only) to ease a future verification.
+
 ## Guardrails / notes
 
 - **Approval-gated**: the seeded `gmail.send` tool has `requireApproval:true` — the

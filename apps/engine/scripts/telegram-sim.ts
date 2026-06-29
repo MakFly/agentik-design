@@ -79,9 +79,11 @@ async function main() {
   console.log("\n2) Inbound commands from the operator's Telegram chat:");
   // Pair the chat first so subsequent commands are answered (not "not paired").
   await sendInbound(conn.webhookSecret, chatId, `/start ${conn.pairingCode}`);
-  await sendInbound(conn.webhookSecret, chatId, "/agents");
-  await sendInbound(conn.webhookSecret, chatId, "/projects");
-  await sendInbound(conn.webhookSecret, chatId, "/tasks");
+  // Custom prompt(s): TELEGRAM_MSG="…" (use ' || ' to send several in sequence),
+  // otherwise the default command tour.
+  const custom = process.env.TELEGRAM_MSG;
+  const messages = custom ? custom.split(" || ") : ["/agents", "/projects", "/tasks"];
+  for (const m of messages) await sendInbound(conn.webhookSecret, chatId, m);
 
   console.log("\n3) Driving the run loop (simulate → approve → simulate)…");
   const pass1 = (await api("/dev/simulate")) as { processed: Array<{ runId: string; status: string }> };
