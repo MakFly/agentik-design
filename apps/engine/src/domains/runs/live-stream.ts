@@ -12,8 +12,8 @@ import {
   getRunDetail,
   getRunStatus,
   listRunMessagesAfter,
+  getRun,
 } from "./repo";
-import { getRun } from "../workflows/repo";
 
 export const TERMINAL_RUN_STATUSES = new Set([
   "succeeded",

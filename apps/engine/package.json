@@ -6,8 +6,6 @@
   "scripts": {
     "dev": "bun run --watch src/main.ts",
     "start": "bun run src/main.ts",
-    "worker": "bun run src/execution/worker/worker.ts",
-    "worker:dev": "bun run --watch src/execution/worker/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -17,7 +15,6 @@
     "connect:gmail": "bun run scripts/connect-gmail.ts"
   },
   "dependencies": {
-    "@agentik/workflow-engine": "workspace:*",
     "@agentik/workflow-schema": "workspace:*",
     "@ai-sdk/anthropic": "^3",
     "@ai-sdk/google": "^3",

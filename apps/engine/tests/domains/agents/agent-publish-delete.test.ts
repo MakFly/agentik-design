@@ -7,7 +7,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { createAgent, deleteAgent, getAgentRow } from "../../../src/domains/agents/repo";
 import { publishAgent } from "../../../src/domains/runs";
 import { createRule } from "../../../src/domains/signals/repo";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { db, schema } from "../../../src/infra/db/client";
 import { genId } from "../../../src/infra/db/ids";
 

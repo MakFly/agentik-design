@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
-import { resolveTeam } from "../../domains/workflows/repo";
+import { resolveTeam } from "../../infra/tenancy";
 import { hub } from "../../infra/hub";
 import {
   buildInjectionPreamble,

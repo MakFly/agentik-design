@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { roleCan, type Permission, type Role } from "@agentik/workflow-schema";
-import { resolveTeam } from "../../domains/workflows/repo";
+import { resolveTeam } from "../../infra/tenancy";
 import { getMembership, getSessionUser, listUserOrgs } from "../../gateway/auth-repo";
 import { env } from "../../infra/env";
 

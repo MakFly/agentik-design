@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "../../../src/infra/db/client";
 import { genId } from "../../../src/infra/db/ids";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { createAgent, publishAgent } from "../../../src/domains/runs";
 import { setRoster } from "../../../src/domains/agents/repo";
 import { sendOrchestratedTurn } from "../../../src/domains/chat/orchestrator";

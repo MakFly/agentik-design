@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db, schema } from "../../../src/infra/db/client";
 import { genId } from "../../../src/infra/db/ids";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { createChatSession, getChatSession, listChatSessions, sendChatMessage } from "../../../src/domains/chat/repo";
 import { startTask, completeTask } from "../../../src/execution/daemon/service";
 

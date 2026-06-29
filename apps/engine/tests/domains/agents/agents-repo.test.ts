@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { createAgent, getAgentRow, listAgentRows } from "../../../src/domains/agents/repo";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { db, schema } from "../../../src/infra/db/client";
 import { genId } from "../../../src/infra/db/ids";
 

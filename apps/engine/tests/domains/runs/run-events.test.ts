@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { db, schema } from "../../../src/infra/db/client";
 import { genId } from "../../../src/infra/db/ids";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { appendRunEvents, listRunEvents } from "../../../src/domains/runs/repo";
 
 let dbUp = false;

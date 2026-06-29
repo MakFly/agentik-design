@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../src/infra/db/client";
 import { genId } from "../../src/infra/db/ids";
-import { resolveTeam } from "../../src/domains/workflows/repo";
+import { resolveTeam } from "../../src/infra/tenancy";
 import { failTask } from "../../src/execution/daemon/service";
 import { retryRun } from "../../src/domains/runs";
 import { scanStaleTasks, SCANNER_LOCK_KEY } from "../../src/jobs/task-scanner";

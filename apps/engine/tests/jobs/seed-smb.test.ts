@@ -6,7 +6,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../src/infra/db/client";
-import { resolveTeam } from "../../src/domains/workflows/repo";
+import { resolveTeam } from "../../src/infra/tenancy";
 import { approveRun } from "../../src/domains/runs/controls";
 import { simulateQueuedRuns } from "../../src/jobs/run-simulator";
 import { seedSmbTenant } from "../../src/jobs/seed-smb";

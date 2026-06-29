@@ -9,7 +9,6 @@ import { projectsRoutes } from "../domains/projects/routes";
 import { runsRoutes } from "../domains/runs/routes";
 import { settingsRoutes } from "../domains/settings/routes";
 import { signalsRoutes } from "../domains/signals/routes";
-import { workflowsRoutes } from "../domains/workflows/routes";
 import { daemon } from "../execution/daemon/routes";
 import { auth } from "../gateway/routes/auth";
 import { handleTelegramWebhookSecret } from "../domains/channels/service";
@@ -32,7 +31,6 @@ api.use("*", withAuth);
 // /daemon and /health are mounted elsewhere and stay unthrottled.
 api.use("*", rateLimit({ windowMs: env.RATE_LIMIT_WINDOW_MS, max: env.RATE_LIMIT_MAX }));
 
-api.route("/", workflowsRoutes);
 api.route("/", agentsRoutes);
 api.route("/", projectsRoutes);
 api.route("/", channelsRoutes);

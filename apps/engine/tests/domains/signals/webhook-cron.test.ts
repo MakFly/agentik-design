@@ -4,7 +4,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { db } from "../../../src/infra/db/client";
-import { resolveTeam } from "../../../src/domains/workflows/repo";
+import { resolveTeam } from "../../../src/infra/tenancy";
 import { createSignal } from "../../../src/domains/signals/repo";
 import {
   dueScheduledSignals,

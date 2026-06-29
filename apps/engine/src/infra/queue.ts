@@ -1,4 +1,4 @@
-import { Queue, type ConnectionOptions } from "bullmq";
+import { type ConnectionOptions } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "./env";
 
@@ -11,17 +11,3 @@ import { env } from "./env";
 export const connection: ConnectionOptions = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
 }) as unknown as ConnectionOptions;
-
-export const RUN_QUEUE = "workflow-runs";
-
-export type RunJobData = { runId: string };
-
-export const runQueue = new Queue<RunJobData>(RUN_QUEUE, { connection });
-
-export async function enqueueRun(runId: string): Promise<void> {
-  await runQueue.add(
-    "execute",
-    { runId },
-    { removeOnComplete: 1000, removeOnFail: 5000, attempts: 1 },
-  );
-}

@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import type { RunDetail } from "@agentik/workflow-schema";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import {
@@ -358,6 +359,22 @@ export async function getRunDetail(teamId: string, id: string) {
     ...(projectContext ? { projectContext } : {}),
     children,
   };
+}
+
+/** Raw run + steps fetch (workflow-run shape) used by the live SSE projection. */
+export async function getRun(runId: string, teamId?: string): Promise<RunDetail | null> {
+  const [r] = await db
+    .select()
+    .from(runs)
+    .where(teamId ? and(eq(runs.id, runId), eq(runs.teamId, teamId)) : eq(runs.id, runId))
+    .limit(1);
+  if (!r) return null;
+  const steps = await db
+    .select()
+    .from(runSteps)
+    .where(eq(runSteps.runId, runId))
+    .orderBy(runSteps.index);
+  return { ...r, steps } as RunDetail;
 }
 
 async function childSummariesForRun(teamId: string, parentRunId: string) {

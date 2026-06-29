@@ -4,7 +4,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
-import { getCredentialDecrypted } from "../workflows/repo";
+import { getCredentialDecrypted } from "../credentials";
 import type { CreateMcpServerInput, UpdateMcpServerInput } from "./schemas";
 import type { McpTransport, ToolGrantRecord } from "../../infra/db/schema";
 
