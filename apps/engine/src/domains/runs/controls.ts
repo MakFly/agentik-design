@@ -124,7 +124,10 @@ export async function resumeRun(
   const childId = await activeChildRunId(teamId, id);
   const updated = await db
     .update(runs)
-    .set({ status: "queued" })
+    // Pause stops the in-flight CLI (see appendMessages), so resume must re-dispatch
+    // for a FRESH execution — clear the prior daemon/runtime assignment like approveRun,
+    // otherwise the run stays bound to a dispatch that no longer runs and is never claimed.
+    .set({ status: "queued", runtimeId: null, daemonId: null, dispatchedAt: null })
     .where(
       and(
         eq(runs.id, id),

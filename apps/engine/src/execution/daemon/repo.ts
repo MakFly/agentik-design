@@ -746,7 +746,12 @@ export async function appendMessages(
     .where(eq(runs.id, runId))
     .limit(1);
   return {
-    cancel: task?.status === "cancelled",
+    // A paused run signals the daemon to stop the in-flight CLI exactly like a
+    // cancel (same SIGTERM path). The daemon's follow-up Fail("cancelled") is a
+    // no-op because failTask only transitions queued/running rows, so the run
+    // stays 'paused' and is resumable (resumeRun re-dispatches it). This is what
+    // makes Pause a real gate under hermes --yolo, not just a label.
+    cancel: task?.status === "cancelled" || task?.status === "paused",
     ...(task && messages.length > 0
       ? {
           teamId: task.teamId,
