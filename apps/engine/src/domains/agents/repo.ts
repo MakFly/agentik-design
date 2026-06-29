@@ -110,7 +110,7 @@ function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[]) {
     color: a.color ?? undefined,
     avatarUrl: a.avatarUrl ?? undefined,
     isOrchestrator: a.isOrchestrator,
-    owner: "usr_system",
+    owner: a.creatorId ?? "usr_system",
     health: a.health,
     runtimeKind: a.runtimeKind,
     preferredDaemonId: a.preferredDaemonId,
@@ -130,7 +130,7 @@ function toAgentRow(a: AgentRowDb, tasks: AgentStatsRunRow[]) {
     },
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
-    createdBy: "usr_system",
+    createdBy: a.creatorId ?? "usr_system",
     model: agentModel(a),
   };
 }
@@ -286,6 +286,7 @@ export class AgentPublishError extends Error {
 export async function createAgent(
   teamId: string,
   input: CreateAgentInput,
+  createdBy?: string | null,
 ): Promise<{ id: string; draftVersionId: string; version?: number }> {
   const id = genId("agt");
   const draftVersionId = genId("ver");
@@ -301,6 +302,7 @@ export async function createAgent(
     color: input.color ?? null,
     avatarUrl: input.avatarUrl ?? null,
     isOrchestrator: input.isOrchestrator ?? false,
+    creatorId: createdBy ?? null,
     draftVersionId,
     health: "idle" as const,
   };

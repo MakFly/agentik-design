@@ -21,6 +21,7 @@ import {
 } from "./repo";
 import { createAgentBody, rosterBody, updateAgentBody } from "./schemas";
 import type { AgentIdentityPatch } from "../runs";
+import { recordAudit } from "../../infra/audit";
 
 export const agentsRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -42,7 +43,15 @@ agentsRoutes.post("/agents", requirePermission("agent:create"), async (c) => {
   const parsed = parseJsonBody(createAgentBody, await c.req.json().catch(() => null));
   if (!parsed.success) return jsonValidationError(c, parsed.error);
   try {
-    const res = await createAgent(c.get("teamId"), parsed.data);
+    const res = await createAgent(c.get("teamId"), parsed.data, c.get("auth").userId);
+    await recordAudit({
+      teamId: c.get("teamId"),
+      actorId: c.get("auth").userId,
+      action: "agent.create",
+      targetType: "agent",
+      targetId: res.id,
+      metadata: { name: parsed.data.name, published: res.version != null },
+    });
     return c.json(res, 201);
   } catch (err) {
     if (err instanceof AgentPublishError) {
@@ -69,6 +78,14 @@ agentsRoutes.patch("/agents/:id", requirePermission("agent:update"), async (c) =
 agentsRoutes.delete("/agents/:id", requirePermission("agent:delete"), async (c) => {
   const res = await deleteAgent(c.get("teamId"), c.req.param("id"));
   if (!res) return c.json({ error: "not_found" }, 404);
+  await recordAudit({
+    teamId: c.get("teamId"),
+    actorId: c.get("auth").userId,
+    action: "agent.delete",
+    targetType: "agent",
+    targetId: c.req.param("id"),
+    metadata: res,
+  });
   return c.json({ ok: true, ...res });
 });
 
@@ -104,6 +121,14 @@ agentsRoutes.post("/agents/:id/publish", requirePermission("agent:update"), asyn
   if ("error" in res) {
     return c.json({ error: res.error }, res.error === "daemon_not_found" ? 404 : 409);
   }
+  await recordAudit({
+    teamId: c.get("teamId"),
+    actorId: c.get("auth").userId,
+    action: "agent.publish",
+    targetType: "agent",
+    targetId: c.req.param("id"),
+    metadata: { version: res.version },
+  });
   return c.json(res);
 });
 

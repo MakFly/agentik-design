@@ -117,6 +117,16 @@ d("agent roster + identity + graph", () => {
     });
   });
 
+  test("createAgent records the creator as owner/createdBy", async () => {
+    const owned = await createAgent(teamId, { name: "Owned" }, "usr_alice");
+    const row = await getAgentRow(teamId, owned.id);
+    expect(row?.owner).toBe("usr_alice");
+    expect(row?.createdBy).toBe("usr_alice");
+    const systemSeeded = await createAgent(teamId, { name: "SystemMade" });
+    const row2 = await getAgentRow(teamId, systemSeeded.id);
+    expect(row2?.owner).toBe("usr_system"); // null creator → system fallback
+  });
+
   test("setRoster rejects a delegation cycle (A→B→A)", async () => {
     const a = await createAgent(teamId, { name: "CycleA", isOrchestrator: true });
     const b = await createAgent(teamId, { name: "CycleB", isOrchestrator: true });

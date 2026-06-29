@@ -32,6 +32,8 @@ export const agents = pgTable("agents", {
   draftVersionId: text("draft_version_id"),
   config: jsonb("config").$type<Record<string, unknown>>(),
   maxConcurrentTasks: integer("max_concurrent_tasks").notNull().default(1),
+  /** User who created the agent (ownership / audit). Null for system-seeded agents. */
+  creatorId: text("creator_id"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
