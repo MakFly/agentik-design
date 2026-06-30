@@ -6,6 +6,9 @@ import { resolveAuthFromRequest } from "./app/middleware/auth";
 import { startTaskScanner } from "./jobs/task-scanner";
 import { startScheduler } from "./jobs/scheduler";
 import { startTelegramPolling } from "./domains/channels/telegram/poller";
+import { startEmbeddedWorker } from "./execution/embedded/worker";
+import { isSolo } from "./infra/mode";
+import { ensureSoloSeed } from "./infra/solo-seed";
 
 const server = Bun.serve<WsData>({
   port: env.PORT,
@@ -54,3 +57,10 @@ startTelegramPolling();
 // Cron scheduler for schedule-kind signals. Opt-in (SCHEDULER_ENABLED) so it never
 // auto-fires unless explicitly turned on.
 if (env.SCHEDULER_ENABLED) startScheduler();
+
+// Embedded in-process worker. Opt-in (EMBEDDED_WORKER) so the standalone engine
+// keeps relying on remote daemons unless explicitly turned on.
+if (env.EMBEDDED_WORKER) {
+  if (isSolo) await ensureSoloSeed();
+  startEmbeddedWorker();
+}

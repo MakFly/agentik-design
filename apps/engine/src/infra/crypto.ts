@@ -1,5 +1,23 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { env } from "./env";
+import { agentikHome, isSolo } from "./mode";
+
+/**
+ * Solo mode has no env to hold secrets, so persist a real per-install key at
+ * ~/.agentik/credentials/key (generated once, 0600). This replaces the insecure dev
+ * fallback with a stable, machine-local secret — credentials encrypt at rest for real.
+ */
+function soloKeySecret(): string {
+  const dir = path.join(agentikHome(), "credentials");
+  const keyPath = path.join(dir, "key");
+  if (existsSync(keyPath)) return readFileSync(keyPath, "utf8").trim();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const secret = randomBytes(32).toString("hex");
+  writeFileSync(keyPath, secret + "\n", { mode: 0o600 });
+  return secret;
+}
 
 /**
  * Credential encryption at rest — AES-256-GCM. The 32-byte key is derived
@@ -25,7 +43,9 @@ export function deriveKey(secret?: string): Buffer {
   return scryptSync(secret ?? "dev-insecure-credentials-key-change-me", "agentik-credentials", 32);
 }
 
-const KEY = deriveKey(env.CREDENTIALS_ENCRYPTION_KEY);
+const KEY = deriveKey(
+  env.CREDENTIALS_ENCRYPTION_KEY ?? (isSolo ? soloKeySecret() : undefined),
+);
 
 export function encryptJson(data: unknown): string {
   const iv = randomBytes(12);

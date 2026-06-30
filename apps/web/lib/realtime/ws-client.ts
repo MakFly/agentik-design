@@ -20,7 +20,9 @@ type Listener = (event: RealtimeEvent) => void;
 export const USE_MOCK =
   process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
-const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:8787";
+// In unified/solo mode the engine shares the page origin, so default to it; set
+// NEXT_PUBLIC_ENGINE_URL only when the engine runs on a separate origin (platform).
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "";
 
 class RealtimeClient {
   private ws: WebSocket | null = null;
@@ -42,7 +44,11 @@ class RealtimeClient {
 
   private open(): void {
     if (!this.team) return;
-    const url = `${ENGINE_URL.replace(/^http/, "ws")}/realtime?team=${encodeURIComponent(this.team)}`;
+    // Same-origin by default (unified/solo); explicit origin only on platform.
+    const base = ENGINE_URL
+      ? ENGINE_URL.replace(/^http/, "ws")
+      : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+    const url = `${base}/realtime?team=${encodeURIComponent(this.team)}`;
     const ws = new WebSocket(url);
     this.ws = ws;
 

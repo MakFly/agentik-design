@@ -53,7 +53,7 @@ env: ## Seed local env files from examples (never overwrites an existing one)
 
 # ── Development ──────────────────────────────────────────────────────────────
 
-.PHONY: dev dev/web dev/engine dev/check-engine-port dev/down
+.PHONY: dev up dev/web dev/engine dev/check-engine-port dev/down
 dev: ## Start web + engine API in parallel (auto-picks a free web port). Daemon: make daemon/start | make daemon/down.
 	@printf "$(B)$(G)Starting dev servers...$(N)\n"
 	@$(MAKE) dev/check-engine-port
@@ -83,6 +83,12 @@ dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT
 dev/engine: dev/check-engine-port ## Start workflow engine API (:8787)
 	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
 	@cd $(ENGINE) && bun run dev
+
+UNIFIED_PORT ?= 3333
+up: ## Solo mode: ONE process, ZERO external services (UI + API + realtime + worker + PGlite) on :3333
+	@printf "$(B)$(G)Starting agentik (solo) — one process, zero external services...$(N)\n"
+	@printf "$(C)→ http://localhost:$(UNIFIED_PORT)  (PGlite in ~/.agentik/db)$(N)\n"
+	@cd $(ENGINE) && AGENTIK_MODE=solo UNIFIED_PORT=$(UNIFIED_PORT) bun run src/serve.ts
 
 dev/down: ## Stop local web/engine dev processes for this checkout
 	@pids="$$(lsof -tiTCP:$(ENGINE_PORT) -sTCP:LISTEN 2>/dev/null || true)"; \

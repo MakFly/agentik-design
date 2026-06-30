@@ -28,6 +28,8 @@ import {
 } from "../../domains/settings/repo";
 import { ORG_COOKIE, SESSION_COOKIE } from "../../app/middleware/auth";
 import { env } from "../../infra/env";
+import { isSolo } from "../../infra/mode";
+import { soloUser } from "../../infra/solo-seed";
 
 export const auth = new Hono();
 
@@ -135,7 +137,9 @@ auth.post("/logout", async (c) => {
 });
 
 auth.get("/me", async (c) => {
-  const user = await currentUser(c);
+  // Solo mode is single-user and local: no session cookie is required, the seeded
+  // local user is the operator. Platform keeps strict session auth.
+  const user = (await currentUser(c)) ?? (isSolo ? await soloUser() : null);
   if (!user) return c.json({ error: "unauthenticated" }, 401);
   const [orgs, account] = await Promise.all([
     listUserOrgs(user.userId),

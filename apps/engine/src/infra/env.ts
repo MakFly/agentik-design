@@ -1,10 +1,17 @@
 import { z } from "zod";
 
+/** Treat an empty env var ("") as unset, so `DATABASE_URL=` falls back to solo/default. */
+const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
+
 /** Bun auto-loads `.env`. Validate it once at boot so misconfig fails loudly. */
 const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
-  DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
+  /** Postgres URL — required in platform mode; unset in solo (embedded PGlite). */
+  DATABASE_URL: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  REDIS_URL: z.preprocess(
+    emptyToUndefined,
+    z.string().min(1).default("redis://localhost:6379"),
+  ),
   OPENAI_API_KEY: z.string().optional(),
   /** Secret used to derive the AES-256 key for credential encryption at rest. */
   CREDENTIALS_ENCRYPTION_KEY: z.string().min(16).optional(),
@@ -35,6 +42,15 @@ const schema = z.object({
     .transform((v) => v !== "false"),
   /** Opt-in cron scheduler for schedule-kind signals. Off unless "true". */
   SCHEDULER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
+  /**
+   * Opt-in embedded in-process worker (solo mode): claims the runs queue and
+   * executes runtimes locally instead of relying on a remote Go daemon. Off unless
+   * "true". `make up` turns it on.
+   */
+  EMBEDDED_WORKER: z
     .string()
     .optional()
     .transform((v) => v === "true"),

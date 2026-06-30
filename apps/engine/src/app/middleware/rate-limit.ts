@@ -59,8 +59,12 @@ class ResilientStore implements RateLimitStore {
 let sharedStore: RateLimitStore | null = null;
 function defaultStore(): RateLimitStore {
   // Reuse the BullMQ Redis connection (typed as ConnectionOptions there for the
-  // dual-ioredis clash); it is an IORedis instance at runtime.
-  if (!sharedStore) sharedStore = new ResilientStore(connection as unknown as IORedis);
+  // dual-ioredis clash); it is an IORedis instance at runtime. In solo mode there
+  // is no Redis (connection === null) → pure in-process limiting.
+  if (!sharedStore)
+    sharedStore = connection
+      ? new ResilientStore(connection as unknown as IORedis)
+      : new MemoryStore();
   return sharedStore;
 }
 
