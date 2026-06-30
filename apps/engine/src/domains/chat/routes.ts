@@ -5,10 +5,12 @@ import {
 } from "../../app/middleware/auth";
 import {
   createChatSession,
+  deleteChatSession,
   getChatSession,
   listChatSessions,
   sendChatMessage,
 } from "./repo";
+import { streamChatTurn } from "./gateway";
 
 export const chatRoutes = new Hono<{ Variables: AuthVars }>();
 
@@ -45,4 +47,23 @@ chatRoutes.post("/chat/sessions/:id/messages", requirePermission("run:run"), asy
   const res = await sendChatMessage(c.get("teamId"), c.req.param("id"), content);
   if (!res) return c.json({ error: "not_found" }, 404);
   return c.json(res, 202);
+});
+
+// Interactive fast-path: run the turn in-process and stream it back (assistant-ui
+// UIMessage protocol). 409 `no_api_runtime` → caller falls back to the queue path.
+chatRoutes.post("/chat/sessions/:id/stream", requirePermission("run:run"), async (c) => {
+  const body = await c.req
+    .json<{ content?: string }>()
+    .catch(() => ({}) as { content?: string });
+  const content = (body.content ?? "").trim();
+  if (!content) return c.json({ error: "content_required" }, 400);
+  const res = await streamChatTurn(c.get("teamId"), c.req.param("id"), content);
+  if (!res.ok) return c.json({ error: res.error }, res.status as 404 | 409);
+  return res.response;
+});
+
+chatRoutes.delete("/chat/sessions/:id", requirePermission("run:run"), async (c) => {
+  const ok = await deleteChatSession(c.get("teamId"), c.req.param("id"));
+  if (!ok) return c.json({ error: "not_found" }, 404);
+  return c.body(null, 204);
 });

@@ -104,6 +104,54 @@ export async function streamDaemonRunLive(
   }
 }
 
+/**
+ * Minimal token stream for chat: tails a run's task_messages and emits raw `text` /
+ * `thinking` deltas (and `error` rows) until the run is terminal, then `done`. Kept
+ * deliberately separate from the typed timeline events above so the chat consumer maps
+ * deltas 1:1 to assistant-ui parts without coupling to the runs-timeline vocabulary.
+ * Resumable via `?lastEventId=<seq>`.
+ */
+export async function streamRunMessagesLive(
+  stream: SSEStreamingApi,
+  id: string,
+  teamId: string,
+  resumeAfter: number,
+) {
+  let lastSeq = resumeAfter;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < MAX_LIVE_STREAM_MS) {
+    if (stream.aborted) return;
+    const status = await getRunStatus(teamId, id);
+    if (!status) {
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({ error: "not_found" }),
+      });
+      return;
+    }
+    for (const m of await listRunMessagesAfter(id, lastSeq)) {
+      if (m.type === "text" || m.type === "thinking") {
+        await stream.writeSSE({
+          id: String(m.seq),
+          event: "delta",
+          data: JSON.stringify({ seq: m.seq, type: m.type, delta: m.content ?? "" }),
+        });
+      } else if (m.type === "error") {
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ message: m.content ?? "error" }),
+        });
+      }
+      lastSeq = m.seq;
+    }
+    if (TERMINAL_RUN_STATUSES.has(status)) {
+      await stream.writeSSE({ event: "done", data: JSON.stringify({ status }) });
+      return;
+    }
+    await stream.sleep(150);
+  }
+}
+
 /** SSE handler for `/runs/:id/live` — daemon runs use typed events; workflow runs poll status. */
 export async function streamRunLive(
   stream: SSEStreamingApi,

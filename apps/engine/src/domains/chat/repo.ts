@@ -51,6 +51,19 @@ export async function listChatSessions(teamId: string): Promise<ChatSessionSumma
   return rows.map(toSummary);
 }
 
+/** Delete a chat session (and its messages), tenancy-scoped. False if not in team. */
+export async function deleteChatSession(teamId: string, id: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: chatSessions.id })
+    .from(chatSessions)
+    .where(and(eq(chatSessions.id, id), eq(chatSessions.teamId, teamId)))
+    .limit(1);
+  if (!row) return false;
+  await db.delete(chatMessages).where(eq(chatMessages.chatSessionId, id));
+  await db.delete(chatSessions).where(and(eq(chatSessions.id, id), eq(chatSessions.teamId, teamId)));
+  return true;
+}
+
 export interface ChatMessageView {
   id: string;
   role: string;
@@ -139,7 +152,7 @@ export async function sendChatMessage(
   return { taskId: runId };
 }
 
-async function buildChatPrompt(
+export async function buildChatPrompt(
   sessionId: string,
   currentMessageId: string,
   currentContent: string,

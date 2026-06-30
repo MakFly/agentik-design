@@ -39,6 +39,21 @@ function hasEmailSendCapability(config: unknown): boolean {
   );
 }
 
+/**
+ * True when the agent declares any deterministic engine-side builtin skill. Such turns
+ * must go through the queue path (the engine fulfils them server-side), so the in-process
+ * chat gateway defers them rather than running a plain LLM turn that would bypass the skill.
+ */
+export function agentHasBuiltinSkill(config: unknown): boolean {
+  const skills = agentSkills(config);
+  const tools = agentTools(config);
+  const builtins = [GMAIL_READ_SKILL, GMAIL_SEND_SKILL];
+  return (
+    builtins.some((id) => skills.includes(id)) ||
+    tools.some((tool) => builtins.includes(tool.toolId as string))
+  );
+}
+
 const INBOX_RE = /\b(e-?mails?|inbox|courriels?|mails?|bo[iî]te|messages?)\b/i;
 const INBOX_READ_RE =
   /\b(lis|lire|lecture|lu|affiche|montre|donne|liste|r[ée]cup[èe]re|check|read|show|list|get|last|latest|dernier(?:s|es)?|nouveaux?)\b/i;

@@ -13,7 +13,7 @@ import {
   resumeRun,
   retryRun,
 } from "./controls";
-import { streamRunLive } from "./live-stream";
+import { streamRunLive, streamRunMessagesLive } from "./live-stream";
 import { getRunDetail, listRunEvents, listRuns } from "./repo";
 
 export const runsRoutes = new Hono<{ Variables: AuthVars }>();
@@ -109,4 +109,16 @@ runsRoutes.get("/runs/:id/live", (c) => {
   const resumeAfter =
     lastId && Number.isFinite(Number(lastId)) ? Number(lastId) : -1;
   return streamSSE(c, (stream) => streamRunLive(stream, id, teamId, resumeAfter));
+});
+
+// Token stream for chat: raw text/thinking deltas, mapped 1:1 to assistant-ui parts.
+runsRoutes.get("/runs/:id/messages/live", (c) => {
+  const id = c.req.param("id");
+  const teamId = c.get("teamId");
+  const lastId = c.req.query("lastEventId");
+  const resumeAfter =
+    lastId && Number.isFinite(Number(lastId)) ? Number(lastId) : -1;
+  return streamSSE(c, (stream) =>
+    streamRunMessagesLive(stream, id, teamId, resumeAfter),
+  );
 });

@@ -3,7 +3,9 @@
  * the Vercel AI SDK (same providers as infra/llm.ts) using a key resolved from the
  * task env (the org's provider keys, injected by claimTask). One key is enough.
  */
-import { generateText, type LanguageModel } from "ai";
+import { streamText, type LanguageModel } from "ai";
+
+type ProviderOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -47,7 +49,7 @@ export function resolveApiProvider(
   return ordered.find((p) => env[p.envVar]) ?? null;
 }
 
-function buildModel(
+export function buildModel(
   p: ApiProvider,
   model: string,
   apiKey: string,
@@ -62,6 +64,36 @@ function buildModel(
   }
 }
 
+/** Reasoning models surface their thinking; chat models error if asked to. */
+function isOpenAiReasoningModel(model: string): boolean {
+  return /^(o[1-9]|gpt-5)/i.test(model);
+}
+
+/**
+ * Ask the provider to stream its reasoning so the chat can show a live "thinking"
+ * block. Guarded per provider — OpenAI only on reasoning models (else the API rejects
+ * `reasoningSummary`). Returns undefined when reasoning isn't applicable.
+ */
+export function reasoningProviderOptions(
+  p: ApiProvider,
+  model: string,
+): ProviderOptions | undefined {
+  switch (p.provider) {
+    case "openai":
+      return isOpenAiReasoningModel(model)
+        ? { openai: { reasoningSummary: "auto", reasoningEffort: "medium" } }
+        : undefined;
+    case "anthropic":
+      return { anthropic: { thinking: { type: "enabled", budgetTokens: 2048 } } };
+    case "google":
+      return { google: { thinkingConfig: { includeThoughts: true } } };
+  }
+}
+
+// Flush a run-message once a delta buffer reaches this size — coarse enough to keep
+// task_messages row counts sane, fine enough to feel like token streaming.
+const FLUSH_CHARS = 48;
+
 export function apiAdapter(p: ApiProvider): RuntimeAdapter {
   return {
     label: `api:${p.provider}`,
@@ -71,19 +103,54 @@ export function apiAdapter(p: ApiProvider): RuntimeAdapter {
       if (!apiKey) throw new Error(`missing ${p.envVar}`);
       const { prompt, systemPrompt, model } = readTaskInput(task);
       if (!prompt.trim()) throw new Error("empty prompt");
+      const resolvedModel = model ?? p.defaultModel;
 
-      const { text, usage } = await generateText({
-        model: buildModel(p, model ?? p.defaultModel, apiKey),
+      const result = streamText({
+        model: buildModel(p, resolvedModel, apiKey),
         system: systemPrompt,
         prompt,
         abortSignal: signal,
+        providerOptions: reasoningProviderOptions(p, resolvedModel),
       });
 
-      await emit([{ seq: 1, type: "text", content: text }]);
+      // Coalesce deltas into ordered `text`/`thinking` rows. Reasoning streams before
+      // the answer, so flushing the pending buffer whenever the kind switches keeps the
+      // persisted order (thinking… then text…) that the chat replays as reasoning→reply.
+      let seq = 0;
+      const pending: { type: "text" | "thinking" | null; buf: string } = {
+        type: null,
+        buf: "",
+      };
+      const flush = async () => {
+        if (!pending.type || !pending.buf) return;
+        seq += 1;
+        await emit([{ seq, type: pending.type, content: pending.buf }]);
+        pending.type = null;
+        pending.buf = "";
+      };
+      const push = async (type: "text" | "thinking", text: string) => {
+        if (pending.type && pending.type !== type) await flush();
+        pending.type = type;
+        pending.buf += text;
+        if (pending.buf.length >= FLUSH_CHARS) await flush();
+      };
+
+      for await (const part of result.fullStream) {
+        if (signal.aborted) break;
+        if (part.type === "text-delta") await push("text", part.text);
+        else if (part.type === "reasoning-delta") await push("thinking", part.text);
+      }
+      await flush();
+
+      const text = await result.text;
+      const usage = await result.usage;
+      // `result` carries the assistant turn text (resultText() reads result.result);
+      // the rest is metadata for cost/observability.
       return {
         result: {
+          result: text,
           summary: text.slice(0, 280),
-          model: model ?? p.defaultModel,
+          model: resolvedModel,
           usage,
         },
       };
