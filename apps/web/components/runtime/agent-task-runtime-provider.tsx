@@ -1,41 +1,65 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   AssistantChatTransport,
   useChatRuntime,
 } from "@assistant-ui/react-ai-sdk";
-import { useAgents } from "@/features/agent-registry/api";
+import { useAgentSelection } from "./agent-selection";
+import { apiFetch } from "@/lib/api/client";
 
 /**
- * RESERVED (Phase 4): real assistant-ui runtime that points at /api/agent-chat — a
- * bridge that runs a message as a real agent task on the daemon and streams the
- * result back (the selected agent travels in a header). The standalone /chat route
- * was removed (it violated the "no isolated lite chat" rule); this provider + the
- * /api/agent-chat bridge are kept to be embedded into the Project/Agent console.
+ * Real assistant-ui runtime pointing at /api/agent-chat — a bridge that runs each turn
+ * in-process on the engine and streams the result back. Engine-persisted: an assistant-ui
+ * thread maps 1:1 to an engine chat session. The session id travels in the `x-session-id`
+ * header so the engine threads multi-turn context; a brand-new thread lazily creates its
+ * session on first send (then the URL routes to /chat/c/<id>). The selected agent comes
+ * from `AgentSelectionProvider` (shared with the sidebar switcher).
  */
 
-interface AgentOption {
-  id: string;
-  name: string;
+/** Session id baked into the current /chat/c/<id> URL, or null on the bare chat route. */
+function sessionIdFromPath(pathname: string): string | null {
+  const m = pathname.match(/\/chat\/c\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
-interface AgentChatCtx {
-  agents: AgentOption[];
-  agentsLoading: boolean;
-  selectedAgentId: string | null;
-  setSelectedAgentId: (id: string) => void;
+function lastUserText(messages: unknown): string {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string; parts?: Array<{ type?: string; text?: string }> };
+    if (m?.role !== "user") continue;
+    return (m.parts ?? []).filter((p) => p?.type === "text").map((p) => p.text ?? "").join("").trim();
+  }
+  return "";
 }
 
-const Ctx = createContext<AgentChatCtx | null>(null);
-export function useAgentChat(): AgentChatCtx {
-  const v = useContext(Ctx);
-  if (!v)
-    throw new Error(
-      "useAgentChat must be used inside AgentTaskRuntimeProvider",
+/**
+ * Resolve the engine session for the turn: reuse the one in the URL, otherwise create a
+ * fresh session for the selected agent, route to it, and notify the history rail. Runs
+ * inside the transport's async request-prep so the id is ready before the request flies.
+ */
+async function ensureChatSession(
+  team: string,
+  agentId: string | null,
+  messages: unknown,
+): Promise<string> {
+  const fromUrl =
+    typeof window !== "undefined" ? sessionIdFromPath(window.location.pathname) : null;
+  if (fromUrl) return fromUrl;
+  if (!agentId) return "";
+  const title = lastUserText(messages).slice(0, 80);
+  const created = await apiFetch<{ id: string }>("/chat/sessions", {
+    method: "POST",
+    team,
+    body: { agentId, ...(title ? { title } : {}) },
+  });
+  if (typeof window !== "undefined") {
+    window.history.replaceState(null, "", `/${team}/chat/c/${created.id}`);
+    window.dispatchEvent(
+      new CustomEvent("agentik:chat-session-created", { detail: { sessionId: created.id } }),
     );
-  return v;
+  }
+  return created.id;
 }
 
 export function AgentTaskRuntimeProvider({
@@ -45,41 +69,43 @@ export function AgentTaskRuntimeProvider({
   team: string;
   children: React.ReactNode;
 }) {
-  const agentsQ = useAgents(team);
-  const agents: AgentOption[] = useMemo(
-    () => (agentsQ.data?.items ?? []).map((a) => ({ id: a.id, name: a.name })),
-    [agentsQ.data],
-  );
-  const [selectedAgentOverride, setSelectedAgentId] = useState<string | null>(
-    null,
-  );
-  const preferredAgentId = useMemo(
-    () =>
-      (agents.find((agent) => /hermes/i.test(agent.name)) ?? agents[0])?.id ??
-      null,
-    [agents],
-  );
-  const selectedAgentId = selectedAgentOverride ?? preferredAgentId;
+  const { selectedAgentId } = useAgentSelection();
 
   const runtime = useChatRuntime({
     transport: new AssistantChatTransport({
       api: "/api/agent-chat",
-      headers: () => ({ "x-agent-id": selectedAgentId ?? "", "x-team": team }),
+      prepareSendMessagesRequest: async (options) => {
+        const o = options as {
+          id: string;
+          messages: unknown;
+          trigger?: unknown;
+          messageId?: unknown;
+          requestMetadata?: unknown;
+          body?: Record<string, unknown>;
+        };
+        const sessionId = await ensureChatSession(team, selectedAgentId, o.messages);
+        // Mirror the transport's default body (it uses ours verbatim when present)
+        // and attach the routing headers, incl. the resolved engine session id.
+        return {
+          headers: {
+            "x-agent-id": selectedAgentId ?? "",
+            "x-team": team,
+            "x-session-id": sessionId,
+          },
+          body: {
+            ...(o.body ?? {}),
+            id: o.id,
+            messages: o.messages,
+            trigger: o.trigger,
+            messageId: o.messageId,
+            metadata: o.requestMetadata,
+          },
+        };
+      },
     }),
   });
 
   return (
-    <Ctx.Provider
-      value={{
-        agents,
-        agentsLoading: agentsQ.isLoading,
-        selectedAgentId,
-        setSelectedAgentId,
-      }}
-    >
-      <AssistantRuntimeProvider runtime={runtime}>
-        {children}
-      </AssistantRuntimeProvider>
-    </Ctx.Provider>
+    <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
   );
 }

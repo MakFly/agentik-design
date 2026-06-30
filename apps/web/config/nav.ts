@@ -9,6 +9,7 @@ import {
   Settings,
   LayoutDashboard,
   Monitor,
+  MessageSquare,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -21,13 +22,23 @@ export type NavGroup =
   | "system"
   | "configure";
 
+/**
+ * Two product surfaces with distinct shells:
+ * - `assistant`: the OpenClaw-style personal assistant (chat + its personal context),
+ *   served from the team root (`/{team}/chat`, `/{team}/memory`, …).
+ * - `platform`: the Multica business control-plane, served under `/{team}/platform/*`.
+ */
+export type NavSurface = "assistant" | "platform";
+
 export interface NavItem {
   key: string;
   label: string;
-  /** path segment under /{team} */
+  /** path segment (after the surface prefix) */
   segment: string;
   icon: LucideIcon;
   group: NavGroup;
+  /** which product surface this item belongs to */
+  surface: NavSurface;
   /** `g`-prefixed go-to shortcut letter */
   hotkey: string;
   /** permission required to see the item; undefined = always visible */
@@ -39,27 +50,69 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  // CONTROL PLANE — Projects are the center of the product (North Star), so they
-  // lead the nav; the Command Center dashboard follows.
+  // ── ASSISTANT surface (personal assistant, served from the team root) ──
   {
-    key: "projects",
-    label: "Projects",
-    segment: "projects",
-    icon: FolderKanban,
+    key: "chat",
+    label: "Chat",
+    segment: "chat",
+    icon: MessageSquare,
     group: "control",
-    hotkey: "p",
+    surface: "assistant",
+    hotkey: "c",
     permission: "run:read",
-    badge: "activeRuns",
   },
+  {
+    key: "memory",
+    label: "Memory",
+    segment: "memory",
+    icon: Database,
+    group: "knowledge",
+    surface: "assistant",
+    hotkey: "m",
+    permission: "memory:read",
+  },
+  {
+    key: "automations",
+    label: "Automations",
+    segment: "automations",
+    icon: Zap,
+    group: "build",
+    surface: "assistant",
+    hotkey: "z",
+    permission: "agent:read",
+  },
+  {
+    key: "channels",
+    label: "Telegram",
+    segment: "channels",
+    icon: RadioTower,
+    group: "knowledge",
+    surface: "assistant",
+    hotkey: "h",
+    permission: "settings:read",
+  },
+  // ── PLATFORM surface (Multica control-plane, served under /platform/*) ──
   {
     key: "command-center",
     label: "Command Center",
     segment: "command-center",
     icon: LayoutDashboard,
     group: "control",
+    surface: "platform",
     hotkey: "g",
     permission: "run:read",
     badge: "approvals",
+  },
+  {
+    key: "projects",
+    label: "Projects",
+    segment: "projects",
+    icon: FolderKanban,
+    group: "control",
+    surface: "platform",
+    hotkey: "p",
+    permission: "run:read",
+    badge: "activeRuns",
   },
   {
     key: "runs",
@@ -67,6 +120,7 @@ export const NAV_ITEMS: NavItem[] = [
     segment: "runs",
     icon: Play,
     group: "control",
+    surface: "platform",
     hotkey: "r",
     permission: "run:read",
     badge: "activeRuns",
@@ -77,17 +131,8 @@ export const NAV_ITEMS: NavItem[] = [
     segment: "agents",
     icon: Bot,
     group: "control",
+    surface: "platform",
     hotkey: "a",
-    permission: "agent:read",
-  },
-  // BUILD
-  {
-    key: "automations",
-    label: "Automations",
-    segment: "automations",
-    icon: Zap,
-    group: "build",
-    hotkey: "z",
     permission: "agent:read",
   },
   {
@@ -96,44 +141,26 @@ export const NAV_ITEMS: NavItem[] = [
     segment: "tools",
     icon: Wrench,
     group: "build",
+    surface: "platform",
     hotkey: "t",
     permission: "tool:read",
   },
-  // KNOWLEDGE
-  {
-    key: "memory",
-    label: "Memory",
-    segment: "memory",
-    icon: Database,
-    group: "knowledge",
-    hotkey: "m",
-    permission: "memory:read",
-  },
-  {
-    key: "channels",
-    label: "Telegram",
-    segment: "channels",
-    icon: RadioTower,
-    group: "knowledge",
-    hotkey: "h",
-    permission: "settings:read",
-  },
-  // SYSTEM
   {
     key: "observability",
     label: "Observability",
     segment: "observability",
     icon: Activity,
     group: "system",
+    surface: "platform",
     hotkey: "o",
   },
-  // CONFIGURE
   {
     key: "runtimes",
     label: "Runtimes",
     segment: "runtimes",
     icon: Monitor,
     group: "configure",
+    surface: "platform",
     hotkey: "u",
     permission: "settings:read",
   },
@@ -143,6 +170,7 @@ export const NAV_ITEMS: NavItem[] = [
     segment: "settings",
     icon: Settings,
     group: "configure",
+    surface: "platform",
     hotkey: "s",
     permission: "settings:read",
   },
@@ -156,14 +184,31 @@ export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
   configure: "Configure",
 };
 
+/** Segments served under the `/platform/*` prefix (the Multica surface). */
+export const PLATFORM_SEGMENTS = new Set(
+  NAV_ITEMS.filter((i) => i.surface === "platform").map((i) => i.segment),
+);
+
+export function navItemsForSurface(surface: NavSurface): NavItem[] {
+  return NAV_ITEMS.filter((i) => i.surface === surface);
+}
+
 /** Items shown in the mobile bottom tab bar (max 5; last is "More"). */
 export const MOBILE_NAV_KEYS = [
-  "projects",
   "command-center",
+  "projects",
   "runs",
   "agents",
 ] as const;
 
-export function hrefFor(team: string, segment: string): string {
-  return `/${team}/${segment}`;
+/**
+ * Build a route href. Platform segments live under `/{team}/platform/*`; everything else
+ * (assistant surface) is served from the team root. `rest` appends a dynamic tail
+ * (e.g. a run id) — pass without a leading slash.
+ */
+export function hrefFor(team: string, segment: string, rest?: string): string {
+  const base = PLATFORM_SEGMENTS.has(segment)
+    ? `/${team}/platform/${segment}`
+    : `/${team}/${segment}`;
+  return rest ? `${base}/${rest}` : base;
 }

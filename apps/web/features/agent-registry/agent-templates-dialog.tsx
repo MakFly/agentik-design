@@ -70,7 +70,7 @@ function TemplatesDialog({
   function openInBuilder() {
     if (!templateId) return;
     onOpenChange(false);
-    router.push(`/${team}/agents/new?template=${templateId}&harness=${harness}`);
+    router.push(`/${team}/platform/agents/new?template=${templateId}&harness=${harness}`);
   }
 
   return (

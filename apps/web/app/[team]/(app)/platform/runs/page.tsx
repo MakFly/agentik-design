@@ -18,7 +18,7 @@ export default async function RunsPage({
     const q = new URLSearchParams();
     q.set("group", "status");
     if (typeof sp.scope === "string") q.set("scope", sp.scope);
-    redirect(`/${team}/runs?${q.toString()}`);
+    redirect(`/${team}/platform/runs?${q.toString()}`);
   }
 
   return (

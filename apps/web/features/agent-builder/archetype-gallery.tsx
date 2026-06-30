@@ -45,10 +45,10 @@ export function ArchetypeGallery({ team }: { team: string }) {
   const total = groups.reduce((n, g) => n + g.items.length, 0);
 
   function open(templateId: string) {
-    router.push(`/${team}/agents/new?template=${templateId}&harness=${harness}`);
+    router.push(`/${team}/platform/agents/new?template=${templateId}&harness=${harness}`);
   }
   function openBlank() {
-    router.push(`/${team}/agents/new?blank=1&harness=${harness}`);
+    router.push(`/${team}/platform/agents/new?blank=1&harness=${harness}`);
   }
 
   return (
@@ -57,7 +57,7 @@ export function ArchetypeGallery({ team }: { team: string }) {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
             <Link
-              href={`/${team}/agents`}
+              href={`/${team}/platform/agents`}
               className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="size-3.5" /> Agents

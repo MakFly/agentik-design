@@ -60,7 +60,7 @@ export function DeliveriesTable({ team }: { team: string }) {
               </TableCell>
               <TableCell>
                 {d.runId ? (
-                  <Link href={`/${team}/runs/${d.runId}`} className="font-mono text-xs text-primary hover:underline" title={d.runId}>
+                  <Link href={`/${team}/platform/runs/${d.runId}`} className="font-mono text-xs text-primary hover:underline" title={d.runId}>
                     {formatShortId(d.runId)}
                   </Link>
                 ) : (

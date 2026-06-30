@@ -39,7 +39,7 @@ export function WorkspaceTab({ team }: { team: string }) {
       const res = await update.mutateAsync({ name, slug });
       await refreshSession(team);
       toast.success("Workspace updated");
-      if (res.slug !== team) router.replace(`/${res.slug}/settings?tab=workspace`);
+      if (res.slug !== team) router.replace(`/${res.slug}/platform/settings?tab=workspace`);
     } catch (e) {
       toastApiError(e, "Could not update workspace");
     }

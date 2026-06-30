@@ -39,7 +39,7 @@ export function RunSummary({
                 label: "Project",
                 value: (
                   <Link
-                    href={`/${team}/projects/${projectContext.project.id}`}
+                    href={`/${team}/platform/projects/${projectContext.project.id}`}
                     className="text-primary hover:underline"
                   >
                     {projectContext.project.name}
@@ -73,7 +73,7 @@ export function RunSummary({
               label: "Trace",
               value: (
                 <Link
-                  href={`/${team}/observability/traces/${run.traceId}`}
+                  href={`/${team}/platform/observability/traces/${run.traceId}`}
                   className="inline-flex items-center gap-0.5 text-primary hover:underline"
                 >
                   {run.traceId} <ArrowUpRight className="size-3" />
@@ -143,7 +143,7 @@ function OrchestrationPlanPanel({ team, run }: { team: string; run: Run }) {
             </p>
             {step.childRunId ? (
               <Link
-                href={`/${team}/runs/${step.childRunId}`}
+                href={`/${team}/platform/runs/${step.childRunId}`}
                 className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
               >
                 Open child run <ArrowUpRight className="size-3" aria-hidden="true" />

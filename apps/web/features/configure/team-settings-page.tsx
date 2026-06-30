@@ -36,7 +36,7 @@ export function TeamSettingsPage({ team }: { team: string }) {
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set(TAB_QUERY_KEY, next);
-      router.replace(`/${team}/settings?${params.toString()}`);
+      router.replace(`/${team}/platform/settings?${params.toString()}`);
     },
     [router, searchParams, team],
   );

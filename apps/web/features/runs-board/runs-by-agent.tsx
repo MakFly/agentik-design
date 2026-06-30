@@ -35,7 +35,7 @@ function subjectKey(run: Run): { key: string; name: string; href: (team: string)
     return {
       key: `agent:${id}`,
       name: run.subjectName ?? id,
-      href: (team) => `/${team}/agents/${id}`,
+      href: (team) => `/${team}/platform/agents/${id}`,
       kind: "agent",
     };
   }
@@ -104,7 +104,7 @@ function buildGroups(runs: Run[], team: string): AgentGroup[] {
 const RunRow = memo(function RunRow({ run, team, attempt }: { run: Run; team: string; attempt?: number }) {
   return (
     <Link
-      href={`/${team}/runs/${run.id}`}
+      href={`/${team}/platform/runs/${run.id}`}
       className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
     >
       <StatusBadge status={run.status} size="sm" />

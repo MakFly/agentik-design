@@ -104,7 +104,7 @@ export function ProjectDetailScreen({
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Project"
-          back={{ href: `/${team}/projects`, label: "Projects" }}
+          back={{ href: `/${team}/platform/projects`, label: "Projects" }}
         />
         <ErrorState error={project.error} onRetry={() => project.refetch()} />
       </div>
@@ -116,7 +116,7 @@ export function ProjectDetailScreen({
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Project"
-          back={{ href: `/${team}/projects`, label: "Projects" }}
+          back={{ href: `/${team}/platform/projects`, label: "Projects" }}
         />
         <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
           <Skeleton className="h-[520px]" />
@@ -184,7 +184,7 @@ function ProjectDetailHeader({
     <header className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
       <div className="flex min-w-0 items-center gap-3">
         <Button asChild variant="ghost" size="icon" className="size-9">
-          <Link href={`/${team}/projects`} aria-label="Back to projects">
+          <Link href={`/${team}/platform/projects`} aria-label="Back to projects">
             <ArrowLeft className="size-4" />
           </Link>
         </Button>
@@ -370,7 +370,7 @@ function ProjectConsole({
       setInstruction("");
       toast.success("Run queued");
       window.setTimeout(() => {
-        if (res.runId) window.location.href = `/${team}/runs/${res.runId}`;
+        if (res.runId) window.location.href = `/${team}/platform/runs/${res.runId}`;
       }, 350);
     } catch (error) {
       toast.error(
@@ -402,7 +402,7 @@ function ProjectConsole({
         </div>
         {task.lastRunId ? (
           <Button asChild variant="outline" size="sm">
-            <Link href={`/${team}/runs/${task.lastRunId}`}>Open run</Link>
+            <Link href={`/${team}/platform/runs/${task.lastRunId}`}>Open run</Link>
           </Button>
         ) : null}
       </div>
@@ -504,7 +504,7 @@ function ProjectConsole({
             </div>
             {task.lastRunId ? (
               <Button asChild variant="outline" size="sm">
-                <Link href={`/${team}/runs/${task.lastRunId}`}>
+                <Link href={`/${team}/platform/runs/${task.lastRunId}`}>
                   Open console
                 </Link>
               </Button>
@@ -560,7 +560,7 @@ function ProjectConsole({
                   </p>
                   {comment.runId ? (
                     <Link
-                      href={`/${team}/runs/${comment.runId}`}
+                      href={`/${team}/platform/runs/${comment.runId}`}
                       className="mt-2 inline-flex text-xs font-medium text-primary"
                     >
                       Open linked run
@@ -649,7 +649,7 @@ function ProjectContextPanel({
                 <span>{agentName(task.assignedAgentId)}</span>
                 {task.lastRunId ? (
                   <Link
-                    href={`/${team}/runs/${task.lastRunId}`}
+                    href={`/${team}/platform/runs/${task.lastRunId}`}
                     className="inline-flex items-center gap-1 text-primary"
                   >
                     Console

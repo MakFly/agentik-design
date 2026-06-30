@@ -16,6 +16,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useSessionStore } from "@/lib/stores/session.store";
+import { hrefFor } from "@/config/nav";
 
 /**
  * Organisation switcher in the sidebar header (v3 look). Lists the teams the
@@ -29,7 +30,7 @@ export function TeamSwitcher({ team }: { team: string }) {
   if (!session) return null;
 
   function switchTeam(slug: string) {
-    if (slug !== team) router.push(`/${slug}/projects`);
+    if (slug !== team) router.push(hrefFor(slug, "chat"));
   }
 
   return (

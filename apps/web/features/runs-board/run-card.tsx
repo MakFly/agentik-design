@@ -132,7 +132,7 @@ export const DraggableRunCard = memo(function DraggableRunCard({
       className={cn("group/card", isDragging && "opacity-30")}
     >
       <Link
-        href={`/${team}/runs/${run.id}`}
+        href={`/${team}/platform/runs/${run.id}`}
         draggable={false}
         className={cn("block", isDragging && "pointer-events-none")}
       >

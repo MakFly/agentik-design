@@ -75,7 +75,7 @@ export function PublishDialog({
         toast.success(`Published ${identity.name}${created.version ? ` v${created.version}` : ""}`);
         onPublished?.();
         onOpenChange(false);
-        router.push(`/${team}/agents/${created.id}`);
+        router.push(`/${team}/platform/agents/${created.id}`);
         return;
       }
 
@@ -98,7 +98,7 @@ export function PublishDialog({
       toast.success(`Published ${identity.name} v${result.version}`);
       onPublished?.();
       onOpenChange(false);
-      router.push(`/${team}/agents/${id}`);
+      router.push(`/${team}/platform/agents/${id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Publish failed");
     }

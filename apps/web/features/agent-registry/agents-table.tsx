@@ -262,7 +262,7 @@ export function NewAgentButton({ team }: { team: string }) {
   return (
     <RbacGate permission="agent:create">
       <Button asChild size="sm">
-        <Link href={`/${team}/agents/new`}>
+        <Link href={`/${team}/platform/agents/new`}>
           <Plus className="size-4" /> Nouvel agent
         </Link>
       </Button>
@@ -380,7 +380,7 @@ export function AgentsTable({ team }: { team: string }) {
             columns={cols}
             data={visibleItems}
             isLoading={isLoading}
-            onRowClick={(a) => router.push(`/${team}/agents/${a.id}`)}
+            onRowClick={(a) => router.push(`/${team}/platform/agents/${a.id}`)}
             emptyState={
               scope !== "all" || query ? (
                 <div className="p-8 text-center text-sm text-muted-foreground">

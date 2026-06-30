@@ -186,7 +186,7 @@ export function McpServersContent({
       ) : (
         <PageHeader
           title="MCP servers"
-          back={{ href: `/${team}/tools`, label: "Tools" }}
+          back={{ href: `/${team}/platform/tools`, label: "Tools" }}
           description="Register remote MCP servers, sync their tools, then grant those tools to agents."
           actions={
             <Button size="sm" onClick={openCreate}>
@@ -202,7 +202,7 @@ export function McpServersContent({
             V1 supports remote MCP over Streamable HTTP and SSE.
           </p>
           <Button variant="outline" size="sm" asChild>
-            <Link href={`/${team}/tools`}>
+            <Link href={`/${team}/platform/tools`}>
               <ArrowLeft className="size-4" /> HTTP tools
             </Link>
           </Button>

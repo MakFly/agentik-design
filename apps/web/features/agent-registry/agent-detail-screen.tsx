@@ -399,10 +399,10 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Chargement de l'agent"
-          back={{ href: `/${team}/agents`, label: "Agents" }}
+          back={{ href: `/${team}/platform/agents`, label: "Agents" }}
           actions={
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/agents`}>
+              <Link href={`/${team}/platform/agents`}>
                 <ArrowLeft className="size-4" />
                 Retour
               </Link>
@@ -423,7 +423,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Agent"
-          back={{ href: `/${team}/agents`, label: "Agents" }}
+          back={{ href: `/${team}/platform/agents`, label: "Agents" }}
         />
         <ErrorState error={agentQuery.error} onRetry={() => agentQuery.refetch()} />
       </div>
@@ -435,11 +435,11 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <PageHeader
         title={agent.name}
         description="Mission, runtime, capacités, mémoire injectée et historique d'exécution."
-        back={{ href: `/${team}/agents`, label: "Agents" }}
+        back={{ href: `/${team}/platform/agents`, label: "Agents" }}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm">
-              <Link href={`/${team}/agents/${agent.id}/edit`}>
+              <Link href={`/${team}/platform/agents/${agent.id}/edit`}>
                 <Pencil className="size-4" />
                 Modifier
               </Link>
@@ -451,7 +451,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/runs`}>
+              <Link href={`/${team}/platform/runs`}>
                 <History className="size-4" />
                 Runs
               </Link>
@@ -638,7 +638,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
                         <TableRow key={run.id}>
                           <TableCell>
                             <Link
-                              href={`/${team}/runs/${run.id}`}
+                              href={`/${team}/platform/runs/${run.id}`}
                               className="inline-flex items-center gap-1.5 font-mono text-xs hover:underline"
                               title={run.id}
                             >
@@ -675,7 +675,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               {agentRuns.length > 8 ? (
                 <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
                   8 runs affichés sur {formatCompactNumber(agentRuns.length)}.{" "}
-                  <Link href={`/${team}/runs`} className="text-primary hover:underline">
+                  <Link href={`/${team}/platform/runs`} className="text-primary hover:underline">
                     Tout voir
                   </Link>
                 </div>

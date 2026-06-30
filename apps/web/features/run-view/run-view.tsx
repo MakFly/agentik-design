@@ -60,7 +60,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   if (isError) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Run" back={{ href: `/${team}/runs`, label: "Runs" }} />
+        <PageHeader title="Run" back={{ href: `/${team}/platform/runs`, label: "Runs" }} />
         <ErrorState error={error} onRetry={() => refetch()} />
       </div>
     );
@@ -69,7 +69,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   if (isLoading || !data) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Run" back={{ href: `/${team}/runs`, label: "Runs" }} />
+        <PageHeader title="Run" back={{ href: `/${team}/platform/runs`, label: "Runs" }} />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr_300px]">
           <Skeleton className="h-96" />
           <Skeleton className="h-96" />
@@ -83,7 +83,7 @@ export function RunView({ team, runId }: { team: string; runId: string }) {
   if (!data.run) {
     return (
       <div className="flex flex-col gap-6">
-        <PageHeader title="Run" back={{ href: `/${team}/runs`, label: "Runs" }} />
+        <PageHeader title="Run" back={{ href: `/${team}/platform/runs`, label: "Runs" }} />
         <div className="p-8 text-center text-sm text-muted-foreground">This run can&apos;t be displayed.</div>
       </div>
     );
@@ -249,7 +249,7 @@ function RunNavGroup({
           return (
             <Link
               key={run.id}
-              href={`/${team}/runs/${run.id}`}
+              href={`/${team}/platform/runs/${run.id}`}
               aria-current={current ? "page" : undefined}
               className={cn(
                 "group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -311,7 +311,7 @@ function RunDetailHeader({
     <header className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
       <div className="flex min-w-0 items-center gap-2">
         <Link
-          href={`/${team}/runs`}
+          href={`/${team}/platform/runs`}
           className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
           aria-label="Back to runs"
         >
@@ -375,7 +375,7 @@ function ChildRunsSection({
         {childrenRuns.map((child) => (
           <Link
             key={child.id}
-            href={`/${team}/runs/${child.id}`}
+            href={`/${team}/platform/runs/${child.id}`}
             className="min-w-0 rounded-md border border-border bg-background px-3 py-2 transition-colors hover:bg-surface-2"
           >
             <div className="flex min-w-0 items-center gap-2">

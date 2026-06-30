@@ -94,7 +94,7 @@ export function TracesTable({ team, items, isLoading }: { team: string; items: T
         columns={columns}
         data={items}
         isLoading={isLoading}
-        onRowClick={(t) => router.push(`/${team}/observability/traces/${t.traceId}`)}
+        onRowClick={(t) => router.push(`/${team}/platform/observability/traces/${t.traceId}`)}
         emptyState={
           status || q ? (
             <div className="p-8 text-center text-sm text-muted-foreground">

@@ -127,7 +127,7 @@ export function CommandCenterScreen({ team }: { team: string }) {
               </Link>
             </Button>
             <Button asChild size="sm">
-              <Link href={`/${team}/projects`}>
+              <Link href={`/${team}/platform/projects`}>
                 <FolderKanban className="size-4" />
                 Projects
               </Link>
@@ -145,7 +145,7 @@ export function CommandCenterScreen({ team }: { team: string }) {
           description="Create a project to attach resources, spawn tasks, and let agents work inside a shared workspace."
           action={
             <Button asChild>
-              <Link href={`/${team}/projects`}>Create project</Link>
+              <Link href={`/${team}/platform/projects`}>Create project</Link>
             </Button>
           }
         />
@@ -184,7 +184,7 @@ export function CommandCenterScreen({ team }: { team: string }) {
               <SectionHeader
                 title="Project Workspaces"
                 description="Project lanes with code and ops context attached."
-                href={`/${team}/projects`}
+                href={`/${team}/platform/projects`}
               />
               <div className="grid gap-3 lg:grid-cols-2">
                 {projects.slice(0, 6).map((project) => (
@@ -305,7 +305,7 @@ function ProjectTile({
 }) {
   return (
     <Link
-      href={`/${team}/projects/${project.id}`}
+      href={`/${team}/platform/projects/${project.id}`}
       className="group rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/40"
     >
       <div className="flex items-start justify-between gap-3">
@@ -371,14 +371,14 @@ function ApprovalPanel({
       <SectionHeader
         title="Approval Queue"
         description="Gate before risky actions."
-        href={`/${team}/runs`}
+        href={`/${team}/platform/runs`}
       />
       <div className="mt-3 flex flex-col gap-2">
         {approvals.length ? (
           approvals.slice(0, 4).map((run) => (
             <Link
               key={run.id}
-              href={`/${team}/runs/${run.id}`}
+              href={`/${team}/platform/runs/${run.id}`}
               className="rounded-md border border-border bg-surface-1 px-3 py-2 hover:border-primary/40"
             >
               <div className="flex items-center justify-between gap-2">
@@ -473,7 +473,7 @@ function RunPanel({ team, runs }: { team: string; runs: Run[] }) {
       <SectionHeader
         title="Live Runs"
         description="Execution console entry points."
-        href={`/${team}/runs`}
+        href={`/${team}/platform/runs`}
       />
       <div className="mt-3 flex flex-col gap-2">
         {runs.length ? (
@@ -495,7 +495,7 @@ function RunRow({ team, run }: { team: string; run: Run }) {
       : 0;
   return (
     <Link
-      href={`/${team}/runs/${run.id}`}
+      href={`/${team}/platform/runs/${run.id}`}
       className="rounded-md border border-border bg-surface-1 px-3 py-2 hover:border-primary/40"
     >
       <div className="flex items-center justify-between gap-2">
@@ -532,14 +532,14 @@ function AgentPanel({ team, agents }: { team: string; agents: AgentRow[] }) {
       <SectionHeader
         title="Agent Bench"
         description="Available coding, ops, and review agents."
-        href={`/${team}/agents`}
+        href={`/${team}/platform/agents`}
       />
       <div className="mt-3 flex flex-col gap-2">
         {agents.length ? (
           agents.map((agent) => (
             <Link
               key={agent.id}
-              href={`/${team}/agents/${agent.id}`}
+              href={`/${team}/platform/agents/${agent.id}`}
               className="rounded-md border border-border bg-surface-1 px-3 py-2 hover:border-primary/40"
             >
               <div className="flex items-center justify-between gap-2">

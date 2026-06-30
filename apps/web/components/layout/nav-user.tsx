@@ -87,7 +87,7 @@ export function NavUser({ team }: { team: string }) {
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem
-                onSelect={() => router.push(`/${team}/settings?tab=profile`)}
+                onSelect={() => router.push(`/${team}/platform/settings?tab=profile`)}
               >
                 <User className="size-4" /> Profile
               </DropdownMenuItem>

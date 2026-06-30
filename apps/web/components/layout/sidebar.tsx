@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MessageSquare } from "lucide-react";
 import {
-  NAV_ITEMS,
+  navItemsForSurface,
   NAV_GROUP_LABELS,
   hrefFor,
   type NavGroup,
@@ -39,12 +40,14 @@ const GROUP_ORDER: NavGroup[] = [
 const MENU_BUTTON_CLASS =
   "text-muted-foreground hover:not-data-[active=true]:bg-sidebar-accent/70 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground";
 
-export function AppSidebar({ team }: { team: string }) {
+export function PlatformSidebar({ team }: { team: string }) {
   const pathname = usePathname();
   const { can } = useRbac();
   const indicators = useIndicators();
 
-  const visible = NAV_ITEMS.filter((i) => !i.permission || can(i.permission));
+  const visible = navItemsForSurface("platform").filter(
+    (i) => !i.permission || can(i.permission),
+  );
 
   // Active item = the one whose href is the longest prefix of the current
   // pathname. This keeps nested routes (e.g. /agents/123) highlighting their
@@ -68,9 +71,24 @@ export function AppSidebar({ team }: { team: string }) {
   }
 
   return (
-    <Sidebar collapsible="icon" variant="inset">
+    <Sidebar collapsible="icon" variant="inset" className="select-none">
       <SidebarHeader>
         <TeamSwitcher team={team} />
+        {/* Back to the personal assistant surface (chat). */}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              tooltip="Back to the Assistant"
+              className={MENU_BUTTON_CLASS}
+            >
+              <Link href={hrefFor(team, "chat")}>
+                <MessageSquare aria-hidden="true" />
+                <span>Assistant</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent>

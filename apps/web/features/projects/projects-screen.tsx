@@ -43,7 +43,7 @@ export function ProjectsScreen({ team }: { team: string }) {
       ) : projects.data?.items.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {projects.data.items.map((project) => (
-            <Link key={project.id} href={`/${team}/projects/${project.id}`} className="group">
+            <Link key={project.id} href={`/${team}/platform/projects/${project.id}`} className="group">
               <Card className="h-full transition-colors group-hover:border-primary/40">
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">

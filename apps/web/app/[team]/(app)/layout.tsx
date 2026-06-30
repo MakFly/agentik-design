@@ -1,8 +1,11 @@
 import type { ReactNode } from "react";
-import { AppShell } from "@/components/layout/app-shell";
 import { SessionHydrator } from "@/features/session/session-hydrator";
 import { SessionGuard } from "@/features/session/session-guard";
 
+/**
+ * Team root layout — session only. The visual shell is chosen by the nested surface
+ * layouts: `(assistant)/layout` (personal assistant) and `platform/layout` (Multica).
+ */
 export default async function TeamLayout({
   children,
   params,
@@ -14,9 +17,7 @@ export default async function TeamLayout({
   return (
     <>
       <SessionHydrator team={team} />
-      <SessionGuard team={team}>
-        <AppShell team={team}>{children}</AppShell>
-      </SessionGuard>
+      <SessionGuard team={team}>{children}</SessionGuard>
     </>
   );
 }

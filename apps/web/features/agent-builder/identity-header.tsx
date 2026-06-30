@@ -33,7 +33,7 @@ export function IdentityHeader({
   return (
     <div className="flex flex-col gap-3">
       <Link
-        href={`/${team}/agents`}
+        href={`/${team}/platform/agents`}
         className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-3.5" /> Agents

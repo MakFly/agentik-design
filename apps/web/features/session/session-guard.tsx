@@ -21,7 +21,7 @@ export function SessionGuard({ team, children }: { team: string; children: React
     if (!session) {
       router.replace("/login");
     } else if (session.team.slug !== team) {
-      router.replace(`/${session.team.slug}/projects`);
+      router.replace(`/${session.team.slug}/chat`);
     }
   }, [hydrated, session, team, router]);
 

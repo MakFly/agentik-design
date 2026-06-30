@@ -44,7 +44,7 @@ export function CommandPalette({ team }: { team: string }) {
   );
 
   const quickActions = [
-    { key: "new-agent", label: "Create agent", href: hrefFor(team, "agents/new"), permission: "agent:create" as const },
+    { key: "new-agent", label: "Create agent", href: hrefFor(team, "agents", "new"), permission: "agent:create" as const },
     // "Create workflow" hidden while Workflows is In progress.
   ].filter((a) => can(a.permission));
 

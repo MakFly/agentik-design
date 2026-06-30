@@ -38,10 +38,10 @@ export function AgentEditScreen({ team, agentId }: { team: string; agentId: stri
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Edit agent"
-          back={{ href: `/${team}/agents/${agentId}`, label: "Agent" }}
+          back={{ href: `/${team}/platform/agents/${agentId}`, label: "Agent" }}
           actions={
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/agents/${agentId}`}>
+              <Link href={`/${team}/platform/agents/${agentId}`}>
                 <ArrowLeft className="size-4" />
                 Back
               </Link>

@@ -30,7 +30,7 @@ export function TraceView({ team, traceId }: { team: string; traceId: string }) 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const isMobile = useIsMobile();
 
-  const back = { href: `/${team}/observability`, label: "Observability" };
+  const back = { href: `/${team}/platform/observability`, label: "Observability" };
 
   if (isError) {
     return (
