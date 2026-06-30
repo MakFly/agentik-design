@@ -8,7 +8,7 @@
  * falls back to the queue path (sendChatMessage + /runs/:id/messages/live).
  */
 import { and, eq, sql } from "drizzle-orm";
-import { streamText, stepCountIs } from "ai";
+import { Experimental_Agent, stepCountIs } from "ai";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { resolveProviderEnv } from "../settings/providers-repo";
@@ -22,6 +22,7 @@ import {
 import { appendAssistantTurn, buildChatPrompt } from "./repo";
 import { agentHasBuiltinSkill } from "./skills";
 import { buildWebTools } from "./web-tools";
+import { buildAgentTools } from "./agent-tools";
 
 const { chatSessions, chatMessages, agents } = schema;
 
@@ -87,15 +88,14 @@ export async function streamChatTurn(
     .where(eq(chatSessions.id, sessionId));
   const prompt = buildInjectionPreamble(ctx) + (await buildChatPrompt(sessionId, userMsgId, content));
 
-  const result = streamText({
+  // Run the turn through the AI SDK's agent loop (ToolLoopAgent). Tools (Hermes model):
+  // the assistant can search/read the web and create agents mid-turn; stopWhen lets it chain
+  // tool calls → answer. Tool steps stream to the UI; only the final text is persisted.
+  const agent = new Experimental_Agent({
     model: buildModel(provider, modelId, apiKey),
-    system: ctx.systemPrompt,
-    prompt,
+    instructions: ctx.systemPrompt,
     providerOptions: reasoningProviderOptions(provider, modelId),
-    // Web tools (Hermes model): the assistant can search/read the web mid-turn. stopWhen
-    // lets it chain search → extract → answer. Tool steps stream to the UI; only the final
-    // text is persisted to the transcript.
-    tools: buildWebTools(),
+    tools: { ...buildWebTools(), ...buildAgentTools(teamId) },
     stopWhen: stepCountIs(5),
     // Persist the final assistant turn (transcript) + notify the UI. Reasoning is live-only.
     // `text` is only the LAST step's text (ai v6), so aggregate across steps — otherwise a
@@ -110,6 +110,7 @@ export async function streamChatTurn(
       if (full) await appendAssistantTurn(teamId, sessionId, genId("run"), full);
     },
   });
+  const result = await agent.stream({ prompt });
 
   return {
     ok: true,

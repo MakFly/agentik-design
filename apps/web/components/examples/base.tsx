@@ -578,6 +578,16 @@ function useSlashCommands(): readonly Unstable_SlashCommand[] {
         execute: () => send("Lis mes 5 derniers emails."),
       },
       {
+        id: "agent",
+        description: "Create a new agent (conversational)",
+        icon: "Bot",
+        execute: () =>
+          send(
+            "Aide-moi à créer un nouvel agent : demande-moi le nom, le but et les " +
+              "instructions s'ils manquent, puis crée-le.",
+          ),
+      },
+      {
         id: "model",
         description: "Switch the chat model (cycles; applies when the agent supports it)",
         icon: "Cpu",
@@ -602,7 +612,7 @@ function useSlashCommands(): readonly Unstable_SlashCommand[] {
         icon: "HelpCircle",
         execute: () =>
           toast("Slash commands", {
-            description: "/new · /summarize · /translate · /inbox · /model · /help",
+            description: "/new · /summarize · /translate · /inbox · /agent · /model · /help",
           }),
       },
     ];

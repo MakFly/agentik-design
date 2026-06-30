@@ -19,6 +19,7 @@ import {
 import { resolveInjectionContext, buildInjectionPreamble } from "../learning";
 import { buildGmailTools, type GmailCapabilities } from "./gmail-tools";
 import { buildWebTools } from "./web-tools";
+import { buildAgentTools } from "./agent-tools";
 
 const { runs, runMessages } = schema;
 
@@ -481,7 +482,7 @@ async function fulfillGmailWithTools(
       model: buildModel(provider, modelId, apiKey),
       system,
       prompt,
-      tools: { ...buildGmailTools(ctx.teamId, caps), ...buildWebTools() },
+      tools: { ...buildGmailTools(ctx.teamId, caps), ...buildWebTools(), ...buildAgentTools(ctx.teamId) },
       stopWhen: stepCountIs(6),
     });
     text = result.text?.trim() || "(réponse vide)";
