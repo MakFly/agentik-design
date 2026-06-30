@@ -45,9 +45,23 @@ interface AgentDef {
   sendTool?: boolean;
   /** deterministic engine-side skills (see domains/chat/skills.ts) */
   skills?: string[];
+  /** runtime adapter kind; defaults to "claude". Use "openai" for the API-key path. */
+  runtimeKind?: string;
 }
 
 const AGENTS: AgentDef[] = [
+  {
+    // General-purpose default agent (OpenClaw's "main" equivalent). The chat opens
+    // this one by default; it runs on the OpenAI provider key, no CLI needed.
+    name: "Assistant",
+    role: "operator",
+    goal: "Be a helpful general-purpose assistant for anything the operator asks.",
+    emoji: "💬",
+    color: "#6366f1",
+    systemPrompt:
+      "You are Assistant, a helpful, concise general-purpose AI assistant. Answer directly and clearly. Ask for clarification only when truly needed.",
+    runtimeKind: "openai",
+  },
   {
     name: "Office Manager",
     role: "orchestrator",
@@ -90,7 +104,7 @@ const AGENTS: AgentDef[] = [
 function agentConfig(def: AgentDef) {
   return {
     systemPrompt: def.systemPrompt,
-    runtimeKind: "claude",
+    runtimeKind: def.runtimeKind ?? "claude",
     skills: def.skills ?? [],
     tools: def.sendTool
       ? [{ toolId: "gmail.send", scopes: ["send"], requireApproval: true, rateCapPerMin: 5 }]

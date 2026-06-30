@@ -16,11 +16,11 @@ import {
   ToolGroupTrigger,
 } from "@/components/assistant-ui/tool-group";
 import {
-  LocalThreadHistoryProvider,
-  LocalThreadList,
-  LocalThreadTitle,
-  useLocalThreadHistory,
-} from "@/components/assistant-ui/local-thread-history";
+  EngineThreadHistoryProvider,
+  EngineThreadList,
+  EngineThreadTitle,
+  useEngineThreadHistory,
+} from "@/components/assistant-ui/engine-thread-history";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import {
   Reasoning,
@@ -63,8 +63,6 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CloudSunIcon,
-  CodeXmlIcon,
   CopyIcon,
   DownloadIcon,
   FileTextIcon,
@@ -128,13 +126,13 @@ const Logo: FC<{ brandName?: string }> = ({ brandName = "assistant-ui" }) => {
 };
 
 const Sidebar: FC<{ collapsed?: boolean; brandName?: string }> = ({ collapsed, brandName = "assistant-ui" }) => {
-  const { createNewThread } = useLocalThreadHistory();
+  const { createNewThread } = useEngineThreadHistory();
 
   return (
     <aside
       className={cn(
         "flex h-full flex-col overflow-hidden transition-all duration-200",
-        collapsed ? "w-12" : "w-65",
+        collapsed ? "w-0" : "w-65",
       )}
     >
       <div
@@ -176,7 +174,7 @@ const Sidebar: FC<{ collapsed?: boolean; brandName?: string }> = ({ collapsed, b
         </TooltipIconButton>
       ) : (
         <div className="relative w-65 flex-1 overflow-y-auto p-3">
-          <LocalThreadList />
+          <EngineThreadList />
         </div>
       )}
     </aside>
@@ -201,7 +199,7 @@ const MobileSidebar: FC<{ brandName?: string }> = ({ brandName }) => {
           <Logo brandName={brandName} />
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
-          <LocalThreadList />
+          <EngineThreadList />
         </div>
       </SheetContent>
     </Sheet>
@@ -281,7 +279,7 @@ const Header: FC<{
       >
         <PanelLeftIcon className="size-4" />
       </TooltipIconButton>
-      <LocalThreadTitle />
+      <EngineThreadTitle />
       <DashboardSettingsButton />
       <ThemeModeToggle />
       <TooltipIconButton
@@ -306,7 +304,7 @@ const isNewChatView = (s: AssistantState) =>
 
 const Thread: FC = () => {
   const isEmpty = useAuiState(isNewChatView);
-  const { missingThreadId, createNewThread } = useLocalThreadHistory();
+  const { missingThreadId, createNewThread } = useEngineThreadHistory();
   const showMissingThread = Boolean(missingThreadId);
 
   return (
@@ -419,93 +417,41 @@ type SuggestionGroup = {
   options: { label: string; prompt: string }[];
 };
 
+// Product-relevant starters for an agent operator (not the generic AI-demo set).
 const SUGGESTION_GROUPS: SuggestionGroup[] = [
   {
-    label: "Weather",
-    icon: <CloudSunIcon />,
-    options: [
-      {
-        label: "in San Francisco",
-        prompt: "What's the weather in San Francisco?",
-      },
-      { label: "in Singapore", prompt: "What's the weather in Singapore?" },
-      { label: "in Tokyo", prompt: "What's the weather in Tokyo?" },
-      { label: "in London", prompt: "What's the weather in London?" },
-    ],
-  },
-  {
-    label: "Code",
-    icon: <CodeXmlIcon />,
-    options: [
-      {
-        label: "explain React hooks",
-        prompt: "Explain React hooks like useState and useEffect",
-      },
-      {
-        label: "write a debounce function",
-        prompt: "Write a debounce function in TypeScript",
-      },
-      {
-        label: "review a useEffect cleanup",
-        prompt: "Show me the right way to clean up a subscription in useEffect",
-      },
-    ],
-  },
-  {
-    label: "Write",
-    icon: <PencilLineIcon />,
-    options: [
-      {
-        label: "a product announcement",
-        prompt: "Draft a short product announcement for a new dark mode",
-      },
-      {
-        label: "release notes",
-        prompt:
-          "Write release notes for a bugfix release of a React component library",
-      },
-      {
-        label: "a PR description",
-        prompt:
-          "Write a pull request description for a change that adds keyboard shortcuts",
-      },
-    ],
-  },
-  {
-    label: "Analyze",
+    label: "Operate",
     icon: <ChartColumnIcon />,
     options: [
-      {
-        label: "React vs Vue vs Svelte",
-        prompt: "Compare React, Vue, and Svelte in a table",
-      },
-      {
-        label: "GDP of US, China, Japan",
-        prompt:
-          "Compare the GDP of the United States, China, and Japan in a table",
-      },
-      {
-        label: "pros and cons of SSR",
-        prompt: "What are the pros and cons of server-side rendering?",
-      },
+      { label: "summarize today's runs", prompt: "Summarize today's runs: what succeeded, what failed, and what's still queued." },
+      { label: "what needs approval", prompt: "List anything currently waiting for my approval and why." },
+      { label: "agent health", prompt: "Give me a quick health check of my agents and their connected runtimes." },
     ],
   },
   {
-    label: "Brainstorm",
+    label: "Inbox",
+    icon: <PencilLineIcon />,
+    options: [
+      { label: "triage my inbox", prompt: "Triage my inbox: group the latest messages by urgency and suggest next actions." },
+      { label: "draft a reply", prompt: "Draft a concise, friendly reply to the most recent customer message." },
+      { label: "chase an invoice", prompt: "Draft a polite payment reminder for an overdue invoice." },
+    ],
+  },
+  {
+    label: "Plan",
     icon: <LightbulbIcon />,
     options: [
-      {
-        label: "side project ideas",
-        prompt: "Brainstorm five side project ideas for a React developer",
-      },
-      {
-        label: "names for a dev tool",
-        prompt: "Brainstorm names for a developer tools startup",
-      },
-      {
-        label: "talk topics",
-        prompt: "Brainstorm talk topics for a React meetup",
-      },
+      { label: "plan my week", prompt: "Help me plan my week: propose a focused schedule from my open tasks." },
+      { label: "next best actions", prompt: "Based on recent activity, what are the 3 next best actions I should take?" },
+      { label: "delegate to an agent", prompt: "Suggest which of my agents should handle each of my open tasks." },
+    ],
+  },
+  {
+    label: "Telegram",
+    icon: <GlobeIcon />,
+    options: [
+      { label: "reply on Telegram", prompt: "Draft a reply to the latest Telegram message from the bound channel." },
+      { label: "broadcast an update", prompt: "Write a short status update I can broadcast to my Telegram channel." },
     ],
   },
 ];
@@ -1087,13 +1033,15 @@ export const Base: FC<{
   brandName?: string;
   /** Replace the default header entirely. Receives sidebar controls so it stays wired. */
   headerSlot?: (controls: BaseHeaderControls) => ReactNode;
-}> = ({ team, threadId, showHeader = true, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID, brandName, headerSlot }) => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  /** Start with the sessions rail collapsed (e.g. when embedded next to the app nav). */
+  defaultSidebarCollapsed?: boolean;
+}> = ({ team, threadId, showHeader = true, modelAvailability = {}, defaultModelId = DEFAULT_MODEL_ID, brandName, headerSlot, defaultSidebarCollapsed = false }) => {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(defaultSidebarCollapsed);
   const models = useMemo(() => buildModelOptions(modelAvailability), [modelAvailability]);
 
   return (
     <ModelCatalogContext.Provider value={{ models, defaultModelId }}>
-      <LocalThreadHistoryProvider team={team} routeThreadId={threadId}>
+      <EngineThreadHistoryProvider team={team} routeThreadId={threadId}>
         <div className="bg-muted/30 flex h-full w-full">
         <div className="hidden md:block">
           <Sidebar collapsed={sidebarCollapsed} brandName={brandName} />
@@ -1118,7 +1066,7 @@ export const Base: FC<{
           </div>
         </div>
       </div>
-      </LocalThreadHistoryProvider>
+      </EngineThreadHistoryProvider>
     </ModelCatalogContext.Provider>
   );
 };

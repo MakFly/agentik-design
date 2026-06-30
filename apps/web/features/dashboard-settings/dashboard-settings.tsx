@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useState, type FC } from "react";
+import { useEffect, useMemo, useState, type FC } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { SlidersHorizontalIcon, WrenchIcon, XIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  SearchIcon,
+  SlidersHorizontalIcon,
+  WrenchIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 import { ToolsSection } from "./tools-section";
 import { PreferencesSection } from "./preferences-section";
 
@@ -26,14 +32,16 @@ const SECTIONS: readonly Section[] = [
 const GROUP_ORDER = ["Personal", "Assistant"] as const;
 
 /**
- * Linear-style settings surface for the dashboard assistant: a full-screen view
- * with a section rail on the left and a content pane on the right. Escape (or the
- * close button) returns to the chat. Reachable at /{team}/chat/settings.
+ * Linear-style settings surface for the dashboard assistant: a navigation
+ * sidebar ("Back to app" + search + grouped sections) on the left and a content
+ * pane on the right. Escape (or "Back to app") returns to the chat. Reachable at
+ * /{team}/chat/settings.
  */
 export function DashboardSettings({ team }: { team: string }) {
   const router = useRouter();
   const backHref = `/${team}/chat`;
   const [active, setActive] = useState<SectionId>("preferences");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -45,37 +53,51 @@ export function DashboardSettings({ team }: { team: string }) {
 
   const current = SECTIONS.find((s) => s.id === active) ?? SECTIONS[0];
 
-  return (
-    <div className="flex h-dvh flex-col bg-background">
-      {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          <span className="text-muted-foreground truncate capitalize">{team}</span>
-          <span className="text-muted-foreground/50">/</span>
-          <span className="font-medium">Settings</span>
-        </div>
-        <Link
-          href={backHref}
-          aria-label="Close settings"
-          className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs outline-none focus-visible:ring-2"
-        >
-          <span className="hidden sm:inline">Esc</span>
-          <XIcon className="size-4" />
-        </Link>
-      </header>
+  // The search box filters the nav list only; the active section's content
+  // stays visible even when its label is filtered out.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return SECTIONS;
+    return SECTIONS.filter((s) => s.label.toLowerCase().includes(q));
+  }, [query]);
 
-      {/* Body: rail + content (rail becomes a top strip on mobile) */}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+  return (
+    <div className="flex h-dvh bg-background">
+      {/* Navigation sidebar */}
+      <aside className="flex w-60 shrink-0 flex-col border-r">
+        <div className="p-3">
+          <Link
+            href={backHref}
+            className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm outline-none focus-visible:ring-2"
+          >
+            <ChevronLeftIcon className="size-4" />
+            Back to app
+          </Link>
+        </div>
+
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search..."
+              aria-label="Search settings"
+              className="h-8 pl-8 text-sm shadow-none"
+            />
+          </div>
+        </div>
+
         <nav
           aria-label="Settings sections"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 md:w-56 md:flex-col md:gap-3 md:overflow-y-auto md:border-r md:border-b-0 md:p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex-1 space-y-4 overflow-y-auto px-2 pb-4 pt-2"
         >
           {GROUP_ORDER.map((group) => {
-            const items = SECTIONS.filter((s) => s.group === group);
+            const items = filtered.filter((s) => s.group === group);
             if (!items.length) return null;
             return (
-              <div key={group} className="flex shrink-0 gap-1 md:flex-col">
-                <p className="text-muted-foreground hidden px-2 pb-1 text-xs font-medium tracking-wide uppercase md:block">
+              <div key={group} className="flex flex-col gap-0.5">
+                <p className="text-muted-foreground px-2 pb-1 text-xs font-medium">
                   {group}
                 </p>
                 {items.map((s) => {
@@ -88,7 +110,7 @@ export function DashboardSettings({ team }: { team: string }) {
                       aria-current={isActive ? "page" : undefined}
                       onClick={() => setActive(s.id)}
                       className={cn(
-                        "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors",
+                        "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors",
                         "hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 focus-visible:ring-2",
                         isActive
                           ? "bg-accent text-accent-foreground font-medium"
@@ -104,13 +126,14 @@ export function DashboardSettings({ team }: { team: string }) {
             );
           })}
         </nav>
+      </aside>
 
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-            {current.render()}
-          </div>
-        </main>
-      </div>
+      {/* Content */}
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-2xl px-6 py-10 sm:px-10">
+          {current.render()}
+        </div>
+      </main>
     </div>
   );
 }

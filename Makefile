@@ -82,7 +82,7 @@ dev/web: ## Start Next.js dev server (free port, override: make dev/web WEB_PORT
 
 dev/engine: dev/check-engine-port ## Start workflow engine API (:8787)
 	@printf "$(C)→ Engine API on http://localhost:$(ENGINE_PORT)$(N)\n"
-	@cd $(ENGINE) && bun run dev
+	@cd $(ENGINE) && EMBEDDED_WORKER=true bun run dev
 
 UNIFIED_PORT ?= 3333
 up: ## Solo mode: ONE process, ZERO external services (UI + API + realtime + worker + PGlite) on :3333
