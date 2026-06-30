@@ -524,3 +524,20 @@
     animation: none;
   }
 }
+
+/* Shiki dual-theme code blocks (defaultColor:false emits --shiki-light/-dark vars). */
+.aui-shiki pre.shiki {
+  margin: 0;
+  padding: 0.75rem 0.875rem;
+  overflow-x: auto;
+}
+.aui-shiki .shiki,
+.aui-shiki .shiki span {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+.dark .aui-shiki .shiki,
+.dark .aui-shiki .shiki span {
+  color: var(--shiki-dark);
+  background-color: var(--shiki-dark-bg);
+}

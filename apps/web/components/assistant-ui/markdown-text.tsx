@@ -2,9 +2,24 @@
 
 import {
   MarkdownTextPrimitive,
+  normalizeMathDelimiters,
 } from "@assistant-ui/react-markdown";
 import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { ShikiHighlighter } from "./shiki-highlighter";
+import { CodeBlockHeader } from "./code-header";
+
+/**
+ * LLMs emit math in delimiters remark-math does not parse (`\(...\)` / `\[...\]`,
+ * `[/math]` tags); normalize them to `$…$` / `$$…$$` so KaTeX renders them. Streaming-safe
+ * (runs on the full accumulated text). We deliberately skip `escapeCurrencyDollars` here:
+ * this is a technical/math assistant where inline math routinely opens with a digit
+ * (`$240\,\text{km}$`), which currency-escaping would break — prices in prose are rare.
+ */
+const preprocessMath = (text: string) => normalizeMathDelimiters(text);
 
 function cx(...classes: Array<string | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -85,8 +100,14 @@ const markdownComponents = {
 export function MarkdownText() {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
-      components={markdownComponents}
+      preprocess={preprocessMath}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      components={{
+        ...markdownComponents,
+        SyntaxHighlighter: ShikiHighlighter,
+        CodeHeader: CodeBlockHeader,
+      }}
       className="aui-md max-w-[70ch] text-base leading-[1.625] text-foreground"
     />
   );
@@ -101,8 +122,12 @@ export function MarkdownBlock({
 }) {
   return (
     <div className={cx("aui-md max-w-[70ch] text-base leading-[1.625] text-foreground", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {text}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={markdownComponents}
+      >
+        {preprocessMath(text)}
       </ReactMarkdown>
     </div>
   );

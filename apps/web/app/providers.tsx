@@ -46,7 +46,7 @@ export function Providers({ children }: { children: ReactNode }) {
           <TooltipProvider delayDuration={200}>
             <DensityBridge />
             <MswReady>{children}</MswReady>
-            <Toaster richColors position="bottom-center" />
+            <Toaster richColors position="top-center" />
           </TooltipProvider>
         </NuqsAdapter>
       </ThemeProvider>

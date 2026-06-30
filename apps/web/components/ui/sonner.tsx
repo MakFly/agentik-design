@@ -17,11 +17,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
-      // Stack & spacing: cards expand on hover, never overlap the iOS home indicator.
+      // Stack & spacing: cards expand on hover; anchored from the top (top-center).
       expand
       gap={10}
-      offset={{ bottom: 20 }}
-      mobileOffset={{ bottom: "max(16px, env(safe-area-inset-bottom))", left: 16, right: 16 }}
+      offset={{ top: 20 }}
+      mobileOffset={{ top: "max(16px, env(safe-area-inset-top))", left: 16, right: 16 }}
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
