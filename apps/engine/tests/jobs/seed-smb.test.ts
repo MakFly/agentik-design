@@ -41,7 +41,7 @@ d("SMB seeder + daily-execution loop", () => {
   });
 
   test("provisions the full data model", () => {
-    expect(Object.keys(seed.agents)).toHaveLength(4);
+    expect(Object.keys(seed.agents)).toHaveLength(5);
     expect(seed.taskIds).toHaveLength(3);
     expect(seed.signalIds).toHaveLength(3);
     // 2 historical Inbox Triage runs + 2 approval-gated queued runs (invoice, meeting).
@@ -109,7 +109,7 @@ d("SMB seeder + daily-execution loop", () => {
       .select({ n: sql<number>`count(*)::int` })
       .from(schema.agents)
       .where(eq(schema.agents.teamId, teamId));
-    expect(agentCount[0]!.n).toBe(4);
+    expect(agentCount[0]!.n).toBe(5);
   });
 
   test("signal rule condition gating: matching fires, non-matching is ignored", async () => {

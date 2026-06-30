@@ -116,7 +116,7 @@ export async function sendChatMessage(
   // Deterministic built-in skills (e.g. real Gmail read) are fulfilled server-side
   // instead of being echoed by the daemon. Falls through when not applicable.
   const [agentRow] = await db
-    .select({ config: agents.config })
+    .select({ config: agents.config, runtimeKind: agents.runtimeKind })
     .from(agents)
     .where(and(eq(agents.id, session.agentId), eq(agents.teamId, teamId)))
     .limit(1);
@@ -125,6 +125,7 @@ export async function sendChatMessage(
     sessionId,
     agentId: session.agentId,
     config: agentRow?.config,
+    runtimeKind: agentRow?.runtimeKind,
     content,
     prompt,
     parentRunId: opts.parentRunId,

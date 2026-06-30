@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutGrid } from "lucide-react";
-import { navItemsForSurface, hrefFor } from "@/config/nav";
+import {
+  navItemsForSurface,
+  hrefFor,
+  ASSISTANT_GROUP_ORDER,
+  type NavItem,
+} from "@/config/nav";
 import { useRbac } from "@/lib/auth/rbac";
 import {
   Sidebar,
@@ -11,6 +16,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
@@ -26,15 +32,46 @@ const MENU_BUTTON_CLASS =
 
 /**
  * Personal assistant sidebar (OpenClaw-style): the agent switcher + "+" lead, then the
- * assistant's personal context (Memory, Automations, Telegram), and a link across to the
- * Multica platform. Chat itself is reached via the switcher, not a nav link.
+ * assistant's context grouped into labeled sections (Control · Agent · Knowledge ·
+ * Automation), mirroring OpenClaw's single rich sidebar, and a link across to the Multica
+ * platform for the heavier ops. Chat itself is reached via the switcher, not a nav link.
+ *
+ * Assistant items are all served from the team root, so hrefs are built directly
+ * (`/{team}/{segment}`) — not via `hrefFor`, which would mis-route segments that also
+ * exist on the platform surface (e.g. `agents`).
  */
 export function AssistantSidebar({ team }: { team: string }) {
   const pathname = usePathname();
   const { can } = useRbac();
-  const items = navItemsForSurface("assistant").filter(
+  const visible = navItemsForSurface("assistant").filter(
     (i) => i.key !== "chat" && (!i.permission || can(i.permission)),
   );
+
+  const groups = ASSISTANT_GROUP_ORDER.map(({ group, label }) => ({
+    label,
+    items: visible.filter((i) => i.group === group),
+  })).filter((g) => g.items.length > 0);
+
+  const renderItem = (item: NavItem) => {
+    const href = `/${team}/${item.segment}`;
+    const active = pathname === href || pathname.startsWith(`${href}/`);
+    const Icon = item.icon;
+    return (
+      <SidebarMenuItem key={item.key}>
+        <SidebarMenuButton
+          asChild
+          isActive={active}
+          tooltip={item.label}
+          className={MENU_BUTTON_CLASS}
+        >
+          <Link href={href} aria-current={active ? "page" : undefined}>
+            <Icon aria-hidden="true" />
+            <span>{item.label}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  };
 
   return (
     <Sidebar collapsible="icon" variant="inset" className="select-none">
@@ -44,30 +81,12 @@ export function AssistantSidebar({ team }: { team: string }) {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu className="gap-0.5">
-            {items.map((item) => {
-              const href = hrefFor(team, item.segment);
-              const active = pathname === href || pathname.startsWith(`${href}/`);
-              const Icon = item.icon;
-              return (
-                <SidebarMenuItem key={item.key}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={active}
-                    tooltip={item.label}
-                    className={MENU_BUTTON_CLASS}
-                  >
-                    <Link href={href} aria-current={active ? "page" : undefined}>
-                      <Icon aria-hidden="true" />
-                      <span>{item.label}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        </SidebarGroup>
+        {groups.map((g) => (
+          <SidebarGroup key={g.label}>
+            <SidebarGroupLabel>{g.label}</SidebarGroupLabel>
+            <SidebarMenu className="gap-0.5">{g.items.map(renderItem)}</SidebarMenu>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter>

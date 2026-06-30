@@ -88,7 +88,17 @@ function textStream(messages: unknown, text: string) {
 }
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages, model, config } = await req.json();
+  // Model override: the `/model` slash sets a top-level `model` (localStorage); the composer's
+  // ModelPicker sets `config.modelName` (assistant-ui runConfig). Honour the explicit slash
+  // first, else the picker. The engine ignores a model that targets another provider.
+  const cfg = config as { modelName?: unknown } | undefined;
+  const chosenModel =
+    typeof model === "string" && model
+      ? model
+      : typeof cfg?.modelName === "string"
+        ? cfg.modelName
+        : "";
   const agentId = req.headers.get("x-agent-id") ?? "";
   const team = req.headers.get("x-team") ?? "";
   const text = lastUserText(messages);
@@ -120,7 +130,7 @@ export async function POST(req: Request) {
     // CLI/daemon runtime or a builtin skill) falls through to the queue path below.
     const gw = await efetch(`/chat/sessions/${sessionId}/stream`, {
       method: "POST",
-      body: JSON.stringify({ content: text }),
+      body: JSON.stringify({ content: text, ...(chosenModel ? { model: chosenModel } : {}) }),
       signal: req.signal,
     });
     if (gw.ok && gw.body) {

@@ -16,6 +16,22 @@ describe("chat built-in skill intents", () => {
     });
   });
 
+  test("does not treat a generic 'message' turn as inbox-read (gate is email-noun only)", () => {
+    // "message(s)" was removed from INBOX_RE so generic turns aren't routed to the Gmail path.
+    expect(matchInboxRead("traduis ton dernier message").match).toBe(false);
+    expect(matchInboxRead("résume le dernier message").match).toBe(false);
+  });
+
+  test("reads a single message when asked for the last email (singular)", () => {
+    expect(matchInboxRead("donne moi le dernier email reçu à l'instant y'a kelke mn")).toEqual({
+      match: true,
+      count: 1,
+    });
+    expect(matchInboxRead("le dernier mail")).toEqual({ match: true, count: 1 });
+    // plural without a digit stays at the default
+    expect(matchInboxRead("donne moi les derniers emails")).toEqual({ match: true, count: 5 });
+  });
+
   test("requires recipient, subject and body before email send is complete", () => {
     expect(matchEmailSend("envoie un email à operator@example.test")).toEqual({
       match: true,

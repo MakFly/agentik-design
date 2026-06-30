@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { generateText, stepCountIs } from "ai";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { hub } from "../../infra/hub";
@@ -8,6 +9,16 @@ import {
   type GmailMessageSummary,
 } from "../../infra/gmail";
 import { onRunCompleted } from "../runs/service";
+import { resolveProviderEnv } from "../settings/providers-repo";
+import {
+  resolveApiProvider,
+  buildModel,
+  naturalProviderForKind,
+  type ApiProvider,
+} from "../../execution/embedded/runtime/api";
+import { resolveInjectionContext, buildInjectionPreamble } from "../learning";
+import { buildGmailTools, type GmailCapabilities } from "./gmail-tools";
+import { buildWebTools } from "./web-tools";
 
 const { runs, runMessages } = schema;
 
@@ -54,7 +65,9 @@ export function agentHasBuiltinSkill(config: unknown): boolean {
   );
 }
 
-const INBOX_RE = /\b(e-?mails?|inbox|courriels?|mails?|bo[iî]te|messages?)\b/i;
+// Deliberately narrow: real email nouns only. "message(s)" is too broad (it would route
+// generic turns like "traduis ton dernier message" to the non-streamed builtin path).
+const INBOX_RE = /\b(e-?mails?|inbox|courriels?|mails?|bo[iî]te)\b/i;
 const INBOX_READ_RE =
   /\b(lis|lire|lecture|lu|affiche|montre|donne|liste|r[ée]cup[èe]re|check|read|show|list|get|last|latest|dernier(?:s|es)?|nouveaux?)\b/i;
 const EMAIL_SEND_RE = /\b(envoie|envoyer|envoies|send|mail|e-?mail|courriel)\b/i;
@@ -66,13 +79,29 @@ function looksLikeEmailSend(text: string): boolean {
   return EMAIL_SEND_RE.test(text) && EMAIL_ADDRESS_RE.test(text);
 }
 
-/** Detect a "read my inbox" intent and the requested count (default 5, capped 15). */
+/**
+ * Singular "the last/latest email" (no plural marker on the qualifier or the noun) →
+ * the user wants a single message, not the default 5. Matches "le dernier email",
+ * "donne le dernier mail", "the latest email"; NOT "les 5 derniers emails".
+ */
+const SINGLE_EMAIL_RE =
+  /\b(dernier|premier|last|latest|newest|nouveau|nouvel)\b(?!s)[^.!?]*?\b(e-?mail|mail|courriel|message)\b(?!s)/i;
+
+/** Resolve the requested count: explicit digit wins, else singular → 1, else default 5. */
+function inboxReadCount(text: string): number {
+  const digit = text.match(/\b(\d{1,2})\b/);
+  if (digit) {
+    const n = Number(digit[1]);
+    if (Number.isFinite(n) && n >= 1) return Math.min(n, 15);
+  }
+  if (SINGLE_EMAIL_RE.test(text)) return 1;
+  return 5;
+}
+
+/** Detect a "read my inbox" intent and the requested count (default 5, singular → 1, capped 15). */
 export function matchInboxRead(text: string): { match: boolean; count: number } {
   const match = !looksLikeEmailSend(text) && INBOX_RE.test(text) && INBOX_READ_RE.test(text);
-  const n = text.match(/(\d{1,2})/);
-  let count = n ? Number(n[1]) : 5;
-  if (!Number.isFinite(count) || count < 1) count = 5;
-  return { match, count: Math.min(count, 15) };
+  return { match, count: inboxReadCount(text) };
 }
 
 export type EmailSendIntent =
@@ -208,7 +237,8 @@ function preview(snippet: string, max = 120): string {
 
 function formatEmails(emails: GmailMessageSummary[]): string {
   if (!emails.length) return "📭 Ta boîte de réception est vide (ou aucun message ne correspond).";
-  const lines = [`📬 **${emails.length} derniers emails**`, ""];
+  const header = emails.length === 1 ? "Dernier email" : `${emails.length} derniers emails`;
+  const lines = [`📬 **${header}**`, ""];
   emails.forEach((m, i) => {
     const p = preview(m.snippet);
     lines.push(`**${i + 1}. ${clean(m.subject) || "(sans objet)"}**`);
@@ -304,6 +334,8 @@ export interface BuiltinSkillContext {
   sessionId: string;
   agentId: string;
   config: unknown;
+  /** Agent runtime kind — picks the natural provider for in-process tool-calling. */
+  runtimeKind?: string;
   content: string;
   prompt: string;
   parentRunId?: string | null;
@@ -369,20 +401,102 @@ async function finishBuiltinRun(
   return { taskId: runId, completed: true };
 }
 
+/** The Gmail capabilities an agent declares (read via skill, send via skill or tool grant). */
+function gmailCapabilities(config: unknown): GmailCapabilities {
+  return {
+    read: agentSkills(config).includes(GMAIL_READ_SKILL),
+    send: hasEmailSendCapability(config),
+  };
+}
+
 /**
- * Deterministic, server-side built-in skills. When the agent declares a matching
- * skill AND the message intent matches, the engine fulfils the run itself (real
- * Gmail read) instead of handing an empty run to the daemon. The run is created
- * already `running` (so the daemon's claim query — which requires `queued` — never
- * picks it up) and finalised through the SAME pipeline the daemon uses
- * (`onRunCompleted` → assistant turn + Telegram notify).
+ * Server-side fulfilment for Gmail-capable agents. Preferred path (OpenClaw model):
+ * run the turn IN-PROCESS with the LLM and Gmail exposed as real, parameterised tools —
+ * the model itself decides `maxResults`/`query`/recipient from natural language (no regex).
+ * When no provider key is available it degrades to the deterministic intent matcher.
  *
- * Returns the run id when handled, or null to fall through to the daemon path.
+ * The run is created already finished (the daemon's claim query needs `queued`, so it never
+ * picks it up) and finalised through the SAME pipeline the daemon uses (`onRunCompleted` →
+ * assistant turn + Telegram notify). Returns the run id when handled, or null to fall
+ * through to the normal agent path (non-Gmail agents).
  */
 export async function tryBuiltinSkill(
   ctx: BuiltinSkillContext,
 ): Promise<{ taskId: string; completed: true } | null> {
-  if (hasEmailSendCapability(ctx.config)) {
+  const caps = gmailCapabilities(ctx.config);
+  if (!caps.read && !caps.send) return null;
+
+  // Lightweight routing gate (NOT business logic): only email-related turns are fulfilled
+  // server-side. Everything else flows through the normal agent/daemon path so we don't
+  // hijack unrelated turns (and keep run control/approvals intact). The "how many / which
+  // emails" decision is left entirely to the LLM tool call below.
+  const emailRelated =
+    (caps.read && INBOX_RE.test(ctx.content)) ||
+    (caps.send && EMAIL_SEND_RE.test(ctx.content));
+  if (!emailRelated) return null;
+
+  // Preferred: real LLM tool-calling. Needs a usable provider key for this team.
+  const env = await resolveProviderEnv(ctx.teamId);
+  const provider = resolveApiProvider(ctx.runtimeKind ?? "", env);
+  const apiKey = provider ? env[provider.envVar] : undefined;
+  if (provider && apiKey) {
+    return fulfillGmailWithTools(ctx, caps, provider, apiKey);
+  }
+
+  // Fallback: deterministic intent matching (no provider key).
+  return tryDeterministicGmail(ctx, caps);
+}
+
+/** OpenClaw-style fulfilment: LLM + Gmail tools, run entirely in this process. */
+async function fulfillGmailWithTools(
+  ctx: BuiltinSkillContext,
+  caps: GmailCapabilities,
+  provider: ApiProvider,
+  apiKey: string,
+): Promise<{ taskId: string; completed: true }> {
+  const inj = await resolveInjectionContext(ctx.teamId, ctx.agentId);
+  // Respect the agent's configured model (like the streaming gateway) — but only when the
+  // resolved provider IS the agent's natural provider. If we had to borrow another provider's
+  // key, the stored model id is cross-provider, so fall back to that provider's default.
+  const agentProvider = naturalProviderForKind(ctx.runtimeKind ?? "");
+  const modelId =
+    agentProvider && provider.provider === agentProvider
+      ? (inj.model ?? provider.defaultModel)
+      : provider.defaultModel;
+  const system = [
+    inj.systemPrompt,
+    "Tu peux lire et envoyer les emails Gmail de l'utilisateur via des outils. " +
+      "Pour « le dernier / le plus récent email », appelle gmail_read avec maxResults=1. " +
+      "Présente une liste d'emails de façon concise (numéro, sujet, expéditeur, date), " +
+      "dans la langue de l'utilisateur. N'envoie un email que si destinataire, sujet et " +
+      "corps sont explicites.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const prompt = buildInjectionPreamble(inj) + ctx.prompt;
+
+  let text: string;
+  try {
+    const result = await generateText({
+      model: buildModel(provider, modelId, apiKey),
+      system,
+      prompt,
+      tools: { ...buildGmailTools(ctx.teamId, caps), ...buildWebTools() },
+      stopWhen: stepCountIs(6),
+    });
+    text = result.text?.trim() || "(réponse vide)";
+  } catch (e) {
+    text = `⚠️ ${(e as Error).message}`;
+  }
+  return finishBuiltinRun(ctx, "gmail.agent", text, { tooling: "llm" });
+}
+
+/** Deterministic fallback (regex intent matching) when no LLM provider key is available. */
+async function tryDeterministicGmail(
+  ctx: BuiltinSkillContext,
+  caps: GmailCapabilities,
+): Promise<{ taskId: string; completed: true } | null> {
+  if (caps.send) {
     const sendIntent = matchEmailSend(ctx.content);
     if (sendIntent.match) {
       const outcome = sendIntent.complete
@@ -411,7 +525,7 @@ export async function tryBuiltinSkill(
     }
   }
 
-  if (agentSkills(ctx.config).includes(GMAIL_READ_SKILL)) {
+  if (caps.read) {
     const readIntent = matchInboxRead(ctx.content);
     if (readIntent.match) {
       const outcome = await runGmailRead(ctx.teamId, readIntent.count);

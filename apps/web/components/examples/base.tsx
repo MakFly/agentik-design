@@ -68,6 +68,7 @@ import {
   FileTextIcon,
   GlobeIcon,
   HelpCircleIcon,
+  InboxIcon,
   LanguagesIcon,
   LightbulbIcon,
   MenuIcon,
@@ -90,6 +91,7 @@ import {
   LexicalComposerInput,
   type DirectiveChipProps,
 } from "@assistant-ui/react-lexical";
+import { toast } from "sonner";
 import Image from "next/image";
 import {
   createContext,
@@ -521,32 +523,91 @@ const ThreadSuggestions: FC = () => {
   );
 };
 
-const slashCommands: readonly Unstable_SlashCommand[] = [
-  {
-    id: "summarize",
-    description: "Summarize the conversation",
-    icon: "FileText",
-    execute: () => console.log("[base example] /summarize invoked"),
-  },
-  {
-    id: "translate",
-    description: "Translate text to another language",
-    icon: "Languages",
-    execute: () => console.log("[base example] /translate invoked"),
-  },
-  {
-    id: "search",
-    description: "Search the web for information",
-    icon: "Globe",
-    execute: () => console.log("[base example] /search invoked"),
-  },
-  {
-    id: "help",
-    description: "List available commands",
-    icon: "HelpCircle",
-    execute: () => console.log("[base example] /help invoked"),
-  },
-];
+/**
+ * Real slash commands (OpenClaw/Hermes-style), built inside the composer so each
+ * `execute` closes over the live runtime. `/new` resets the thread; `/summarize`,
+ * `/translate` and `/inbox` send a real turn (the last maps to the engine's Gmail
+ * read skill on capable agents); `/help` lists the set. No more console.log stubs.
+ */
+// /model cycles through these; "auto" clears the override (the agent's own model is used).
+// The engine applies an override only when it matches the agent's provider, so a mismatch
+// is safely ignored rather than erroring.
+const MODEL_CYCLE = [
+  "auto",
+  "gpt-5.4-mini",
+  "gpt-5.4",
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "gemini-2.0-flash",
+] as const;
+
+function useSlashCommands(): readonly Unstable_SlashCommand[] {
+  const aui = useAui();
+  return useMemo(() => {
+    const send = (text: string) => {
+      if (aui.thread().getState().isRunning) return;
+      aui.thread().append({
+        content: [{ type: "text", text }],
+        runConfig: aui.composer().getState().runConfig,
+      });
+    };
+    return [
+      {
+        id: "new",
+        description: "Start a new conversation",
+        icon: "Plus",
+        execute: () => window.dispatchEvent(new Event("agentik:new-thread")),
+      },
+      {
+        id: "summarize",
+        description: "Summarize this conversation",
+        icon: "FileText",
+        execute: () =>
+          send("Résume notre conversation jusqu'ici en points clés concis."),
+      },
+      {
+        id: "translate",
+        description: "Translate the last reply to English",
+        icon: "Languages",
+        execute: () => send("Traduis ta dernière réponse en anglais."),
+      },
+      {
+        id: "inbox",
+        description: "Read my latest emails",
+        icon: "Inbox",
+        execute: () => send("Lis mes 5 derniers emails."),
+      },
+      {
+        id: "model",
+        description: "Switch the chat model (cycles; applies when the agent supports it)",
+        icon: "Cpu",
+        execute: () => {
+          if (typeof window === "undefined") return;
+          const cur = window.localStorage.getItem("assistant:model") ?? "auto";
+          const idx = MODEL_CYCLE.indexOf(cur as (typeof MODEL_CYCLE)[number]);
+          const next = MODEL_CYCLE[(idx + 1) % MODEL_CYCLE.length]!;
+          if (next === "auto") window.localStorage.removeItem("assistant:model");
+          else window.localStorage.setItem("assistant:model", next);
+          toast("Modèle", {
+            description:
+              next === "auto"
+                ? "Auto — le modèle propre à l'agent"
+                : `${next} — appliqué au prochain tour si compatible avec le provider de l'agent`,
+          });
+        },
+      },
+      {
+        id: "help",
+        description: "List available commands",
+        icon: "HelpCircle",
+        execute: () =>
+          toast("Slash commands", {
+            description: "/new · /summarize · /translate · /inbox · /model · /help",
+          }),
+      },
+    ];
+  }, [aui]);
+}
 
 type MentionItem = {
   id: string;
@@ -600,6 +661,8 @@ const slashIconMap: Record<string, FC<{ className?: string }>> = {
   Languages: LanguagesIcon,
   Globe: GlobeIcon,
   HelpCircle: HelpCircleIcon,
+  Inbox: InboxIcon,
+  Plus: PlusIcon,
   Wrench: WrenchIcon,
 };
 
@@ -630,8 +693,10 @@ const Composer: FC = () => {
     iconMap: slashIconMap,
     fallbackIcon: WrenchIcon,
   });
+  const slashCommands = useSlashCommands();
   const slash = unstable_useSlashCommandAdapter({
     commands: slashCommands,
+    removeOnExecute: true,
     iconMap: slashIconMap,
     fallbackIcon: SlashIcon,
   });

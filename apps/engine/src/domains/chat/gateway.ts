@@ -8,7 +8,7 @@
  * falls back to the queue path (sendChatMessage + /runs/:id/messages/live).
  */
 import { and, eq, sql } from "drizzle-orm";
-import { streamText } from "ai";
+import { streamText, stepCountIs } from "ai";
 import { db, schema } from "../../infra/db/client";
 import { genId } from "../../infra/db/ids";
 import { resolveProviderEnv } from "../settings/providers-repo";
@@ -17,9 +17,11 @@ import {
   resolveApiProvider,
   buildModel,
   reasoningProviderOptions,
+  providerOfModel,
 } from "../../execution/embedded/runtime/api";
 import { appendAssistantTurn, buildChatPrompt } from "./repo";
 import { agentHasBuiltinSkill } from "./skills";
+import { buildWebTools } from "./web-tools";
 
 const { chatSessions, chatMessages, agents } = schema;
 
@@ -36,6 +38,7 @@ export async function streamChatTurn(
   teamId: string,
   sessionId: string,
   content: string,
+  modelOverride?: string,
 ): Promise<ChatStreamResult> {
   const [row] = await db
     .select({
@@ -66,7 +69,11 @@ export async function streamChatTurn(
   // Same context the daemon claim path assembles: learned-context preamble + the agent's
   // persona (systemPrompt) + model.
   const ctx = await resolveInjectionContext(teamId, row.agentId);
-  const modelId = ctx.model ?? provider.defaultModel;
+  // /model override (per turn): honour it only when it targets the resolved provider, so a
+  // cross-provider id can't make buildModel fail. Else the agent's model, else the default.
+  const override =
+    modelOverride && providerOfModel(modelOverride) === provider.provider ? modelOverride : undefined;
+  const modelId = override ?? ctx.model ?? provider.defaultModel;
 
   // Persist the user turn, then build the multi-turn prompt (excludes the turn we just
   // inserted), mirroring sendChatMessage.
@@ -85,9 +92,22 @@ export async function streamChatTurn(
     system: ctx.systemPrompt,
     prompt,
     providerOptions: reasoningProviderOptions(provider, modelId),
+    // Web tools (Hermes model): the assistant can search/read the web mid-turn. stopWhen
+    // lets it chain search → extract → answer. Tool steps stream to the UI; only the final
+    // text is persisted to the transcript.
+    tools: buildWebTools(),
+    stopWhen: stepCountIs(5),
     // Persist the final assistant turn (transcript) + notify the UI. Reasoning is live-only.
-    onFinish: async ({ text }) => {
-      await appendAssistantTurn(teamId, sessionId, genId("run"), text);
+    // `text` is only the LAST step's text (ai v6), so aggregate across steps — otherwise a
+    // turn that ends on a tool call persists an empty reply and intermediate text is lost.
+    onFinish: async ({ text, steps }) => {
+      const full =
+        steps
+          ?.map((s) => s.text)
+          .filter(Boolean)
+          .join("\n\n")
+          .trim() || text?.trim();
+      if (full) await appendAssistantTurn(teamId, sessionId, genId("run"), full);
     },
   });
 

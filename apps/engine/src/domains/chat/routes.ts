@@ -53,11 +53,11 @@ chatRoutes.post("/chat/sessions/:id/messages", requirePermission("run:run"), asy
 // UIMessage protocol). 409 `no_api_runtime` → caller falls back to the queue path.
 chatRoutes.post("/chat/sessions/:id/stream", requirePermission("run:run"), async (c) => {
   const body = await c.req
-    .json<{ content?: string }>()
-    .catch(() => ({}) as { content?: string });
+    .json<{ content?: string; model?: string }>()
+    .catch(() => ({}) as { content?: string; model?: string });
   const content = (body.content ?? "").trim();
   if (!content) return c.json({ error: "content_required" }, 400);
-  const res = await streamChatTurn(c.get("teamId"), c.req.param("id"), content);
+  const res = await streamChatTurn(c.get("teamId"), c.req.param("id"), content, body.model);
   if (!res.ok) return c.json({ error: res.error }, res.status as 404 | 409);
   return res.response;
 });

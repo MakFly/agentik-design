@@ -12,7 +12,11 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "sim:telegram": "bun run scripts/telegram-sim.ts",
-    "connect:gmail": "bun run scripts/connect-gmail.ts"
+    "sim:cases": "bun run scripts/assistant-cases.ts",
+    "sim:owner": "bun run scripts/owner-tasks.ts",
+    "connect:gmail": "bun run scripts/connect-gmail.ts",
+    "connect:gmail:oauth": "bun run scripts/connect-gmail-oauth.ts",
+    "seed:gmail-skill": "bun run scripts/seed-gmail-skill.ts"
   },
   "dependencies": {
     "@agentik/workflow-schema": "workspace:*",

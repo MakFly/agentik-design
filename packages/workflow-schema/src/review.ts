@@ -36,7 +36,8 @@ export const proposedSkillChange = z.discriminatedUnion("action", [
     action: z.literal("patch"),
     skillId: z.string().optional(),
     skillName: z.string(),
-    oldText: z.string(),
+    // Non-empty: an empty oldText would make replaceAll insert newText between every char.
+    oldText: z.string().min(1),
     newText: z.string(),
     reason: z.string(),
   }),

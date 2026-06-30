@@ -32,6 +32,19 @@ const KIND_PROVIDER: Record<string, ApiProvider["provider"]> = {
   gemini: "google",
 };
 
+/** The provider a runtime kind natively targets (so a stored model id is valid for it). */
+export function naturalProviderForKind(kind: string): ApiProvider["provider"] | undefined {
+  return KIND_PROVIDER[kind];
+}
+
+/** Infer a model id's provider from its prefix — used to guard a cross-provider /model override. */
+export function providerOfModel(model: string): ApiProvider["provider"] | undefined {
+  if (/^claude/i.test(model)) return "anthropic";
+  if (/^(gpt|o[1-9])/i.test(model)) return "openai";
+  if (/^gemini/i.test(model)) return "google";
+  return undefined;
+}
+
 /**
  * Pick a usable provider: prefer the runtime kind's natural provider when its key
  * is present, else the first provider with a key. Null when no key is available.

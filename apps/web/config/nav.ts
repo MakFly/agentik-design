@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Monitor,
   MessageSquare,
+  Sparkles,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import type { Permission } from "./permissions";
 
 export type NavGroup =
   | "control"
+  | "agent"
   | "build"
   | "knowledge"
   | "system"
@@ -60,6 +62,37 @@ export const NAV_ITEMS: NavItem[] = [
     surface: "assistant",
     hotkey: "c",
     permission: "run:read",
+  },
+  {
+    key: "assistant-activity",
+    label: "Activity",
+    segment: "activity",
+    icon: Activity,
+    group: "control",
+    surface: "assistant",
+    hotkey: "y",
+    permission: "run:read",
+    badge: "activeRuns",
+  },
+  {
+    key: "assistant-agents",
+    label: "Agents",
+    segment: "agents",
+    icon: Bot,
+    group: "agent",
+    surface: "assistant",
+    hotkey: "e",
+    permission: "agent:read",
+  },
+  {
+    key: "assistant-skills",
+    label: "Skills",
+    segment: "skills",
+    icon: Sparkles,
+    group: "agent",
+    surface: "assistant",
+    hotkey: "k",
+    permission: "skill:read",
   },
   {
     key: "memory",
@@ -178,11 +211,20 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
   control: "Control Plane",
+  agent: "Agent",
   build: "Builder",
   knowledge: "Knowledge",
   system: "System",
   configure: "Configure",
 };
+
+/** Display order + labels for the assistant sidebar's grouped sections (OpenClaw-style). */
+export const ASSISTANT_GROUP_ORDER: { group: NavGroup; label: string }[] = [
+  { group: "control", label: "Control" },
+  { group: "agent", label: "Agent" },
+  { group: "knowledge", label: "Knowledge" },
+  { group: "build", label: "Automation" },
+];
 
 /** Segments served under the `/platform/*` prefix (the Multica surface). */
 export const PLATFORM_SEGMENTS = new Set(

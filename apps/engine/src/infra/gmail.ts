@@ -34,13 +34,20 @@ function header(headers: Array<{ name: string; value: string }>, name: string): 
  */
 export async function listGmailMessages(
   teamId: string,
-  opts: { maxResults?: number } = {},
+  opts: { maxResults?: number; q?: string } = {},
 ): Promise<GmailMessageSummary[]> {
   const token = await resolveGmailAccessToken(teamId);
   if (!token) throw new Error("gmail_not_connected: no Google credential for this team");
   const max = Math.min(Math.max(opts.maxResults ?? 5, 1), 25);
 
-  const listRes = await fetch(`${GMAIL_API}/messages?maxResults=${max}&labelIds=INBOX`, {
+  // Optional Gmail search query (e.g. "is:unread", "from:linkedin"). When set we drop the
+  // INBOX-only filter so the search spans the mailbox (the query itself scopes results).
+  const q = opts.q?.trim();
+  const params = new URLSearchParams({ maxResults: String(max) });
+  if (q) params.set("q", q);
+  else params.set("labelIds", "INBOX");
+
+  const listRes = await fetch(`${GMAIL_API}/messages?${params.toString()}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!listRes.ok) {

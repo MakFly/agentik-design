@@ -30,7 +30,7 @@ export async function listMemory(teamId: string, filter: ListMemoryFilter = {}) 
     .limit(Math.min(Math.max(filter.limit ?? 200, 1), 500));
 }
 
-async function assertMemoryTarget(teamId: string, scope: KnowledgeScope, targetId?: string | null) {
+export async function assertMemoryTarget(teamId: string, scope: KnowledgeScope, targetId?: string | null) {
   if (scope === "team") return targetId ? "team_target_forbidden" : null;
   if (scope === "project") {
     if (!targetId) return "target_required";

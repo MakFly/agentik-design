@@ -84,6 +84,11 @@ export function AgentTaskRuntimeProvider({
           body?: Record<string, unknown>;
         };
         const sessionId = await ensureChatSession(team, selectedAgentId, o.messages);
+        // Per-thread /model override (set by the composer's `/model` slash). Read at send
+        // time so a switch mid-conversation takes effect on the next turn. Engine ignores
+        // it when it targets a different provider than the agent's.
+        const model =
+          typeof window !== "undefined" ? window.localStorage.getItem("assistant:model") : null;
         // Mirror the transport's default body (it uses ours verbatim when present)
         // and attach the routing headers, incl. the resolved engine session id.
         return {
@@ -99,6 +104,7 @@ export function AgentTaskRuntimeProvider({
             trigger: o.trigger,
             messageId: o.messageId,
             metadata: o.requestMetadata,
+            ...(model ? { model } : {}),
           },
         };
       },

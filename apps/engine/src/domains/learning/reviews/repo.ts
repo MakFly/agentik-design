@@ -2,11 +2,12 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "../../../infra/db/client";
 import { genId } from "../../../infra/db/ids";
 import { deterministicReview } from "./agent";
-import { insertMemoryFromReviewTx } from "../memory/repo";
+import { llmReview } from "./llm-agent";
+import { insertMemoryFromReviewTx, assertMemoryTarget } from "../memory/repo";
 import { nextVersion } from "../shared";
 import type { ReviewAgentOutput, RunReviewStatus } from "@agentik/workflow-schema";
 
-const { runReviews, runs, runMessages, skills, skillVersions } = schema;
+const { runReviews, runs, runMessages, skills, skillVersions, agents } = schema;
 
 export async function createRunReview(teamId: string, runId: string, output: ReviewAgentOutput) {
   const id = genId("rev");
@@ -35,14 +36,28 @@ export async function generateRunReview(teamId: string, runId: string) {
     .from(runMessages)
     .where(eq(runMessages.runId, runId))
     .orderBy(runMessages.seq);
-  const output = deterministicReview({
+  const input = {
     taskId: task.id,
     agentId: task.agentId!,
     status: task.status,
     error: task.error,
     messages: msgs,
-  });
-  const { id } = await createRunReview(teamId, runId, output);
+  };
+  // Gate the LLM reviewer (cost/latency): only invoke it when there's a real learning signal
+  // — a failure, or a run that actually used tools. Quiet text-only turns ("bonjour") stay on
+  // the cheap deterministic path. The LLM path degrades to deterministic on no-key / error.
+  const usedTools = msgs.some((m) => m.type === "tool_use");
+  const failed = task.status === "failed";
+  let output: ReviewAgentOutput | null = null;
+  if (failed || usedTools) {
+    const [agentRow] = await db
+      .select({ runtimeKind: agents.runtimeKind })
+      .from(agents)
+      .where(and(eq(agents.id, task.agentId!), eq(agents.teamId, teamId)))
+      .limit(1);
+    output = await llmReview(teamId, input, agentRow?.runtimeKind ?? "");
+  }
+  const { id } = await createRunReview(teamId, runId, output ?? deterministicReview(input));
   return getRunReview(teamId, id);
 }
 
@@ -118,7 +133,11 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
     for (let i = 0; i < review.proposedMemories.length; i++) {
       if (!wantMem(i)) continue;
       const c = review.proposedMemories[i]!;
-      await insertMemoryFromReviewTx(tx, teamId, c, review.runId);
+      // Validate/normalise the target before persisting (a hallucinated proposal must not
+      // create orphan or cross-team rows): null the target for team scope, skip if invalid.
+      const change = { ...c, targetId: c.scope === "team" ? undefined : c.targetId };
+      if (await assertMemoryTarget(teamId, change.scope, change.targetId)) continue;
+      await insertMemoryFromReviewTx(tx, teamId, change, review.runId);
       applied++;
     }
 
@@ -126,6 +145,8 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
       if (!wantSkill(i)) continue;
       const c = review.proposedSkillChanges[i]!;
       if (c.action === "create") {
+        const targetId = c.scope === "team" ? undefined : c.targetId;
+        if (await assertMemoryTarget(teamId, c.scope, targetId)) continue;
         const skillId = genId("skill");
         const versionId = genId("sver");
         await tx.insert(skills).values({
@@ -134,7 +155,7 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
           name: c.skillName,
           description: c.description,
           scope: c.scope,
-          targetId: c.targetId,
+          targetId: targetId ?? null,
           currentVersionId: versionId,
           createdBy: "review_agent",
         });
@@ -167,7 +188,10 @@ export async function applyRunReview(teamId: string, reviewId: string, changeIds
         const version = nextVersion(existing.map((r) => r.version));
         const versionId = genId("sver");
         const baseBody = current?.bodyMd ?? "";
-        const newBody = baseBody.includes(c.oldText) ? baseBody.replaceAll(c.oldText, c.newText) : c.newText;
+        // Localized edit only: if the exact oldText isn't present, skip — never overwrite the
+        // whole body with the fragment (the LLM often paraphrases its "exact extract").
+        if (!baseBody.includes(c.oldText)) continue;
+        const newBody = baseBody.replaceAll(c.oldText, c.newText);
         await tx.insert(skillVersions).values({
           id: versionId,
           skillId: c.skillId,
