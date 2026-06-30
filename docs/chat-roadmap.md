@@ -16,20 +16,39 @@ nav (`config/nav.ts` → entrée `chat`) et un bouton **New chat** en tête de s
 
 Acquis :
 
-- **Route** : `app/[team]/(app)/chat/{page,c/[threadId]/page,settings/page}.tsx`.
+- **Deux surfaces** (cf. section *Architecture* plus bas) : le **Personal Assistant**
+  (chat, OpenClaw-style) à la racine `/[team]/*`, et la **plateforme Multica** sous
+  `/[team]/platform/*`. Layouts dédiés via le route group `(assistant)/` et `platform/`.
+- **Route chat** : `app/[team]/(app)/(assistant)/chat/{page,c/[threadId]/page,settings/page}.tsx`.
 - **Historique = sessions engine persistantes** (`chat_sessions` / `chat_messages`),
   pas localStorage : `components/assistant-ui/engine-thread-history.tsx`
   (list / load / new / delete) + `qk.chat.*`.
 - **Runtime** : `components/runtime/agent-task-runtime-provider.tsx` — transport
   `AssistantChatTransport` → `app/api/agent-chat/route.ts` (bridge). Le `prepareSendMessagesRequest`
   garantit/crée la session et envoie `x-session-id` (contexte multi-tours côté engine).
+  La sélection d'agent est partagée via `components/runtime/agent-selection.tsx`
+  (`AgentSelectionProvider`), consommée par le switcher de la sidebar **et** le runtime.
+- **Streaming bout-en-bout + reasoning** *(livré)* : pour un runtime **API**, le tour
+  s'exécute **in-process** et stream directement (modèle OpenClaw, pas de file `runs`) —
+  `domains/chat/gateway.ts` → `POST /chat/sessions/:id/stream` →
+  `streamText().toUIMessageStreamResponse({ sendReasoning })`. L'adaptateur embarqué passe
+  `generateText` → **`streamText`** (reasoning par provider, `runtime/api.ts`). Fallback
+  file pour CLI/daemon ou builtin skill (tail `GET /runs/:id/messages/live`,
+  `runs/live-stream.ts`). Persistance = `chat_messages` ; reasoning **live-only**.
+- **Rendu markdown** *(livré)* : `components/assistant-ui/markdown-text.tsx` rend le
+  **math KaTeX** (remark-math + rehype-katex + `normalizeMathDelimiters`) et la
+  **coloration Shiki** (`shiki-highlighter.tsx`, dual-theme) avec header de bloc
+  (`code-header.tsx` : langage + copier → toast). Toasts sonner en **top-center**.
 - **Exécution sans daemon** : `EMBEDDED_WORKER=true` (engine `.env` + Makefile `dev/engine`)
   → worker in-process (`execution/embedded/worker.ts`) qui exécute via CLI locale
-  (`runtime/cli.ts`) ou clé provider (`runtime/api.ts`, fix `result: text`).
+  (`runtime/cli.ts`) ou clé provider (`runtime/api.ts`). C'est la **voie async/daemon/CLI**
+  (automations, cron) ; la gateway in-process ne couvre que le *fast-path interactif*.
 - **Agent par défaut** : agent généraliste **Assistant** (`runtimeKind: "openai"`, seedé
-  dans `jobs/seed-smb.ts`), préféré par le provider runtime ; header épuré (statut
-  « ready » sous le nom, lien « connect » seulement si offline).
-- **Tests** : `apps/web/e2e/chat.spec.ts`.
+  dans `jobs/seed-smb.ts`), préféré par `AgentSelectionProvider`. Le **switcher d'agent**
+  vit en tête de la sidebar assistant (`features/agent-chat/agent-switcher.tsx`, + bouton
+  « + » nouvelle conversation) ; le header de chat ne montre plus qu'une présence en
+  lecture seule.
+- **Tests** : `apps/web/e2e/chat.spec.ts`, `apps/web/e2e/nav.spec.ts` (chemins `/platform/*`).
 
 Données clés réutilisables pour la suite :
 
@@ -44,6 +63,34 @@ Données clés réutilisables pour la suite :
 
 ---
 
+## Architecture — deux surfaces (livré)
+
+L'app expose **deux produits** dans un même `app/[team]/(app)`, via des layouts distincts :
+
+```
+/[team]/(app)/layout              = session seule (SessionHydrator + SessionGuard)
+  ├─ (assistant)/layout           = AssistantShell  (sidebar minimale OpenClaw)
+  │     /[team]/{chat,memory,automations,channels}
+  │     ▲ haut sidebar : <AgentSwitcher/> + bouton « + »  ·  bas : « Multica platform → »
+  └─ platform/layout              = PlatformShell    (sidebar nav complète)
+        /[team]/platform/{command-center,projects,runs,agents,tools,observability,
+          runtimes,settings}       ·  haut sidebar : lien « ← Assistant »
+```
+
+- **Personal Assistant** (racine) = converser + le contexte perso de l'assistant :
+  **Chat**, **Memory**, **Automations**, **Telegram**. Sidebar = `AssistantSidebar`
+  (`components/layout/assistant-sidebar.tsx`), shell = `assistant-shell.tsx`.
+- **Plateforme Multica** (`/platform/*`) = l'ops business : **Command Center, Projects,
+  Runs, Agents, Tools, Observability, Runtimes, Settings**. Sidebar = `PlatformSidebar`
+  (`sidebar.tsx`), shell = `platform-shell.tsx`.
+- **Routing & liens** : `config/nav.ts` porte `surface: "assistant" | "platform"` par item ;
+  `hrefFor(team, segment, rest?)` préfixe automatiquement `/platform/` pour les segments
+  plateforme (`PLATFORM_SEGMENTS`). Tous les liens passent (ou doivent passer) par `hrefFor`.
+- **Landing** : post-login / changement d'équipe → `/[team]/chat` (l'assistant est la
+  surface primaire ; `lib/auth/post-auth.ts`, `features/session/session-guard.tsx`).
+
+---
+
 ## Phase 2 — Tool-calls / activité dans le thread
 
 ### Objectif
@@ -52,8 +99,9 @@ repliables `Bash`, `Gateway`, `tool_use`, reasoning…), comme la capture OpenCl
 lieu d'un simple texte final.
 
 ### État actuel
-- Le bridge `app/api/agent-chat/route.ts` ne streame que le **texte final** de la session
-  (`textStream`) : aucune part `tool-call`/`reasoning` n'arrive au runtime.
+- **Texte + reasoning : déjà streamés** (cf. *Acquis*). Le bridge `app/api/agent-chat/route.ts`
+  pipe la gateway in-process (parts `text-*` + `reasoning-*`). **Reste à faire** : les parts
+  **`tool-call`** ne sont pas encore émises → c'est le cœur de cette phase.
 - Pourtant la donnée existe : le run (`taskId` du tour) a ses `run_messages`
   (`type: "text" | "thinking" | "tool_use" | …`). Le worker émet déjà ces messages
   (`runtime/cli.ts` runClaude émet `text`/`thinking`/`tool_use` ; `runtime/api.ts`
