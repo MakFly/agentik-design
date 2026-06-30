@@ -5,9 +5,11 @@ import { z } from "zod";
  * Web as real, parameterised LLM tools (Hermes model: `web_search` + `web_extract`).
  * Backend is auto-detected from env keys with a KEYLESS default so it works out of the box:
  *   search:  TAVILY_API_KEY → Tavily · BRAVE_SEARCH_API_KEY → Brave · else → DuckDuckGo (no key)
- *   extract: plain fetch + HTML→text (no key); Tavily used when TAVILY_API_KEY is set.
- * Like the Gmail tools, `execute` never throws — infra errors come back as `{ error }` so the
- * model can relay an actionable message instead of aborting the turn.
+ *   extract: plain fetch + HTML→text (no key), SSRF-guarded.
+ * The keyless default is DuckDuckGo's HTML endpoint (same as Hermes' `ddgs`): it only returns
+ * results with browser-like headers (Referer/Origin/Accept-Language) — without them DDG serves
+ * an empty page. Wikipedia is a secondary keyless fallback when DDG yields nothing. Like the
+ * Gmail tools, `execute` never throws — infra errors come back as `{ error }`.
  */
 
 const UA =
@@ -71,51 +73,77 @@ async function braveSearch(query: string, limit: number): Promise<WebSearchResul
   }));
 }
 
-/** Keyless fallback: scrape DuckDuckGo's lite endpoint (same approach as Hermes' `ddgs`). */
-async function ddgSearch(query: string, limit: number): Promise<WebSearchResult[]> {
-  const res = await fetchWithTimeout(
-    "https://lite.duckduckgo.com/lite/",
-    {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": UA },
-      body: new URLSearchParams({ q: query }).toString(),
-    },
-    8000,
-  );
-  if (!res.ok) throw new Error(`duckduckgo ${res.status}`);
-  const html = await readCapped(res, 1_000_000);
-  const results: WebSearchResult[] = [];
-  // Lite layout: <a ... class="result-link" href="URL">TITLE</a> then a result-snippet cell.
-  const linkRe = /<a[^>]+class="result-link"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRe = /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-  const snippets: string[] = [];
-  let sm: RegExpExecArray | null;
-  while ((sm = snippetRe.exec(html))) snippets.push(stripHtml(sm[1] ?? ""));
-  let lm: RegExpExecArray | null;
-  // Pair the snippet by LINK position (linkIdx), not by pushed-result count, so a rejected
-  // link doesn't shift every following snippet by one.
-  let linkIdx = 0;
-  while ((lm = linkRe.exec(html)) && results.length < limit) {
-    const url = decodeDdgUrl(lm[1] ?? "");
-    const snippet = snippets[linkIdx] ?? "";
-    linkIdx++;
-    if (!url) continue;
-    results.push({ title: stripHtml(lm[2] ?? ""), url, snippet });
-  }
-  return results;
-}
-
-/** DDG lite sometimes wraps targets in a redirect (//duckduckgo.com/l/?uddg=ENC). Unwrap it. */
-function decodeDdgUrl(href: string): string {
-  const m = href.match(/[?&]uddg=([^&]+)/);
-  if (m?.[1]) {
+/** Decode a DDG result href: drop sponsored `y.js` ads, unwrap the `uddg=` redirect, fix `//`. */
+function decodeDdgHref(href: string): string {
+  const h = href.replace(/&amp;/g, "&");
+  if (h.includes("/y.js")) return ""; // sponsored ad
+  const u = h.match(/[?&]uddg=([^&]+)/);
+  if (u?.[1]) {
     try {
-      return decodeURIComponent(m[1]);
+      return decodeURIComponent(u[1]);
     } catch {
       return "";
     }
   }
-  return href.startsWith("http") ? href : "";
+  if (h.startsWith("//")) return `https:${h}`;
+  return h.startsWith("http") ? h : "";
+}
+
+/**
+ * Keyless default: DuckDuckGo's HTML endpoint (the `ddgs` approach). Needs browser-like
+ * headers or DDG returns an empty page. Each result block holds a `result__a` (title+href)
+ * then a `result__snippet`; we pair the snippet per-block so interleaved ads don't shift it.
+ */
+async function ddgSearch(query: string, limit: number): Promise<WebSearchResult[]> {
+  const res = await fetchWithTimeout(
+    "https://html.duckduckgo.com/html/",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": UA,
+        referer: "https://duckduckgo.com/",
+        origin: "https://duckduckgo.com",
+        "accept-language": "en-US,en;q=0.9",
+        accept: "text/html,application/xhtml+xml",
+      },
+      body: new URLSearchParams({ q: query, kl: "wt-wt" }).toString(),
+    },
+    8000,
+  );
+  if (!res.ok) throw new Error(`duckduckgo ${res.status}`);
+  const html = await readCapped(res, 1_500_000);
+  const linkRe = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const matches = [...html.matchAll(linkRe)];
+  const results: WebSearchResult[] = [];
+  for (let i = 0; i < matches.length && results.length < limit; i++) {
+    const m = matches[i]!;
+    const url = decodeDdgHref(m[1] ?? "");
+    if (!url) continue; // ad or unparseable
+    // Snippet lives in this result's block — between this link and the next.
+    const blockEnd = matches[i + 1]?.index ?? html.length;
+    const block = html.slice((m.index ?? 0) + m[0].length, blockEnd);
+    const snip = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i)?.[1] ?? "";
+    results.push({ title: stripHtml(m[2] ?? ""), url, snippet: stripHtml(snip) });
+  }
+  return results;
+}
+
+/** Secondary keyless fallback when DDG yields nothing: Wikipedia search API (always reliable). */
+async function wikipediaSearch(query: string, limit: number): Promise<WebSearchResult[]> {
+  const url =
+    `https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*` +
+    `&srlimit=${limit}&srsearch=${encodeURIComponent(query)}`;
+  const res = await fetchWithTimeout(url, { headers: { "user-agent": UA } }, 8000);
+  if (!res.ok) throw new Error(`wikipedia ${res.status}`);
+  const data = (await res.json()) as {
+    query?: { search?: Array<{ title?: string; snippet?: string }> };
+  };
+  return (data.query?.search ?? []).slice(0, limit).map((r) => ({
+    title: r.title ?? "",
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent((r.title ?? "").replace(/ /g, "_"))}`,
+    snippet: stripHtml(r.snippet ?? ""),
+  }));
 }
 
 /** True when a dotted-quad IPv4 falls in a loopback / private / link-local / metadata range. */
@@ -228,6 +256,7 @@ function stripHtml(html: string): string {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
     .replace(/&(amp|lt|gt|quot|apos|nbsp);/g, (_, n) =>
       ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " })[n as string] ?? " ",
@@ -249,13 +278,18 @@ export function buildWebTools(): ToolSet {
       }),
       execute: async ({ query, limit }) => {
         try {
-          const backend = searchBackend();
-          const results =
+          let backend: string = searchBackend();
+          let results =
             backend === "tavily"
               ? await tavilySearch(query, limit)
               : backend === "brave"
                 ? await braveSearch(query, limit)
                 : await ddgSearch(query, limit);
+          // Keyless safety net: if DDG returns nothing (blocked/empty), fall back to Wikipedia.
+          if (backend === "ddg" && results.length === 0) {
+            results = await wikipediaSearch(query, limit);
+            backend = "ddg→wikipedia";
+          }
           return { backend, count: results.length, results };
         } catch (e) {
           return webError(e);
