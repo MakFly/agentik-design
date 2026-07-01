@@ -10,7 +10,7 @@ import type {
   PromptVariable,
   RuntimeKind,
 } from "@/types/domain";
-import { normalizeAgentConfig } from "./default-config";
+import { normalizeAgentConfig, modelDefaultForRuntime } from "./default-config";
 import type { BuilderSectionKey, DraftIdentity } from "./validation";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved";
@@ -81,6 +81,9 @@ export function createBuilderStore(
           ...s.config,
           runtimeKind,
           runtimeBinding: { daemonId: null },
+          // Model follows the runtime: switching to openai/google/claude resets the
+          // provider + default model to a matching one (keeps temperature/etc.).
+          model: { ...s.config.model, ...modelDefaultForRuntime(runtimeKind) },
         },
         rev: s.rev + 1,
         saveState: "dirty",
