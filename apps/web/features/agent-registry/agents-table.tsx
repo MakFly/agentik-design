@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import { useMemo } from "react";
 import Link from "next/link";
@@ -259,10 +260,11 @@ const columns: ColumnDef<AgentRow>[] = [
 ];
 
 export function NewAgentButton({ team }: { team: string }) {
+  const base = useAgentsBase(team);
   return (
     <RbacGate permission="agent:create">
       <Button asChild size="sm">
-        <Link href={`/${team}/platform/agents/new`}>
+        <Link href={`${base}/new`}>
           <Plus className="size-4" /> Nouvel agent
         </Link>
       </Button>
@@ -272,6 +274,7 @@ export function NewAgentButton({ team }: { team: string }) {
 
 export function AgentsTable({ team }: { team: string }) {
   const router = useRouter();
+  const base = useAgentsBase(team);
   const [scopeParam, setScopeParam] = useQueryState("scope");
   const [query, setQuery] = useQueryState("q");
   const scope = AGENT_SCOPES.includes(scopeParam as AgentScope) ? (scopeParam as AgentScope) : "all";
@@ -380,7 +383,7 @@ export function AgentsTable({ team }: { team: string }) {
             columns={cols}
             data={visibleItems}
             isLoading={isLoading}
-            onRowClick={(a) => router.push(`/${team}/platform/agents/${a.id}`)}
+            onRowClick={(a) => router.push(`${base}/${a.id}`)}
             emptyState={
               scope !== "all" || query ? (
                 <div className="p-8 text-center text-sm text-muted-foreground">

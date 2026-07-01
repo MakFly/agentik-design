@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -17,6 +18,7 @@ import type { DraftIdentity } from "./validation";
  * the builder, so unpublished edits survive reload.
  */
 export function AgentEditScreen({ team, agentId }: { team: string; agentId: string }) {
+  const base = useAgentsBase(team);
   const query = useAgentForEdit(team, agentId);
   const agent = query.data;
 
@@ -38,10 +40,10 @@ export function AgentEditScreen({ team, agentId }: { team: string; agentId: stri
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Edit agent"
-          back={{ href: `/${team}/platform/agents/${agentId}`, label: "Agent" }}
+          back={{ href: `${base}/${agentId}`, label: "Agent" }}
           actions={
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/platform/agents/${agentId}`}>
+              <Link href={`${base}/${agentId}`}>
                 <ArrowLeft className="size-4" />
                 Back
               </Link>

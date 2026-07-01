@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -49,6 +50,7 @@ function TemplatesDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const router = useRouter();
+  const base = useAgentsBase(team);
   const [harness, setHarness] = useState<HarnessId>(DEFAULT_HARNESS);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -70,7 +72,7 @@ function TemplatesDialog({
   function openInBuilder() {
     if (!templateId) return;
     onOpenChange(false);
-    router.push(`/${team}/platform/agents/new?template=${templateId}&harness=${harness}`);
+    router.push(`${base}/new?template=${templateId}&harness=${harness}`);
   }
 
   return (

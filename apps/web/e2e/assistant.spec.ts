@@ -6,17 +6,18 @@ import { test, expect } from "@playwright/test";
  * These are deterministic (no LLM) — they assert routing, labels and settings presence.
  */
 
-test("agents roster is assistant-native: clicking an agent stays on the assistant (→ chat)", async ({
+test("agents surface is iso with the platform, but edits stay on the assistant", async ({
   page,
 }) => {
   await page.goto("/demo/assistant/agents");
-  // Assistant roster header + conversational create (not the platform table's "Nouvel agent"→/platform/new).
-  await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
-  const card = page.getByRole("button", { name: /main/i }).first();
-  await expect(card).toBeVisible();
-  await card.click();
-  // Selecting an agent opens the chat on the assistant surface — NOT the platform builder.
-  await expect(page).toHaveURL(/\/demo\/assistant\/chat/);
+  // Same registry table as the platform, but its create entry point stays on the assistant.
+  await expect(page.getByRole("link", { name: /Nouvel agent/i })).toHaveAttribute(
+    "href",
+    "/demo/assistant/agents/new",
+  );
+  // Opening an agent from the table stays on the assistant surface (never routes into /platform).
+  await page.getByRole("cell", { name: "main" }).first().click();
+  await expect(page).toHaveURL(/\/demo\/assistant\/agents\/[^/]+$/);
   expect(page.url()).not.toContain("/platform/");
 });
 

@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import Link from "next/link";
 import { ArrowLeft, Check, Loader2, Play, Rocket } from "lucide-react";
@@ -27,13 +28,14 @@ export function IdentityHeader({
   onReview: () => void;
   onPublish: () => void;
 }) {
+  const base = useAgentsBase(team);
   const identity = useBuilderStore((s) => s.identity);
   const patchIdentity = useBuilderStore((s) => s.patchIdentity);
 
   return (
     <div className="flex flex-col gap-3">
       <Link
-        href={`/${team}/platform/agents`}
+        href={`${base}`}
         className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="size-3.5" /> Agents

@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import Link from "next/link";
 import { Fragment, useMemo, type ReactNode } from "react";
@@ -347,6 +348,7 @@ function BookIcon() {
 }
 
 export function AgentDetailScreen({ team, agentId }: { team: string; agentId: string }) {
+  const base = useAgentsBase(team);
   const agentQuery = useAgent(team, agentId);
   const snapshotQuery = useAgentTaskSnapshot(team);
   const runsQuery = useRuns(team);
@@ -399,10 +401,10 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Chargement de l'agent"
-          back={{ href: `/${team}/platform/agents`, label: "Agents" }}
+          back={{ href: `${base}`, label: "Agents" }}
           actions={
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/platform/agents`}>
+              <Link href={`${base}`}>
                 <ArrowLeft className="size-4" />
                 Retour
               </Link>
@@ -423,7 +425,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Agent"
-          back={{ href: `/${team}/platform/agents`, label: "Agents" }}
+          back={{ href: `${base}`, label: "Agents" }}
         />
         <ErrorState error={agentQuery.error} onRetry={() => agentQuery.refetch()} />
       </div>
@@ -435,11 +437,11 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
       <PageHeader
         title={agent.name}
         description="Mission, runtime, capacités, mémoire injectée et historique d'exécution."
-        back={{ href: `/${team}/platform/agents`, label: "Agents" }}
+        back={{ href: `${base}`, label: "Agents" }}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm">
-              <Link href={`/${team}/platform/agents/${agent.id}/edit`}>
+              <Link href={`${base}/${agent.id}/edit`}>
                 <Pencil className="size-4" />
                 Modifier
               </Link>

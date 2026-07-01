@@ -1,4 +1,5 @@
 "use client";
+import { useAgentsBase } from "@/lib/agents/use-agents-base";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -52,6 +53,7 @@ export function PublishDialog({
   onPublished?: () => void;
 }) {
   const router = useRouter();
+  const base = useAgentsBase(team);
   const [changelog, setChangelog] = useState(mode === "create" ? "Initial version" : "Update");
   const createAgent = useCreateAgent(team);
   const publishAgent = usePublishAgent(team);
@@ -75,7 +77,7 @@ export function PublishDialog({
         toast.success(`Published ${identity.name}${created.version ? ` v${created.version}` : ""}`);
         onPublished?.();
         onOpenChange(false);
-        router.push(`/${team}/platform/agents/${created.id}`);
+        router.push(`${base}/${created.id}`);
         return;
       }
 
@@ -98,7 +100,7 @@ export function PublishDialog({
       toast.success(`Published ${identity.name} v${result.version}`);
       onPublished?.();
       onOpenChange(false);
-      router.push(`/${team}/platform/agents/${id}`);
+      router.push(`${base}/${id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Publish failed");
     }
