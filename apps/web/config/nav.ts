@@ -124,6 +124,16 @@ export const NAV_ITEMS: NavItem[] = [
     hotkey: "h",
     permission: "settings:read",
   },
+  {
+    key: "assistant-settings",
+    label: "Settings",
+    segment: "settings",
+    icon: Settings,
+    group: "configure",
+    surface: "assistant",
+    hotkey: "t",
+    permission: "settings:read",
+  },
   // ── PLATFORM surface (Multica control-plane, served under /platform/*) ──
   {
     key: "command-center",
@@ -224,6 +234,7 @@ export const ASSISTANT_GROUP_ORDER: { group: NavGroup; label: string }[] = [
   { group: "agent", label: "Agent" },
   { group: "knowledge", label: "Knowledge" },
   { group: "build", label: "Automation" },
+  { group: "configure", label: "Configure" },
 ];
 
 /** Segments served under the `/platform/*` prefix (the Multica surface). */

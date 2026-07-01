@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useAgentSelection } from "@/components/runtime/agent-selection";
-import { AgentAvatar, runtimeFromName, useDaemonOnline } from "./agent-presence";
+import { AgentAvatar, isApiRuntime, runtimeFromName, useDaemonOnline } from "./agent-presence";
 import {
   Select,
   SelectContent,
@@ -23,7 +23,10 @@ export function AgentSwitcher({ team }: { team: string }) {
     useAgentSelection();
   const online = useDaemonOnline(team);
   const selected = agents.find((a) => a.id === selectedAgentId) ?? null;
-  const runtime = selected ? runtimeFromName(selected.name) : null;
+  // Prefer the agent's real runtimeKind; fall back to a "(runtime)" name suffix.
+  const runtime = selected ? (selected.runtimeKind ?? runtimeFromName(selected.name)) : null;
+  // API runtimes are ready via the in-process gateway (no daemon); CLI/daemon runtimes need one.
+  const ready = selected ? isApiRuntime(selected.runtimeKind) || online : false;
 
   const onNewThread = () => {
     window.dispatchEvent(new CustomEvent("agentik:new-thread"));
@@ -50,7 +53,7 @@ export function AgentSwitcher({ team }: { team: string }) {
                 </span>
                 <span className="truncate text-[11px] text-muted-foreground">
                   {runtime ? `${runtime} · ` : ""}
-                  {online ? "ready" : "no runtime"}
+                  {ready ? "ready" : "no runtime"}
                 </span>
               </span>
               <ChevronsUpDown className="ml-auto size-3.5 shrink-0 text-muted-foreground/60" />

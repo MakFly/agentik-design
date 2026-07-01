@@ -12,6 +12,7 @@ import { useAgents } from "@/features/agent-registry/api";
 export interface AgentOption {
   id: string;
   name: string;
+  runtimeKind?: string;
 }
 
 interface AgentSelectionCtx {
@@ -39,7 +40,12 @@ export function AgentSelectionProvider({
 }) {
   const agentsQ = useAgents(team);
   const agents: AgentOption[] = useMemo(
-    () => (agentsQ.data?.items ?? []).map((a) => ({ id: a.id, name: a.name })),
+    () =>
+      (agentsQ.data?.items ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        runtimeKind: (a as { runtimeKind?: string }).runtimeKind,
+      })),
     [agentsQ.data],
   );
   const [selectedAgentOverride, setSelectedAgentId] = useState<string | null>(null);

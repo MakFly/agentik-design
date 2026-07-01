@@ -10,6 +10,16 @@ export function runtimeFromName(name: string): string | null {
   return name.match(/\(([a-z0-9_-]+)\)\s*$/i)?.[1]?.toLowerCase() ?? null;
 }
 
+/**
+ * API runtimes run in-process through the chat gateway (no daemon required), so a
+ * daemon-offline state does NOT mean the agent is unusable. CLI/daemon runtimes do need
+ * a live daemon. Used to show an accurate "ready" vs "no runtime" label.
+ */
+const API_RUNTIMES = new Set(["openai", "anthropic", "claude", "google", "gemini", "codex"]);
+export function isApiRuntime(runtimeKind?: string | null): boolean {
+  return !!runtimeKind && API_RUNTIMES.has(runtimeKind.toLowerCase());
+}
+
 /** First glyph for the avatar — skip a leading "Sandbox" so the initial is meaningful. */
 export function agentInitial(name: string): string {
   const cleaned = name.replace(/^sandbox\s*/i, "").replace(/[()]/g, "").trim() || name;

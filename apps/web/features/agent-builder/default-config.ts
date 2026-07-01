@@ -8,13 +8,38 @@ import type { AgentConfig } from "@/types/domain";
  * `validateDraft`/`patchModel` on `config.model.…`. A plain `?? defaultAgentConfig()`
  * is all-or-nothing and misses these.
  */
+/**
+ * The default model for a runtime kind, so an agent's model follows its runtime instead of
+ * always falling back to the Anthropic default. An agent with `runtimeKind: "openai"` and no
+ * explicit model must display an OpenAI model, not Claude.
+ */
+export function modelDefaultForRuntime(
+  runtimeKind?: string,
+): Pick<AgentConfig["model"], "provider" | "model"> {
+  switch (runtimeKind) {
+    case "openai":
+    case "codex":
+      return { provider: "openai", model: "gpt-5.4-mini" };
+    case "google":
+    case "gemini":
+      return { provider: "google", model: "gemini-2.0-flash" };
+    case "claude":
+    case "anthropic":
+    default:
+      return { provider: "anthropic", model: "claude-sonnet-4-6" };
+  }
+}
+
 export function normalizeAgentConfig(config?: Partial<AgentConfig> | null): AgentConfig {
   const base = defaultAgentConfig();
   if (!config) return base;
+  // Derive the model from the runtime when the config doesn't pin one explicitly, so the
+  // provider/model shown matches runtimeKind (openai → gpt, google → gemini, else claude).
+  const runtimeModel = modelDefaultForRuntime(config.runtimeKind ?? base.runtimeKind);
   return {
     ...base,
     ...config,
-    model: { ...base.model, ...config.model },
+    model: { ...base.model, ...runtimeModel, ...config.model },
     limits: { ...base.limits, ...config.limits },
     retry: { ...base.retry, ...config.retry },
     guardrails: { ...base.guardrails, ...config.guardrails },

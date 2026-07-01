@@ -304,6 +304,28 @@ const isNewChatView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   (!s.thread.isLoading || s.threads.isLoading);
 
+/**
+ * Bridge for cross-surface "send this prompt" requests (e.g. the assistant Agents screen's
+ * "Nouvel agent" button dispatches `agentik:send-prompt` to start the conversational agent
+ * creation). Always mounted inside the runtime so it works regardless of the current view.
+ */
+const SendPromptBridge: FC = () => {
+  const aui = useAui();
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      if (!text || aui.thread().getState().isRunning) return;
+      aui.thread().append({
+        content: [{ type: "text", text }],
+        runConfig: aui.composer().getState().runConfig,
+      });
+    };
+    window.addEventListener("agentik:send-prompt", handler as EventListener);
+    return () => window.removeEventListener("agentik:send-prompt", handler as EventListener);
+  }, [aui]);
+  return null;
+};
+
 const Thread: FC = () => {
   const isEmpty = useAuiState(isNewChatView);
   const { missingThreadId, createNewThread } = useEngineThreadHistory();
@@ -320,6 +342,7 @@ const Thread: FC = () => {
         ["--composer-padding" as string]: "8px",
       }}
     >
+      <SendPromptBridge />
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
