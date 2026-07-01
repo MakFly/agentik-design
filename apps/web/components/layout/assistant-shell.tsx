@@ -22,7 +22,8 @@ export function AssistantShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const segment = pathname?.split("/")[2];
+  // Assistant routes are /{team}/assistant/{segment} → the surface segment is index 3.
+  const segment = pathname?.split("/")[3];
   const isChat = segment === "chat";
 
   // One realtime socket per team; events invalidate React Query caches.

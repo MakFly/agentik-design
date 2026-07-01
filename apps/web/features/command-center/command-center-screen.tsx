@@ -121,7 +121,7 @@ export function CommandCenterScreen({ team }: { team: string }) {
         actions={
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/channels`}>
+              <Link href={`/${team}/assistant/channels`}>
                 <RadioTower className="size-4" />
                 Telegram
               </Link>
@@ -425,7 +425,7 @@ function TelegramPanel({
       <SectionHeader
         title="Telegram Remote"
         description={`${connected}/${total} active channels`}
-        href={`/${team}/channels`}
+        href={`/${team}/assistant/channels`}
       />
       <div className="mt-3 grid gap-3">
         <div className="flex items-center justify-between rounded-md bg-surface-2 px-3 py-2">

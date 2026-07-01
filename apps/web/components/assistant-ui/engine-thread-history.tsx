@@ -189,7 +189,7 @@ export function EngineThreadHistoryProvider({
     setActiveThreadId(null);
     setMissingThreadId(null);
     runtime.thread.reset();
-    pushUrl(`/${team}/chat`);
+    pushUrl(`/${team}/assistant/chat`);
   }, [runtime, team]);
 
   // Let surfaces outside this provider (e.g. the app icon rail's "New chat"
@@ -206,7 +206,7 @@ export function EngineThreadHistoryProvider({
       if (id === activeRef.current) return;
       setActiveThreadId(id);
       setMissingThreadId(null);
-      pushUrl(`/${team}/chat/c/${id}`);
+      pushUrl(`/${team}/assistant/chat/c/${id}`);
       void loadThread(runtime, id);
     },
     [runtime, team, loadThread],

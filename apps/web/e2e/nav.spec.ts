@@ -1,20 +1,20 @@
 import { test, expect } from "@playwright/test";
 
-// Phase 2 — North Star recentering: Projects is the center of the product, so it
-// must lead the Control Plane nav ahead of the Command Center dashboard.
-test("Projects leads the sidebar nav, above Command Center", async ({ page }) => {
+// Since the Personal Assistant / Multica platform split, the platform Control Plane nav is
+// led by the Command Center dashboard, with Projects directly beneath it.
+test("Command Center leads the platform nav, above Projects", async ({ page }) => {
   await page.goto("/demo/platform/projects");
 
-  const projects = page.getByRole("link", { name: /^Projects$/ }).first();
   const command = page.getByRole("link", { name: /Command Center/ }).first();
+  const projects = page.getByRole("link", { name: /^Projects$/ }).first();
 
-  await expect(projects).toBeVisible();
   await expect(command).toBeVisible();
+  await expect(projects).toBeVisible();
 
-  const pBox = await projects.boundingBox();
   const cBox = await command.boundingBox();
-  expect(pBox, "Projects nav link has a box").not.toBeNull();
+  const pBox = await projects.boundingBox();
   expect(cBox, "Command Center nav link has a box").not.toBeNull();
-  // Visual order: Projects sits above Command Center.
-  expect(pBox!.y).toBeLessThan(cBox!.y);
+  expect(pBox, "Projects nav link has a box").not.toBeNull();
+  // Visual order: Command Center sits above Projects.
+  expect(cBox!.y).toBeLessThan(pBox!.y);
 });

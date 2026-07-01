@@ -769,7 +769,7 @@ function ProjectContextPanel({
           <div className="rounded-md border border-dashed border-border bg-background px-3 py-3 text-sm text-muted-foreground">
             <p>No Telegram channel connected.</p>
             <Link
-              href={`/${team}/channels`}
+              href={`/${team}/assistant/channels`}
               className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary"
             >
               Connect channel

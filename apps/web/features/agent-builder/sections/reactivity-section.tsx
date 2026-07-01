@@ -91,7 +91,7 @@ function ReactivityEditor({ team, agentId }: { team: string; agentId: string }) 
 
       <div className="border-t border-border pt-4">
         <Button asChild variant="outline" className="min-h-[44px]">
-          <Link href={`/${team}/automations?agent=${agentId}`}>
+          <Link href={`/${team}/assistant/automations?agent=${agentId}`}>
             <Zap className="size-4" /> Create an automation that runs this agent
           </Link>
         </Button>

@@ -445,7 +445,7 @@ export function AgentDetailScreen({ team, agentId }: { team: string; agentId: st
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link href={`/${team}/memory?agent=${agent.id}`}>
+              <Link href={`/${team}/assistant/memory?agent=${agent.id}`}>
                 <Brain className="size-4" />
                 Mémoire
               </Link>

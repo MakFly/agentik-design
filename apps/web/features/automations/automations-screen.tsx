@@ -48,7 +48,7 @@ function AutomationsTabs({ team }: { team: string }) {
             <Badge variant="secondary" className="font-mono">
               Filtered to agent {formatShortId(agentId)}
             </Badge>
-            <Link href={`/${team}/automations`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            <Link href={`/${team}/assistant/automations`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
               <X className="size-3.5" /> Clear filter
             </Link>
           </div>

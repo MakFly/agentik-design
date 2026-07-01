@@ -53,7 +53,7 @@ export function AssistantSidebar({ team }: { team: string }) {
   })).filter((g) => g.items.length > 0);
 
   const renderItem = (item: NavItem) => {
-    const href = `/${team}/${item.segment}`;
+    const href = `/${team}/assistant/${item.segment}`;
     const active = pathname === href || pathname.startsWith(`${href}/`);
     const Icon = item.icon;
     return (

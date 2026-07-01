@@ -11,7 +11,7 @@ export function postAuthDestination(me: MeResponse): string {
   if (!me.user.emailVerifiedAt) return "/verify?pending=1";
   const active = me.orgs.find((o) => o.teamId === me.activeOrgId) ?? me.orgs[0];
   if (!active) return "/login";
-  return `/${active.slug}/chat`;
+  return `/${active.slug}/assistant/chat`;
 }
 
 /** Active org from a /me payload. */

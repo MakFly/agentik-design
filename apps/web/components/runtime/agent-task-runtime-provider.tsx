@@ -54,7 +54,7 @@ async function ensureChatSession(
     body: { agentId, ...(title ? { title } : {}) },
   });
   if (typeof window !== "undefined") {
-    window.history.replaceState(null, "", `/${team}/chat/c/${created.id}`);
+    window.history.replaceState(null, "", `/${team}/assistant/chat/c/${created.id}`);
     window.dispatchEvent(
       new CustomEvent("agentik:chat-session-created", { detail: { sessionId: created.id } }),
     );

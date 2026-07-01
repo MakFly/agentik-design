@@ -238,7 +238,7 @@ const DashboardSettingsButton: FC = () => {
       tooltip="Settings"
       side="bottom"
       className="size-8"
-      onClick={() => router.push(`/${team}/chat/settings`)}
+      onClick={() => router.push(`/${team}/assistant/chat/settings`)}
     >
       <SettingsIcon className="size-4" />
     </TooltipIconButton>

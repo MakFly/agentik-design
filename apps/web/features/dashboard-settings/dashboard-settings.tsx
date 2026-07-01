@@ -39,7 +39,7 @@ const GROUP_ORDER = ["Personal", "Assistant"] as const;
  */
 export function DashboardSettings({ team }: { team: string }) {
   const router = useRouter();
-  const backHref = `/${team}/chat`;
+  const backHref = `/${team}/assistant/chat`;
   const [active, setActive] = useState<SectionId>("preferences");
   const [query, setQuery] = useState("");
 

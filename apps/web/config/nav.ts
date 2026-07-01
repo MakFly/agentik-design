@@ -255,13 +255,22 @@ export const MOBILE_NAV_KEYS = [
 ] as const;
 
 /**
- * Build a route href. Platform segments live under `/{team}/platform/*`; everything else
- * (assistant surface) is served from the team root. `rest` appends a dynamic tail
- * (e.g. a run id) — pass without a leading slash.
+ * Build a route href for the two symmetric surfaces: platform segments live under
+ * `/{team}/platform/*`, everything else (assistant surface) under `/{team}/assistant/*`.
+ * Segments that exist on both surfaces (agents, settings) resolve to platform here — the
+ * assistant sidebar builds its own `/{team}/assistant/*` hrefs directly. `rest` appends a
+ * dynamic tail (e.g. a run id) — pass without a leading slash.
  */
 export function hrefFor(team: string, segment: string, rest?: string): string {
   const base = PLATFORM_SEGMENTS.has(segment)
     ? `/${team}/platform/${segment}`
-    : `/${team}/${segment}`;
+    : `/${team}/assistant/${segment}`;
+  return rest ? `${base}/${rest}` : base;
+}
+
+/** Explicit assistant-surface href (for links that must target the assistant even when the
+ * segment also exists on the platform, e.g. agents/settings from assistant components). */
+export function assistantHref(team: string, segment: string, rest?: string): string {
+  const base = `/${team}/assistant/${segment}`;
   return rest ? `${base}/${rest}` : base;
 }
