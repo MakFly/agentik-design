@@ -9,7 +9,7 @@ export {
   getRoster,
   setRoster,
   getAgentGraph,
-  ensureDevAgents,
+  ensureDefaultAgent,
   AgentPublishError,
   type CreateAgentInput,
   type RosterItemInput,

@@ -12,7 +12,7 @@ import {
   runtimeKindSchema,
 } from "@agentik/workflow-schema";
 import type { RuntimeKind, ToolGrant } from "@agentik/workflow-schema";
-import { ensureDevAgents } from "../agents/repo";
+import { ensureDefaultAgent } from "../agents/repo";
 import { hasLiveDaemonForAgent } from "../../infra/daemon-liveness";
 import { monthlyCostCents, teamSpendLimitCents } from "./repo";
 import { runMessagesToSteps } from "./mappers";
@@ -294,7 +294,7 @@ export async function createTestTask(
   input: string,
   runtime = "claude",
 ) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   // Per-team, per-runtime sandbox agent so the task is claimable by that runtime.
   const name = `Sandbox (${runtime})`;
   let [sandbox] = await db

@@ -12,6 +12,6 @@ export {
   getAgentCapabilities,
   getAgentTaskSnapshot,
   getAgentPlacementLabel,
-  ensureDevAgents,
+  ensureDefaultAgent,
 } from "../agents/repo";
 export { runsRoutes } from "./routes";

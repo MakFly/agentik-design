@@ -30,51 +30,55 @@ type AgentStatsRunRow = Pick<
   "agentId" | "status" | "durationMs" | "createdAt" | "result" | "costCents"
 >;
 
-const SEED_AGENTS = [
-  {
-    name: "Triage Agent",
-    role: "Classifier",
-    goal: "Route incoming tickets",
-    runtimeKind: "claude",
-  },
-  {
-    name: "Resolve Agent",
-    role: "Resolver",
-    goal: "Answer and close tickets",
-    runtimeKind: "claude",
-  },
-  {
-    name: "Scraper",
-    role: "Collector",
-    goal: "Extract data from pages",
-    runtimeKind: "claude",
-  },
-];
-
-export async function ensureDevAgents(teamId: string): Promise<void> {
-  const [member] = await db
-    .select({ id: schema.orgMembers.id })
-    .from(schema.orgMembers)
-    .where(eq(schema.orgMembers.teamId, teamId))
-    .limit(1);
-  if (member) return;
-  const existing = await db
+/**
+ * Bootstrap: guarantee the team has a usable default agent named "main" (OpenClaw model),
+ * so the app is NEVER agent-less — chat works on first use and right after a reset.
+ * Idempotent (no-op once any agent exists). Creates AND publishes v1; API runtime so no
+ * daemon is required. Called by every agent-listing path, so a fresh team self-heals.
+ */
+export async function ensureDefaultAgent(teamId: string): Promise<void> {
+  const [existing] = await db
     .select({ id: agents.id })
     .from(agents)
     .where(eq(agents.teamId, teamId))
     .limit(1);
-  if (existing[0]) return;
-  await db.insert(agents).values(
-    SEED_AGENTS.map((a) => ({
-      id: genId("agt"),
-      teamId,
-      name: a.name,
-      role: a.role,
-      goal: a.goal,
-      runtimeKind: a.runtimeKind,
-      health: "idle" as const,
-    })),
-  );
+  if (existing) return;
+  // Deterministic id so concurrent first-access callers (several tabs polling /agents at once)
+  // collide on the primary key — exactly one "main" is created, the rest hit a PK conflict
+  // that we swallow. createAgent uses a random id, which would let the race create duplicates.
+  const id = `agt_main_${teamId}`;
+  const draftVersionId = genId("ver");
+  const config = {
+    systemPrompt:
+      "You are main, a helpful, concise general-purpose AI assistant. Answer directly and " +
+      "clearly; ask for clarification only when truly needed. You can search and read the web, " +
+      "read/send Gmail when granted, and create new agents when asked.",
+    runtimeKind: "openai",
+    skills: [] as string[],
+    tools: [] as unknown[],
+  };
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(agents).values({
+        id,
+        teamId,
+        name: "main",
+        role: "operator",
+        goal: "Be a helpful general-purpose assistant for anything the user asks.",
+        emoji: "🤖",
+        color: "#6366f1",
+        isOrchestrator: false,
+        draftVersionId,
+        health: "idle" as const,
+      });
+      const { publishAgentInTx } = await import("../runs/service");
+      const published = await publishAgentInTx(tx, teamId, id, config);
+      if (published && "error" in published) throw new Error(published.error);
+    });
+  } catch {
+    // Concurrent first-access race: another caller already inserted id=agt_main_<team>
+    // (PK conflict) — the default agent exists, nothing to do.
+  }
 }
 
 function agentModel(a: AgentRowDb): string {
@@ -190,7 +194,7 @@ export interface ListAgentsOptions {
 }
 
 export async function listAgentRows(teamId: string, opts: ListAgentsOptions = {}) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   const conditions = [eq(agents.teamId, teamId)];
   if (opts.q) {
     const like = `%${opts.q}%`;
@@ -242,7 +246,7 @@ export async function listAgentRows(teamId: string, opts: ListAgentsOptions = {}
 }
 
 export async function getAgentRow(teamId: string, agentId: string) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   const [row] = await db
     .select()
     .from(agents)
@@ -271,7 +275,7 @@ export async function getAgentRow(teamId: string, agentId: string) {
 }
 
 export async function getAgentCapabilities(teamId: string, agentId: string) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   const [agent] = await db
     .select()
     .from(agents)
@@ -311,7 +315,7 @@ export async function getAgentCapabilities(teamId: string, agentId: string) {
 }
 
 export async function getAgentTaskSnapshot(teamId: string) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   const [agentRows, daemonRows, runtimeRows, activeTasks] = await Promise.all([
     db
       .select({
@@ -595,7 +599,7 @@ export async function setRoster(
 
 /** Whole-team agent graph: nodes + roster edges + recent run-tree edges (last 200 child runs). */
 export async function getAgentGraph(teamId: string) {
-  await ensureDevAgents(teamId);
+  await ensureDefaultAgent(teamId);
   const [agentRows, rosterRows, runRows] = await Promise.all([
     db
       .select({
