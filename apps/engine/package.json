@@ -17,7 +17,8 @@
     "connect:gmail": "bun run scripts/connect-gmail.ts",
     "connect:gmail:oauth": "bun run scripts/connect-gmail-oauth.ts",
     "seed:gmail-skill": "bun run scripts/seed-gmail-skill.ts",
-    "chat:clear": "bun run scripts/clear-chat-sessions.ts"
+    "chat:clear": "bun run scripts/clear-chat-sessions.ts",
+    "reset:demo": "bash scripts/reset-demo.sh"
   },
   "dependencies": {
     "@agentik/workflow-schema": "workspace:*",
